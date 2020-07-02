@@ -54,6 +54,8 @@ There are two things you can do about this warning:
 ;; no large file warning
 (setq large-file-warning-threshold nil)
 
+;; 3rd-party packages
+
 ;; diminish
 ;; hides modeline displays for minor modes
 (use-package diminish
@@ -544,6 +546,8 @@ There are two things you can do about this warning:
 (use-package markdown-mode
   :ensure t
   )
+
+;; end of 3rd-party packages
 
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 (put 'upcase-region 'disabled nil)
