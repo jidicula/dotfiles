@@ -388,6 +388,7 @@ There are two things you can do about this warning:
 (use-package dumb-jump
   :ensure t
   :config
+  ;; dumb-jump-go (C-M-g) jumps to the definition of thing under point
   (dumb-jump-mode)
   )
 
