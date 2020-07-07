@@ -458,6 +458,15 @@ There are two things you can do about this warning:
    t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend)
   )
 
+;; company-quickhelp
+(use-package company-quickhelp
+  :after company
+  :ensure t
+  :init
+  (company-quickhelp-mode)
+  (define-key company-active-map (kbd "C-c h") #'company-quickhelp-manual-begin)
+  )
+
 ;; multiple-cursors
 (use-package multiple-cursors
   :ensure t
