@@ -557,77 +557,6 @@ There are two things you can do about this warning:
   :ensure t
   )
 
-;; js2-mode
-(use-package js2-mode
-  :ensure t
-  :interpreter (("node" . js2-mode))
-  :bind (:map js2-mode-map ("C-c C-p" . js2-print-json-path))
-  :mode "\\.\\(js\\|json\\)$"
-  :config
-  (add-hook 'js-mode-hook 'js2-minor-mode)
-  ;; enable autocomplete in js2-minor-mode
-  (add-hook 'js2-mode-hook 'company-mode)
-  (setq js2-basic-offset 2
-        js2-highlight-level 3
-        js2-mode-show-parse-errors nil
-        js2-mode-show-strict-warnings nil))
-
-;; ac-js2
-(use-package ac-js2
-  :defer t
-  :ensure t
-  :init
-  (add-to-list 'company-backends 'ac-js2-company)
-  (add-hook 'js2-mode-hook 'ac-js2-mode)
-  (setq ac-js2-evaluate-calls t))
-
-;; js2-refactor
-(use-package js2-refactor
-  :defer t
-  :diminish js2-refactor-mode
-  :commands js2-refactor-mode
-  :ensure t
-  :init
-  (add-hook 'js2-mode-hook #'js2-refactor-mode)
-  :config
-  (js2r-add-keybindings-with-prefix "C-c C-m"))
-
-;; json-snatcher
-(use-package json-snatcher
-  :ensure t
-  :after js2-mode
-  :config
-  (bind-key "C-c C-g" 'jsons-print-path js2-mode-map))
-
-;; also do `npm install -g js-beautify' in your shell
-(use-package web-beautify
-  :after js2-mode
-  :ensure t
-  :config
-  (bind-key "C-c C-b" 'web-beautify-js js2-mode-map)
-  ;; (add-hook 'js2-mode-hook (lambda ()
-  ;;                             (add-hook 'before-save-hook
-  ;; 					'web-beautify-js nil t)))
-  )
-
-;; tern
-(use-package tern
-  :defer t
-  :diminish tern-mode
-  :ensure t
-  :init
-  (add-hook 'js2-mode-hook 'tern-mode))
-
-;; skewer-mode
-(use-package skewer-mode
-  :bind (("C-c K" . run-skewer))
-  :diminish skewer-mode
-  :ensure t
-  :init
-  (add-hook 'js2-mode-hook 'skewer-mode)
-  (add-hook 'css-mode-hook 'skewer-css-mode)
-  (add-hook 'html-mode-hook 'skewer-html-mode))
-
 ;; react-snippets
 (use-package react-snippets
   :ensure t)
@@ -637,8 +566,43 @@ There are two things you can do about this warning:
   :ensure t
   :after (typescript-mode company flycheck)
   :hook ((typescript-mode . tide-setup)
+	 (web-mode . my/activate-tide-mode)
          (typescript-mode . tide-hl-identifier-mode)
          (before-save . tide-format-before-save)))
+
+;; activate tide automatically
+(defun my/activate-tide-mode ()
+  "Use hl-identifier-mode only on js or ts buffers."
+  (when (and (stringp buffer-file-name)
+             (string-match "\\.[tj]sx?\\'" buffer-file-name))
+    (tide-setup)
+    (tide-hl-identifier-mode)))
+
+;; web-mode
+(use-package web-mode
+  :ensure t
+  :mode
+  ("\\.ejs\\'" "\\.hbs\\'" "\\.html\\'" "\\.php\\'" "\\.[jt]sx?\\'")
+  :config
+  (setq web-mode-content-types-alist '(("jsx" . "\\.[jt]sx?\\'")))
+  (setq web-mode-markup-indent-offset 2)
+  (setq web-mode-css-indent-offset 2)
+  (setq web-mode-code-indent-offset 2)
+  (setq web-mode-script-padding 2)
+  (setq web-mode-block-padding 2)
+  (setq web-mode-style-padding 2)
+  (setq web-mode-enable-auto-pairing t)
+  (setq web-mode-enable-auto-closing t)
+  (setq web-mode-enable-current-element-highlight t)
+  )
+
+;; prettier.el for linting web files
+(use-package prettier
+  :ensure t
+  :hook (
+	 (web-mode . prettier-mode)
+	 )
+  )
 
 ;; end of 3rd-party packages
 
