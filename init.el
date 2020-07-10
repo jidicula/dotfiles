@@ -583,6 +583,9 @@ There are two things you can do about this warning:
   :ensure t
   :mode
   ("\\.ejs\\'" "\\.hbs\\'" "\\.html\\'" "\\.php\\'" "\\.[jt]sx?\\'")
+  :hook (
+	 (web-mode . company-mode)
+	 )
   :config
   (setq web-mode-content-types-alist '(("jsx" . "\\.[jt]sx?\\'")))
   (setq web-mode-markup-indent-offset 2)
