@@ -98,6 +98,13 @@ There are two things you can do about this warning:
   (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
   )
 
+;; which-key shows all available keybindings
+(use-package which-key
+  :ensure t
+  :init
+  (which-key-mode)
+  )
+
 ;; smartparens
 (use-package smartparens
   :ensure t
