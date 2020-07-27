@@ -101,6 +101,21 @@ There are two things you can do about this warning:
   (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
   )
 
+;; gitattributes-mode
+(use-package gitattributes-mode
+  :ensure t
+  )
+
+;; gitconfig-mode
+(use-package gitconfig-mode
+  :ensure t
+  )
+
+;; gitignore-mode
+(use-package gitignore-mode
+  :ensure t
+  )
+
 ;; which-key shows all available keybindings
 (use-package which-key
   :ensure t
