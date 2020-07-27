@@ -2,6 +2,9 @@
 ;;; Commentary:
 ;;; Load it from .emacs with `(load "path/to/init.el")`
 
+;; confirm before quitting
+(setq confirm-kill-emacs 'y-or-n-p)
+
 ;;; Code:
 ;; Adding MELPA to package archives
 (require 'package)
