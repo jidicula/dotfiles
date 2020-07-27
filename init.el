@@ -632,6 +632,13 @@ There are two things you can do about this warning:
 ;; set init default directory
 (setq default-directory "~/")
 
+;; set scratch buffer mode to Markdown mode
+(setq initial-major-mode 'markdown-mode)
+(setq initial-scratch-message "\
+This buffer is for notes you don't want to save, with Markdown formatting.
+If you want to create a file, visit that file with C-x C-f,
+then enter the text in that file's own buffer.")
+
 ;; enable autocomplete in emacs-lisp-mode
 (add-hook 'emacs-lisp-mode-hook
 	  'company-mode
