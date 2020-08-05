@@ -469,6 +469,16 @@ There are two things you can do about this warning:
   ;; (company-tng-configure-default)
   ;; (company-tng--supress-post-completion nil)
   )
+
+;; company-box is a Company frontend with icons
+(use-package company-box
+  :after company
+  :ensure t
+  :hook (company-mode . company-box-mode)
+  :config
+  (set-face-background 'company-box-background "#555555")
+  )
+
 ;; company-emoji
 ;; https://github.com/idcrook/.emacs.d/blob/bb05f12d63a4e7753c1585938fc76d3142aea105/elisp/base-platforms.el#L167-L174
 (use-package company-emoji
