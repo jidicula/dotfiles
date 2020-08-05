@@ -588,6 +588,8 @@ There are two things you can do about this warning:
 ;; markdown-mode
 (use-package markdown-mode
   :ensure t
+  :init
+  (add-to-list 'auto-mode-alist '("\\.mdx\\'" . markdown-mode))
   )
 
 ;; react-snippets
