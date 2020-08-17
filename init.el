@@ -548,12 +548,16 @@ There are two things you can do about this warning:
   (add-hook 'elpy-mode-hook (lambda ()
                               (add-hook 'before-save-hook
 					'elpy-format-code nil t)))
-  (eval-after-load "elpy"
-  '(cl-dolist
-       (key '("M-<up>" "M-<down>" "M-<left>" "M-<right>"))
-     '(define-key elpy-mode-map (kbd key) nil)
-     )
-  )
+  ;; clear Elpy keybindings for shifting lines
+  (cl-dolist
+      (key '("M-<up>" "M-<down>" "M-<left>" "M-<right>"))
+    (define-key elpy-mode-map (kbd key) nil)
+    )
+  ;; Remap Elpy keybindings for shifting lines
+  (define-key elpy-mode-map (kbd "M-p") 'elpy-nav-move-line-or-region-up)
+  (define-key elpy-mode-map (kbd "M-n") 'elpy-nav-move-line-or-region-down)
+  (define-key elpy-mode-map (kbd "M-f") 'elpy-nav-move-indent-shift-right)
+  (define-key elpy-mode-map (kbd "M-b") 'elpy-nav-move-indent-shift-left)
   ;; allows Elpy to see virtualenv
   (add-hook 'elpy-mode-hook
 	    ;; pyvenv-mode
