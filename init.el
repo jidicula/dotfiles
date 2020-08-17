@@ -545,9 +545,10 @@ There are two things you can do about this warning:
   ;; formats using whatever formatter is installed. if file is in a Poetry
   ;; project it will use the formatter installed in that project. Else it
   ;; defaults to black, which is installed systemwide.
-  (add-hook 'elpy-mode-hook (lambda ()
-                              (add-hook 'before-save-hook
-					'elpy-format-code nil t)))
+  (defun elpy-format-on-save ()
+    (add-hook 'before-save-hook #'elpy-format-code nil t)
+    )
+  (add-hook 'elpy-mode-hook 'elpy-format-on-save)
   ;; clear Elpy keybindings for shifting lines
   (cl-dolist
       (key '("M-<up>" "M-<down>" "M-<left>" "M-<right>"))
@@ -867,3 +868,8 @@ then enter the text in that file's own buffer.")
 ;; (setq custom-safe-themes t)
 (add-to-list 'custom-theme-load-path (file-name-directory load-file-name))
 (load-theme 'jidiculous-dark t)
+
+;; set dir local vars as safe
+(setq safe-local-variable-values
+      '((eval remove-hook 'elpy-mode-hook 'elpy-format-on-save t)
+	(lexical-binding . t)))
