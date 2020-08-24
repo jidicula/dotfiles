@@ -31,6 +31,7 @@ brew "hdf5"
 brew "htop"
 brew "imagemagick"
 brew "ispell"
+brew "jansson"
 brew "latex2html"
 brew "markdown"
 brew "maven"
@@ -55,7 +56,7 @@ brew "wakeonlan"
 brew "wget"
 brew "youtube-dl"
 brew "zlib"
-brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-modern-black-variant-icon"]
+brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-jansson", "with-modern-black-variant-icon"]
 brew "github/gh/gh"
 brew "jawshooah/pyenv/pyenv-default-packages", args: ["HEAD"]
 cask "adobe-acrobat-reader"

@@ -11,13 +11,13 @@
         "revision": "de8d7e7960fd07a5dc1abef30d754de314e26dd1"
       },
       "homebrew/bundle": {
-        "revision": "40894b3e0cb01c26fd3388309e7e6ae2f35f2593"
+        "revision": "110666adad626439d950b405e4164079f8068fa5"
       },
       "homebrew/cask": {
-        "revision": "6479b94013351dd94767a1d71c85f8520cc7d74c"
+        "revision": "ff97a486e8f7a2899f07a6daba217376808c98c0"
       },
       "homebrew/core": {
-        "revision": "65fa6204913ce8126c1a7a529c5b6cdb71fcc290"
+        "revision": "085791ecf990b7dfe53173fc0669dd984648e9c1"
       },
       "jawshooah/pyenv": {
         "revision": "99df0b27e09c04f943527af83492f5ded4fe5ba9"
@@ -43,7 +43,7 @@
         }
       },
       "balenaetcher": {
-        "version": "1.5.102",
+        "version": "1.5.104",
         "options": {
           "full_name": "balenaetcher"
         }
@@ -55,7 +55,7 @@
         }
       },
       "eloston-chromium": {
-        "version": "84.0.4147.125-1.1",
+        "version": "84.0.4147.135-1.1",
         "options": {
           "full_name": "eloston-chromium"
         }
@@ -1153,6 +1153,7 @@
         "options": {
           "args": [
             "HEAD",
+            "with-jansson",
             "with-modern-black-variant-icon"
           ]
         }
@@ -1233,9 +1234,9 @@
   "system": {
     "macos": {
       "catalina": {
-        "HOMEBREW_VERSION": "2.4.12",
+        "HOMEBREW_VERSION": "2.4.13",
         "HOMEBREW_PREFIX": "/usr/local",
-        "Homebrew/homebrew-core": "65fa6204913ce8126c1a7a529c5b6cdb71fcc290",
+        "Homebrew/homebrew-core": "085791ecf990b7dfe53173fc0669dd984648e9c1",
         "CLT": "1103.0.32.62",
         "Xcode": "11.6",
         "macOS": "10.15.6"
