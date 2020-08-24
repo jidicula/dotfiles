@@ -624,15 +624,17 @@ There are two things you can do about this warning:
 ;; disable pyvenv menu
 (setq pyvenv-mode nil)
 
-;; highlight-indentation
-;; useful for seeing indentation with Python files
-(use-package highlight-indentation
+;; highlight-indent-guides.el
+(use-package highlight-indent-guides
   :ensure t
   :init
-  (setq global-highlight-indentation-mode t)
-  (setq global-highlight-indentation-current-column-mode t)
-  (set-face-background 'highlight-indentation-face "#333333")
-  (set-face-background 'highlight-indentation-current-column-face "#404040")
+  :custom
+  (highlight-indent-guides-responsive "stack" "Highlight ancestral guides of current guide")
+  (highlight-indent-guides-delay 0 "Remove indentation highlight delay")
+  (highlight-indent-guides-auto-odd-face-perc 10)
+  (highlight-indent-guides-auto-even-face-perc 15)
+  :hook
+  (prog-mode . highlight-indent-guides-mode)
   )
 
 ;; html5-schema
