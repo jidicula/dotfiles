@@ -2,6 +2,12 @@
 ;;; Commentary:
 ;;; Load it from .emacs with `(load "path/to/init.el")`
 
+;; increase gc-cons-threshold to 100mb
+(setq gc-cons-threshold 100000000)
+
+;; increase amount of data Emacs reads from process to 1mb
+(setq read-process-output-max (* 1024 1024))
+
 ;; confirm before quitting
 (setq confirm-kill-emacs 'y-or-n-p)
 
