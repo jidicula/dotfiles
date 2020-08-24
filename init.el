@@ -240,6 +240,45 @@ There are two things you can do about this warning:
   :ensure t
   :config (treemacs-set-scope-type 'Perspectives))
 
+;; lsp-mode configs
+(use-package lsp-mode
+  :ensure t
+  :config
+  (lsp-enable-imenu)
+  ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
+  (setq lsp-keymap-prefix "C-c l")
+  :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
+         ;; if you want which-key integration
+         (lsp-mode . lsp-enable-which-key-integration)
+	 (lsp-after-open-hook . 'lsp-enable-imenu)
+	 )
+  :commands lsp)
+
+;; optionally
+(use-package lsp-ui
+  :after lsp-mode
+  :ensure t
+  :commands lsp-ui-mode)
+
+;; company lsp
+(use-package company-lsp
+  :after company
+  :ensure t
+  :config
+  (push 'company-lsp company-backends)
+  )
+
+(use-package lsp-treemacs
+  :after lsp-mode treemacs
+  :ensure t
+  :commands lsp-treemacs-errors-list)
+
+;; optionally if you want to use debugger
+(use-package dap-mode
+  :after lsp-mode
+  :ensure t)
+;; (use-package dap-LANGUAGE) to load the dap adapter for your language
+
 ;; LaTeX configs
 (use-package tex-mode
   :ensure auctex
