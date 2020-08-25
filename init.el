@@ -481,24 +481,6 @@ There are two things you can do about this warning:
   (global-set-key (kbd "C-c n") 'flycheck-next-error)
   (global-set-key (kbd "C-c p") 'flycheck-prev-error)
   )
-;; flycheck-pycheckers
-;; Allows multiple syntax checkers to run in parallel on Python code
-;; Ideal use-case: pyflakes for syntax combined with mypy for typing
-(use-package flycheck-pycheckers
-  :after flycheck
-  :ensure t
-  :init
-  (with-eval-after-load 'flycheck
-    (add-hook 'flycheck-mode-hook #'flycheck-pycheckers-setup)
-    )
-  (setq flycheck-pycheckers-checkers
-	'(
-	  mypy3
-	  pyflakes
-	  )
-	)
-  )
-
 
 ;; company
 (use-package company
