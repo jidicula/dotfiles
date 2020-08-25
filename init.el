@@ -243,12 +243,13 @@ There are two things you can do about this warning:
 ;; lsp-mode configs
 (use-package lsp-mode
   :ensure t
+  :init
+  (setq lsp-keymap-prefix "C-c l")
   :custom
   (lsp-auto-guess-root +1)
   :config
   (lsp-enable-imenu)
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
-  (setq lsp-keymap-prefix "C-c l")
   :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
          (python-mode . lsp)
          ;; if you want which-key integration
@@ -564,7 +565,6 @@ There are two things you can do about this warning:
   (projectile-mode t)
   :bind (
 	 ("s-p" . projectile-command-map)
-	 ("C-c p" . projectile-command-map)
 	 )
   )
 
