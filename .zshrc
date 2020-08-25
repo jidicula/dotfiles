@@ -141,3 +141,6 @@ export PATH="$HOME/.gem/ruby/2.6.0/bin:$PATH"
 
 # rbenv
 eval "$(rbenv init -)"
+
+# pyenv virtualenv-init
+eval "$(pyenv virtualenv-init -)"
