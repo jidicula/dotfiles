@@ -243,29 +243,27 @@ There are two things you can do about this warning:
 ;; lsp-mode configs
 (use-package lsp-mode
   :ensure t
+  :custom
+  (lsp-auto-guess-root +1)
   :config
   (lsp-enable-imenu)
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   (setq lsp-keymap-prefix "C-c l")
   :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
+         (python-mode . lsp)
          ;; if you want which-key integration
          (lsp-mode . lsp-enable-which-key-integration)
 	 (lsp-after-open-hook . 'lsp-enable-imenu)
 	 )
-  :commands lsp)
+  :commands (lsp lsp-deferred))
 
 ;; optionally
 (use-package lsp-ui
   :after lsp-mode
   :ensure t
-  :commands lsp-ui-mode)
-
-;; company lsp
-(use-package company-lsp
-  :after company
-  :ensure t
-  :config
-  (push 'company-lsp company-backends)
+  :commands lsp-ui-mode
+  :hook
+  (lsp-mode . lsp-ui-mode)
   )
 
 (use-package lsp-treemacs
@@ -278,6 +276,22 @@ There are two things you can do about this warning:
   :after lsp-mode
   :ensure t)
 ;; (use-package dap-LANGUAGE) to load the dap adapter for your language
+
+;; lsp Python
+(use-package lsp-python-ms
+  :after lsp-mode poetry
+  :ensure t
+  :init
+  (setq lsp-python-ms-auto-install-server t)
+  :config
+  (put 'lsp-python-ms-python-executable 'safe-local-variable 'stringp)
+  :hook
+  (hack-local-variables-hook . (lambda ()
+				 (when (derived-mode-p 'python-mode)
+				   (poetry-tracking-mode +1)
+				   (require 'lsp-python-ms)
+				   (lsp-deferred))))
+  )
 
 ;; LaTeX configs
 (use-package tex-mode
@@ -480,6 +494,7 @@ There are two things you can do about this warning:
   (global-flycheck-mode t)
   (global-set-key (kbd "C-c n") 'flycheck-next-error)
   (global-set-key (kbd "C-c p") 'flycheck-prev-error)
+  (put 'flycheck-python-mypy-executable 'safe-local-variable 'stringp)
   )
 
 ;; company
@@ -565,7 +580,7 @@ There are two things you can do about this warning:
   :after poetry
   :ensure t
   :config
-  (elpy-enable)
+  ;; (elpy-enable)
   (add-hook 'elpy-mode-hook 'poetry-tracking-mode)
   (setq elpy-rpc-virtualenv-path 'current)
   ;; elpy format on save
@@ -601,7 +616,8 @@ There are two things you can do about this warning:
 
 ;; poetry
 (use-package poetry
-  :ensure t)
+  :ensure t
+  )
 
 ;; disable pyvenv menu
 (setq pyvenv-mode nil)
