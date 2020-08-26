@@ -506,7 +506,7 @@ There are two things you can do about this warning:
   :config
   (global-flycheck-mode t)
   (global-set-key (kbd "C-c n") 'flycheck-next-error)
-  (global-set-key (kbd "C-c p") 'flycheck-prev-error)
+  (global-set-key (kbd "C-c p") 'flycheck-previous-error)
   (put 'flycheck-python-mypy-executable 'safe-local-variable 'stringp)
   )
 
