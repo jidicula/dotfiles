@@ -1,5 +1,6 @@
 tap "adoptopenjdk/openjdk"
 tap "caskformula/caskformula"
+tap "coursier/formulas"
 tap "d12frosted/emacs-plus"
 tap "github/gh"
 tap "homebrew/bundle"
@@ -57,6 +58,7 @@ brew "wakeonlan"
 brew "wget"
 brew "youtube-dl"
 brew "zlib"
+brew "coursier/formulas/coursier"
 brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-jansson", "with-modern-black-variant-icon"]
 brew "github/gh/gh"
 brew "jawshooah/pyenv/pyenv-default-packages", args: ["HEAD"]
