@@ -11,6 +11,12 @@
 ;; confirm before quitting
 (setq confirm-kill-emacs 'y-or-n-p)
 
+;; no welcome screen
+(setq inhibit-startup-screen t)
+
+;; no large file warning
+(setq large-file-warning-threshold nil)
+
 ;;; Code:
 ;; Adding MELPA to package archives
 (require 'package)
@@ -56,12 +62,6 @@ There are two things you can do about this warning:
   ;; Following line is not needed if use-package.el is in ~/.emacs.d
   ;; (add-to-list 'load-path "<path where use-package is installed>")
   (require 'use-package))
-
-;; no welcome screen
-(setq inhibit-startup-screen t)
-
-;; no large file warning
-(setq large-file-warning-threshold nil)
 
 ;; 3rd-party packages
 
