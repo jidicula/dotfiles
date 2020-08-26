@@ -242,6 +242,7 @@ There are two things you can do about this warning:
 
 ;; lsp-mode configs
 (use-package lsp-mode
+  :after poetry
   :ensure t
   :init
   (setq lsp-keymap-prefix "C-c l")
@@ -251,10 +252,10 @@ There are two things you can do about this warning:
   (lsp-enable-imenu)
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
-         (python-mode . lsp)
+         (python-mode . lsp-deferred)
          ;; if you want which-key integration
          (lsp-mode . lsp-enable-which-key-integration)
-	 (lsp-after-open-hook . 'lsp-enable-imenu)
+	 (lsp-after-open . 'lsp-enable-imenu)
 	 )
   :commands (lsp lsp-deferred))
 
@@ -280,18 +281,29 @@ There are two things you can do about this warning:
 
 ;; lsp Python
 (use-package lsp-python-ms
-  :after lsp-mode poetry
+  :after poetry
   :ensure t
   :init
   (setq lsp-python-ms-auto-install-server t)
   :config
   (put 'lsp-python-ms-python-executable 'safe-local-variable 'stringp)
+		    ;; attempt to activate Poetry env first
+		    (when (stringp (poetry-find-project-root))
+		      (poetry-venv-workon)
+		      )
   :hook
-  (hack-local-variables-hook . (lambda ()
-				 (when (derived-mode-p 'python-mode)
-				   (poetry-tracking-mode +1)
-				   (require 'lsp-python-ms)
-				   (lsp-deferred))))
+  (
+   (python-mode . (lambda ()
+                    (require 'lsp-python-ms)
+                    (lsp-deferred)
+		    ))
+   ;; if .dir-locals exists, read it first, then activate mspyls
+   (hack-local-variables . (lambda ()
+			     (when (derived-mode-p 'python-mode)
+			       (require 'lsp-python-ms)
+			       (lsp-deferred))
+			     ))
+   )
   )
 
 ;; LaTeX configs
@@ -617,6 +629,9 @@ There are two things you can do about this warning:
 ;; poetry
 (use-package poetry
   :ensure t
+  :hook
+  ;; activate poetry-tracking-mode when python-mode is active
+  (python-mode . poetry-tracking-mode)
   )
 
 ;; disable pyvenv menu
