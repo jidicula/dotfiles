@@ -6,3 +6,8 @@
 .python-version
 .eggs/
 
+# Scala
+.metals/
+.bloop/
+.ammonite/
+metals.sbt
