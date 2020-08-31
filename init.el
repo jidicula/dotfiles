@@ -63,6 +63,11 @@ There are two things you can do about this warning:
   ;; (add-to-list 'load-path "<path where use-package is installed>")
   (require 'use-package))
 
+;; Keep auto-save/backup files separate from source code:  https://github.com/scalameta/metals/issues/1027
+(setq use-package-always-ensure t
+      backup-directory-alist `((".*" . ,temporary-file-directory))
+      auto-save-file-name-transforms `((".*" ,temporary-file-directory t)))
+
 ;; 3rd-party packages
 
 ;; diminish
@@ -137,6 +142,7 @@ There are two things you can do about this warning:
   ;; (setq-default sp-escape-quotes-after-insert nil) ; Don't escape quotes
   (smartparens-global-mode t)
   (setq sp-highlight-pair-overlay nil)
+  (sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-c-mode))
   )
 
 ;; column-enforce-mode
@@ -470,7 +476,6 @@ There are two things you can do about this warning:
 	  )
 
 ;; newline after a brace and position point
-(sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-c-mode))
 (defun my-open-block-c-mode (id action context)
   (when (eq action 'insert)
     (newline)
