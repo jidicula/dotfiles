@@ -5,6 +5,7 @@
 # Python
 .python-version
 .eggs/
+.mypy_cache/
 
 # Scala
 .metals/
