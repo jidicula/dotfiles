@@ -257,11 +257,14 @@ There are two things you can do about this warning:
   (lsp-auto-guess-root +1)
   :config
   (lsp-enable-imenu)
+  (setq lsp-prefer-flymake nil)
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
          (python-mode . lsp-deferred)
+	 (scala-mode . lsp-deferred)
          ;; if you want which-key integration
          (lsp-mode . lsp-enable-which-key-integration)
+	 (lsp-mode . lsp-lens-mode)
 	 (lsp-after-open . 'lsp-enable-imenu)
 	 )
   :commands (lsp lsp-deferred))
@@ -278,12 +281,27 @@ There are two things you can do about this warning:
 (use-package lsp-treemacs
   :after lsp-mode treemacs
   :ensure t
-  :commands lsp-treemacs-errors-list)
+  :commands lsp-treemacs-errors-list
+  :config
+  )
+
+(use-package company-lsp)
+
+;; Use the Debug Adapter Protocol for running tests and debugging
+(use-package posframe
+  :ensure t
+  ;; Posframe is a pop-up tool that must be manually installed for dap-mode
+  )
+
 
 ;; optionally if you want to use debugger
 (use-package dap-mode
   :after lsp-mode
-  :ensure t)
+  :ensure t
+  :hook
+  (lsp-mode . dap-mode)
+  (lsp-mode . dap-ui-mode)
+  )
 ;; (use-package dap-LANGUAGE) to load the dap adapter for your language
 
 ;; lsp Python
@@ -311,6 +329,34 @@ There are two things you can do about this warning:
 			       (lsp-deferred))
 			     ))
    )
+  )
+
+;; Scala configs
+;; Enable scala-mode for highlighting, indentation and motion commands
+(use-package scala-mode
+  :ensure t
+  :mode "\\.s\\(cala\\|bt\\)$")
+
+;; Enable sbt mode for executing sbt commands
+(use-package sbt-mode
+  :ensure t
+  :commands sbt-start sbt-command
+  :config
+  ;; WORKAROUND: https://github.com/ensime/emacs-sbt-mode/issues/31
+  ;; allows using SPACE when in the minibuffer
+  (substitute-key-definition
+   'minibuffer-complete-word
+   'self-insert-command
+   minibuffer-local-completion-map)
+   ;; sbt-supershell kills sbt-mode:  https://github.com/hvesalai/emacs-sbt-mode/issues/152
+   (setq sbt:program-options '("-Dsbt.supershell=false"))
+)
+
+;; Add metals backend for lsp-mode
+(use-package lsp-metals
+  :ensure t
+  :config
+  (setq lsp-metals-treeview-show-when-views-received t)
   )
 
 ;; LaTeX configs
@@ -510,8 +556,9 @@ There are two things you can do about this warning:
 ;; flycheck
 (use-package flycheck
   :ensure t
-  :config
+  :init
   (global-flycheck-mode t)
+  :config
   (global-set-key (kbd "C-c n") 'flycheck-next-error)
   (global-set-key (kbd "C-c p") 'flycheck-previous-error)
   (put 'flycheck-python-mypy-executable 'safe-local-variable 'stringp)
