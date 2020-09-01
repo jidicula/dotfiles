@@ -250,7 +250,6 @@ There are two things you can do about this warning:
 
 ;; lsp-mode configs
 (use-package lsp-mode
-  :after poetry
   :ensure t
   :init
   (setq lsp-keymap-prefix "C-c l")
