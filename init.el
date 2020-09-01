@@ -348,7 +348,10 @@ There are two things you can do about this warning:
 ;; Enable scala-mode for highlighting, indentation and motion commands
 (use-package scala-mode
   :ensure t
-  :mode "\\.s\\(cala\\|bt\\)$")
+  :mode "\\.s\\(cala\\|bt\\)$"
+  :hook
+  (before-save . lsp-format-buffer)
+  )
 
 ;; Enable sbt mode for executing sbt commands
 (use-package sbt-mode
