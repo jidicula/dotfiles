@@ -113,6 +113,12 @@ There are two things you can do about this warning:
   (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
   )
 
+;; Interact with forges directly
+(use-package forge
+  :ensure t
+  :after magit
+  )
+
 ;; gitattributes-mode
 (use-package gitattributes-mode
   :ensure t
@@ -126,6 +132,13 @@ There are two things you can do about this warning:
 ;; gitignore-mode
 (use-package gitignore-mode
   :ensure t
+  )
+
+;; Issue insertion
+(use-package git-commit-insert-issue
+  :ensure t
+  :hook
+  (git-commit-mode . git-commit-insert-issue-mode)
   )
 
 ;; which-key shows all available keybindings
