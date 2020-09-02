@@ -271,6 +271,7 @@ There are two things you can do about this warning:
   :config
   (lsp-enable-imenu)
   (setq lsp-prefer-flymake nil)
+  (setq lsp-headerline-breadcrumb-enable t)
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
          (python-mode . lsp-deferred)
@@ -289,13 +290,14 @@ There are two things you can do about this warning:
   :commands lsp-ui-mode
   :hook
   (lsp-mode . lsp-ui-mode)
+  :config
+  ;; (setq lsp-ui-doc-use-webkit t) 	;very buggy webkit doc windows
   )
 
 (use-package lsp-treemacs
   :after lsp-mode treemacs
   :ensure t
   :commands lsp-treemacs-errors-list
-  :config
   )
 
 (use-package company-lsp)
