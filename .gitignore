@@ -12,3 +12,5 @@
 .bloop/
 .ammonite/
 metals.sbt
+target
+*.class
