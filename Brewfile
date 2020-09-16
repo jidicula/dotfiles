@@ -61,7 +61,7 @@ brew "wget"
 brew "youtube-dl"
 brew "zlib"
 brew "coursier/formulas/coursier"
-brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-jansson", "with-modern-black-variant-icon"]
+brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-mailutils", "with-modern-black-variant-icon", "with-xwidgets"]
 brew "jawshooah/pyenv/pyenv-default-packages", args: ["HEAD"]
 cask "adobe-acrobat-reader"
 cask "balenaetcher"
