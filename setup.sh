@@ -20,6 +20,10 @@ echo "(load \"~/prog/dotfiles/init.el\")" >> ~/.emacs
 # Set up ZSH config
 echo "source \"$HOME/prog/dotfiles/.zshrc\"" >> ~/.zshrc
 
+# Open Karabiner for the first time
+open "/Applications/Karabiner-Elements.app"
+cp karabiner.json "$HOME/.config/karabiner/"
+
 # Set up macOS system configs
 chmod +x system_config.sh
 ./system_config.sh || echo "Failed with code $?" && exit
