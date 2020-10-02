@@ -17,6 +17,9 @@ gpg --full-generate-key
 # Set up Emacs config
 echo "(load \"~/prog/dotfiles/init.el\")" >> ~/.emacs
 
+# Set up ZSH config
+echo "source \"$HOME/prog/dotfiles/.zshrc\"" >> ~/.zshrc
+
 # Set up macOS system configs
 chmod +x system_config.sh
 ./system_config.sh || echo "Failed with code $?" && exit
