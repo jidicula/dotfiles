@@ -1,0 +1,19 @@
+# This is Git's per-user configuration file.
+[user]
+# Please adapt and uncomment the following lines:
+	name = jidicula
+	email = ""
+	signingkey = ""
+[commit]
+	template = ~/prog/dotfiles/commit-message
+	gpgSign = true
+[init]
+	templatedir = ~/.git-templates
+	defaultBranch = "main"
+[branch]
+	autosetuprebase = always
+[core]
+	excludesfile = ~/prog/dotfiles/gitignore
+	autocrlf = input
+[github]
+	user = jidicula
