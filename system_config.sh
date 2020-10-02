@@ -143,6 +143,9 @@ defaults write com.apple.finder FXInfoPanesExpanded -dict \
 #                             Dock and hot corners                            #
 ###############################################################################
 
+# Set dock position
+defaults write com.apple.dock orientation -string left && killall Dock
+
 # Enable spring loading for all Dock items
 defaults write com.apple.dock enable-spring-load-actions-on-all-items -bool true
 # Don’t show recent applications in Dock
