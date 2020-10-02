@@ -65,6 +65,13 @@ defaults write com.apple.helpviewer DevMode -bool true
 # in the login window
 sudo defaults write /Library/Preferences/com.apple.loginwindow AdminHostInfo HostName
 
+# Set date format
+defaults write com.apple.menuextra.clock DateFormat -string "EEE HH:mm:ss"
+
+
+# Restart menu bar
+killall SystemUIServer
+
 ###############################################################################
 #               Trackpad, mouse, keyboard, Bluetooth, and input               #
 ###############################################################################
