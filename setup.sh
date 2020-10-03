@@ -28,5 +28,8 @@ cp karabiner.json "$HOME/.config/karabiner/"
 chmod +x system_config.sh
 ./system_config.sh || echo "Failed with code $?" && exit
 
+# Make user-specific Applications directory
+mkdir "$HOME/Applications"
+
 # Reboot machine
 sudo reboot
