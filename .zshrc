@@ -150,3 +150,6 @@ eval "$(pyenv virtualenv-init -)"
 # openjdk11
 export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
 export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
+
+# source zprofile in case any programs have added configs in there (e.g. FSL)
+source "$HOME/.zprofile"
