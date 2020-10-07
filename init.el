@@ -346,6 +346,13 @@ There are two things you can do about this warning:
    )
   )
 
+;; python-black
+(use-package python-black
+  :ensure t
+  :hook
+  (python-mode . python-black-on-save-mode)
+  )
+
 ;; Scala configs
 ;; Enable scala-mode for highlighting, indentation and motion commands
 (use-package scala-mode
@@ -949,5 +956,6 @@ then enter the text in that file's own buffer.")
 
 ;; set dir local vars as safe
 (setq safe-local-variable-values
-      '((eval remove-hook 'elpy-mode-hook 'elpy-format-on-save t)
+      '((python-black-extra-args "-S")
+	(eval remove-hook 'elpy-mode-hook 'elpy-format-on-save t)
 	(lexical-binding . t)))
