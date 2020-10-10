@@ -618,18 +618,18 @@ There are two things you can do about this warning:
 
 ;; company-emoji
 ;; https://github.com/idcrook/.emacs.d/blob/bb05f12d63a4e7753c1585938fc76d3142aea105/elisp/base-platforms.el#L167-L174
-(use-package company-emoji
-  :after company
-  :ensure t
-  :init
-  (add-to-list 'company-backends 'company-emoji)
-  :if (version< "27.0" emacs-version)
-  :config
-  (set-fontset-font
-     "fontset-default" 'unicode "Apple Color Emoji" nil 'prepend)
-  (set-fontset-font
-   t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend)
-  )
+;; (use-package company-emoji
+;;   :after company
+;;   :ensure t
+;;   :init
+;;   (add-to-list 'company-backends 'company-emoji)
+;;   :if (version< "27.0" emacs-version)
+;;   :config
+;;   (set-fontset-font
+;;      "fontset-default" 'unicode "Apple Color Emoji" nil 'prepend)
+;;   (set-fontset-font
+;;    t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend)
+;;   )
 
 ;; company-quickhelp
 (use-package company-quickhelp
