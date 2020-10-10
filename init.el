@@ -326,7 +326,7 @@ There are two things you can do about this warning:
   :init
   (setq lsp-python-ms-auto-install-server t)
   :config
-  (put 'lsp-python-ms-python-executable 'safe-local-variable 'stringp)
+  (put 'lsp-python-ms-python-executable 'safe-local-variable #'stringp)
 		    ;; attempt to activate Poetry env first
 		    (when (stringp (poetry-find-project-root))
 		      (poetry-venv-workon)
@@ -351,6 +351,9 @@ There are two things you can do about this warning:
   :ensure t
   :hook
   (python-mode . python-black-on-save-mode)
+  :init
+  (put 'python-black-command 'safe-local-variable #'stringp)
+  (put 'python-black-extra-args 'safe-local-variable #'stringp)
   )
 
 ;; Scala configs
@@ -586,7 +589,7 @@ There are two things you can do about this warning:
   :config
   (global-set-key (kbd "C-c n") 'flycheck-next-error)
   (global-set-key (kbd "C-c p") 'flycheck-previous-error)
-  (put 'flycheck-python-mypy-executable 'safe-local-variable 'stringp)
+  (put 'flycheck-python-mypy-executable 'safe-local-variable #'stringp)
   )
 
 ;; company
