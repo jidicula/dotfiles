@@ -51,6 +51,7 @@ brew "osx-cpu-temp"
 brew "pandoc"
 brew "poppler"
 brew "pdf2svg"
+brew "pigz"
 brew "pyenv"
 brew "pyenv-ccache"
 brew "python@2", link: false
