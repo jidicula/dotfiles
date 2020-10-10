@@ -354,6 +354,7 @@ There are two things you can do about this warning:
   :init
   (put 'python-black-command 'safe-local-variable #'stringp)
   (put 'python-black-extra-args 'safe-local-variable #'stringp)
+  (put 'python-black-on-save-mode 'safe-local-variable #'booleanp)
   )
 
 ;; Scala configs
