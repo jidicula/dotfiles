@@ -151,7 +151,7 @@ defaults write com.apple.finder FXInfoPanesExpanded -dict \
 ###############################################################################
 
 # Set dock position
-defaults write com.apple.dock orientation -string left && killall Dock
+defaults write com.apple.dock orientation -string left
 
 # Enable spring loading for all Dock items
 defaults write com.apple.dock enable-spring-load-actions-on-all-items -bool true
@@ -164,6 +164,9 @@ defaults write com.apple.dock wvous-bl-modifier -int 0
 
 # Scroll to open and close Dock stacks
 defaults write com.apple.dock scroll-to-open -bool true
+
+# Save Dock preferences
+killall Dock
 
 ###############################################################################
 #                                    Spaces                                   #
