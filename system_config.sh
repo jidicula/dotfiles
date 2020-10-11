@@ -162,6 +162,8 @@ defaults write com.apple.dock show-recents -bool false
 defaults write com.apple.dock wvous-bl-corner -int 13
 defaults write com.apple.dock wvous-bl-modifier -int 0
 
+# Scroll to open and close Dock stacks
+defaults write com.apple.dock scroll-to-open -bool true
 
 ###############################################################################
 #                                    Spaces                                   #
