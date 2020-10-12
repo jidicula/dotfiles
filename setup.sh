@@ -11,6 +11,12 @@ cp -r git-templates ~/.git-templates
 # Install Homebrew packages
 brew bundle install || echo "Failed with code $?" && exit
 
+# Install Oh My Zsh
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+
+# Install Pure
+npm install --global pure-prompt
+
 # Create GPG key
 gpg --full-generate-key
 
