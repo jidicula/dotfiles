@@ -54,6 +54,7 @@ brew "pdf2svg"
 brew "pigz"
 brew "pyenv"
 brew "pyenv-ccache"
+brew "pyenv-virtualenv"
 brew "python@2", link: false
 brew "rbenv"
 brew "ripgrep"
