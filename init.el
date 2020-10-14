@@ -327,10 +327,10 @@ There are two things you can do about this warning:
   (setq lsp-python-ms-auto-install-server t)
   :config
   (put 'lsp-python-ms-python-executable 'safe-local-variable #'stringp)
-		    ;; attempt to activate Poetry env first
-		    (when (stringp (poetry-find-project-root))
-		      (poetry-venv-workon)
-		      )
+  ;; attempt to activate Poetry env first
+  (when (stringp (poetry-find-project-root))
+    (poetry-venv-workon)
+    )
   :hook
   (
    (python-mode . (lambda ()
