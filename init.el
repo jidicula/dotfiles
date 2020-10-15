@@ -799,6 +799,8 @@ There are two things you can do about this warning:
 ;; prettier.el for linting web files
 (use-package prettier
   :ensure t
+  :config
+  (put 'prettier-mode 'safe-local-variable #'booleanp)
   :hook (
 	 (web-mode . prettier-mode)
 	 )
