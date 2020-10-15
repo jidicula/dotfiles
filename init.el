@@ -713,6 +713,9 @@ There are two things you can do about this warning:
 ;; poetry
 (use-package poetry
   :ensure t
+  ;; :init
+  ;; imperfect tracking strategy causes lags in builds
+  ;; (setq poetry-tracking-strategy 'switch-buffer)
   :hook
   ;; activate poetry-tracking-mode when python-mode is active
   (python-mode . poetry-tracking-mode)
