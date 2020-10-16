@@ -135,11 +135,12 @@ There are two things you can do about this warning:
   )
 
 ;; Issue insertion
-(use-package git-commit-insert-issue
-  :ensure t
-  :hook
-  (git-commit-mode . git-commit-insert-issue-mode)
-  )
+;; doesn't work with private repos
+;; (use-package git-commit-insert-issue
+;;   :ensure t
+;;   :hook
+;;   (git-commit-mode . git-commit-insert-issue-mode)
+;;   )
 
 ;; which-key shows all available keybindings
 (use-package which-key
