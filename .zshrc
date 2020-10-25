@@ -144,6 +144,10 @@ export PATH="$HOME/.gem/ruby/2.6.0/bin:$PATH"
 # rbenv
 eval "$(rbenv init -)"
 
+# Python Tcl-Tk options for pyenv
+PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I/usr/local/opt/tcl-tk/include' --with-tcltk-libs='-L/usr/local/opt/tcl-tk/lib -ltcl8.6 -ltk8.6'"
+TK_SILENCE_DEPRECATION=1
+
 # pyenv virtualenv-init
 eval "$(pyenv virtualenv-init -)"
 
