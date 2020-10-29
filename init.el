@@ -801,7 +801,7 @@ There are two things you can do about this warning:
 (use-package prettier
   :ensure t
   :config
-  (put 'prettier-mode 'safe-local-variable #'booleanp)
+  (put 'prettier-mode 'safe-local-variable #'fixnump)
   :hook (
 	 (web-mode . prettier-mode)
 	 )
