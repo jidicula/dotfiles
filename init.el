@@ -807,6 +807,14 @@ There are two things you can do about this warning:
 	 )
   )
 
+;; shfmt.el for autoformatting shell scripts
+(use-package shfmt
+  :ensure t
+  :hook (
+	 (sh-mode . shfmt-on-save-mode)
+	 )
+  )
+
 ;; end of 3rd-party packages
 
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
