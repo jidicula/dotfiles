@@ -21,10 +21,10 @@ npm install --global pure-prompt
 gpg --full-generate-key
 
 # Set up Emacs config
-echo "(load \"~/prog/dotfiles/init.el\")" >> ~/.emacs
+echo "(load \"~/prog/dotfiles/init.el\")" >>~/.emacs
 
 # Set up ZSH config
-echo "source \"$HOME/prog/dotfiles/.zshrc\"" >> ~/.zshrc
+echo "source \"$HOME/prog/dotfiles/.zshrc\"" >>~/.zshrc
 
 # Open Karabiner for the first time
 open "/Applications/Karabiner-Elements.app"
