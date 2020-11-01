@@ -1,5 +1,10 @@
 [type][module] TITLE 50 CHARS
 types: chore, docs, feat, fix, refactor, style, test
+Resolves [issue](
+https://linktoissue)
+Related to [issue](
+https://linktoissue)
+
 **Why this change was necessary**
 
 
@@ -11,7 +16,3 @@ types: chore, docs, feat, fix, refactor, style, test
 
 **Additional context/notes/links**
 
-Resolves [issue](
-https://linktoissue)
-Related to [issue](
-https://linktoissue)
