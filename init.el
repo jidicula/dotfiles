@@ -559,9 +559,11 @@ There are two things you can do about this warning:
     (previous-line)
     (indent-according-to-mode)))
 
-;; rg
+;; rg (ripgrep tool)
 (use-package rg
   :ensure t
+  :init
+  (rg-enable-default-bindings)
   )
 
 ;; dumb-jump
