@@ -17,3 +17,5 @@
 	autocrlf = input
 [github]
 	user = jidicula
+[merge]
+	conflictstyle=diff3
