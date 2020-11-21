@@ -98,6 +98,9 @@ defaults write com.apple.BluetoothAudioAgent "Negotiated Bitpool" -int 80
 defaults write com.apple.BluetoothAudioAgent "Negotiated Bitpool Min" -int 80
 defaults write com.apple.BluetoothAudioAgent "Negotiated Bitpool Max" -int 80
 
+# Vertical 3-finger swipe app expose
+defaults write read com.apple.driver.AppleBluetoothMultitouch.trackpad TrackpadThreeFingerVertSwipeGesture -int 2
+
 ###############################################################################
 #                                    screen                                   #
 ###############################################################################
