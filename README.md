@@ -9,6 +9,6 @@ A collection of dotfiles I use for config.
 2. Set up your SSH key.
 3. `git clone git@github.com:jidicula/dotfiles.git`
 4. `cd dotfiles`
-6. Install SFMono and Roboto Mono fonts.
+6. Install SFMono fonts.
 5. Set up Terminal theme.
 7. `./setup.sh`
