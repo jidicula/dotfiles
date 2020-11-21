@@ -69,24 +69,25 @@ export ZSH="$HOME/.oh-my-zsh"
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
-    osx
-    brew
-    emacs
-    python
-    pip
-    sbt
-    scala
-    gpg-agent
-    macports
+	osx
+	brew
+	emacs
+	python
+	pip
+	sbt
+	scala
+	gpg-agent
+	macports
 )
 
 source $ZSH/oh-my-zsh.sh
 
 # Pure must be loaded after `source $ZSH/oh-my-zsh.sh`
-autoload -U promptinit; promptinit
-zstyle :prompt:pure:prompt:error color 9 # bright red for failure
+autoload -U promptinit
+promptinit
+zstyle :prompt:pure:prompt:error color 9   # bright red for failure
 zstyle :prompt:pure:prompt:success color 2 # green for success
-zstyle :prompt:pure:git:branch color 13 # bright magenta for git branch
+zstyle :prompt:pure:git:branch color 13    # bright magenta for git branch
 prompt pure
 
 # User configuration
@@ -98,9 +99,9 @@ prompt pure
 
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
-  export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
+	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
 else
-  export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
+	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
 fi
 
 # Compilation flags
@@ -127,7 +128,7 @@ export PATH="/usr/local/opt/openssl/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/
 
 # git config --global branch.autosetuprebase always
 if command -v pyenv 1>/dev/null 2>&1; then
-  eval "$(pyenv init -)"
+	eval "$(pyenv init -)"
 fi
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1
