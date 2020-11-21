@@ -6,9 +6,13 @@ A collection of dotfiles I use for config.
 
 0. `$ mkdir prog && cd prog`
 1. `$ xcode-select --install`
-2. Set up your SSH key.
-3. `git clone git@github.com:jidicula/dotfiles.git`
-4. `cd dotfiles`
+2. `$ echo "Hostname: " &&
+read -r HOSTNAME && sudo scutil --set ComputerName "$HOSTNAME" &&
+scutil --set HostName "$HOSTNAME" &&
+sudo scutil --set LocalHostName "$HOSTNAME"` and restart shell.
+3. Set up your SSH key.
+4. `git clone git@github.com:jidicula/dotfiles.git`
+5. `cd dotfiles`
 6. Install SFMono fonts.
-5. Set up Terminal theme.
-7. `./setup.sh`
+7. Set up Terminal theme.
+8. `./setup.sh`
