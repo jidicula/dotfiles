@@ -8,8 +8,11 @@ osascript -e 'tell application "System Preferences" to quit'
 sudo -v
 
 # Keep-alive: update existing `sudo` time stamp until `.macos` has finished
-while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
-
+while true; do
+	sudo -n true
+	sleep 60
+	kill -0 "$$" || exit
+done 2>/dev/null &
 
 ###############################################################################
 #                                General UI/UX                                #
@@ -236,7 +239,6 @@ defaults write com.apple.DiskUtility advanced-image-options -bool true
 #                                Mac App Store                                #
 ###############################################################################
 
-
 # Enable the WebKit Developer Tools in the Mac App Store
 defaults write com.apple.appstore WebKitDeveloperExtras -bool true
 
@@ -255,7 +257,6 @@ defaults write com.apple.SoftwareUpdate AutomaticDownload -int 1
 ###############################################################################
 #                                   Photos                                    #
 ###############################################################################
-
 
 # Prevent Photos from opening automatically when devices are plugged in
 defaults -currentHost write com.apple.ImageCapture disableHotPlug -bool true
