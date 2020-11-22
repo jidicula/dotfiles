@@ -22,10 +22,13 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:
 npm install --global pure-prompt
 
 # Set up Emacs config
-echo "(load \"~/prog/dotfiles/init.el\")" >>~/.emacs
+echo "(load \"~/prog/dotfiles/init.el\")" >~/.emacs
+
+# Link Emacs.app to Applications directory
+ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
 
 # Set up ZSH config
-echo "source \"$HOME/prog/dotfiles/.zshrc\"" >>~/.zshrc
+echo "source \"$HOME/prog/dotfiles/.zshrc\"" >~/.zshrc
 
 # Open Karabiner for the first time
 open "/Applications/Karabiner-Elements.app"
