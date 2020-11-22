@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+sudo xcodebuild -license accept
+
 # copy Git configs and templates
 cp gitconfig ~/.gitconfig
 cp gitignore ~/.gitignore
