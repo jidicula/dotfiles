@@ -1,5 +1,4 @@
 tap "adoptopenjdk/openjdk"
-tap "caskformula/caskformula"
 tap "coursier/formulas"
 tap "d12frosted/emacs-plus"
 tap "filippo.io/age", "https://filippo.io/age"
