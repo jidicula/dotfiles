@@ -19,9 +19,6 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/too
 # Install Pure
 npm install --global pure-prompt
 
-# Create GPG key
-gpg --full-generate-key
-
 # Set up Emacs config
 echo "(load \"~/prog/dotfiles/init.el\")" >>~/.emacs
 
