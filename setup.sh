@@ -11,7 +11,7 @@ cp -r git-templates ~/.git-templates
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
 
 # Install Homebrew packages
-brew bundle install || echo "Failed with code $?" && exit
+brew bundle install || exit
 
 # Install Oh My Zsh
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
@@ -34,7 +34,7 @@ cp karabiner.json "$HOME/.config/karabiner/"
 
 # Set up macOS system configs
 chmod +x system_config.sh
-./system_config.sh || echo "Failed with code $?" && exit
+./system_config.sh || exit
 
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"
