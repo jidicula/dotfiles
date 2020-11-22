@@ -117,7 +117,7 @@ fi
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 source "$HOME/.zsh_aliases"
 
-source "$HOME/.oh-my-zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
 # PATH
 export PATH="/usr/local/opt/openssl/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/usr/local/MacGPG2/bin:/Library/TeX/texbin:/Users/johanan/.local/bin:"
@@ -157,4 +157,5 @@ export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
 export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
 
 # source zprofile in case any programs have added configs in there (e.g. FSL)
+touch "$HOME/.zprofile"
 source "$HOME/.zprofile"
