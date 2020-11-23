@@ -28,6 +28,9 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:
 # Install Pure
 npm install --global pure-prompt
 
+# Install Poetry
+curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
+
 # Set up Emacs config
 echo "(load \"~/prog/dotfiles/init.el\")" >~/.emacs
 
