@@ -17,6 +17,8 @@
 ;; no large file warning
 (setq large-file-warning-threshold nil)
 
+(setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
+
 ;;; Code:
 ;; Adding MELPA to package archives
 (require 'package)
@@ -818,8 +820,6 @@ There are two things you can do about this warning:
   )
 
 ;; end of 3rd-party packages
-
-(setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 (put 'upcase-region 'disabled nil)
 
 ;; set option key as Meta
