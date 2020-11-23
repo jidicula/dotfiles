@@ -14,10 +14,10 @@
         "revision": "d1a530ada501e983aef2748411b947b8c5696ac9"
       },
       "homebrew/cask": {
-        "revision": "b0c18dab7bba4ec96dd0f29ce800ce94cbb20f8e"
+        "revision": "226aeb467e83c6b380374cd1efd2bd38b08e0c40"
       },
       "homebrew/core": {
-        "revision": "ff6837d72c9db03b79d4749fa9d767a26b8605b5"
+        "revision": "359aa22fb8968303115c7c67d1080b39b3db2216"
       },
       "jawshooah/pyenv": {
         "revision": "99df0b27e09c04f943527af83492f5ded4fe5ba9"
@@ -38,13 +38,13 @@
         }
       },
       "homebrew/cask-drivers": {
-        "revision": "33bb5f2b77a5754a48bf95b08dbca8e81d656ada"
+        "revision": "c1705578f54b98333d4f53e3bd85d73f7e735f53"
       },
       "homebrew/cask-fonts": {
-        "revision": "4773af4e7ab3dc90025fa7d1b780dd190741a286"
+        "revision": "f5309af8697dfc64c21ecf0061bb3f518c2356c4"
       },
       "homebrew/cask-versions": {
-        "revision": "d99c980938e08682acfff2b302b0c2083e8437f9"
+        "revision": "ad0356d2e921eaa3034cc4ea14b6610759b22baf"
       }
     },
     "cask": {
@@ -247,7 +247,7 @@
         }
       },
       "safari-technology-preview": {
-        "version": "116,001-69966-20201119-d87990cd-c094-40a8-a616-a4497506caed",
+        "version": "116,001-82546-20201119-d46bca22-a3dc-43c3-9fcf-29f7343956ac",
         "options": {
           "full_name": "safari-technology-preview"
         }
@@ -262,6 +262,30 @@
         "version": "4.11.1",
         "options": {
           "full_name": "slack"
+        }
+      },
+      "discord-ptb": {
+        "version": "0.0.51",
+        "options": {
+          "full_name": "discord-ptb"
+        }
+      },
+      "hacker-menu": {
+        "version": "1.1.5",
+        "options": {
+          "full_name": "hacker-menu"
+        }
+      },
+      "virtualbox": {
+        "version": "6.1.16,140961",
+        "options": {
+          "full_name": "virtualbox"
+        }
+      },
+      "vlc": {
+        "version": "3.0.11.1",
+        "options": {
+          "full_name": "vlc"
         }
       }
     },
@@ -1943,7 +1967,7 @@
         "bottle": false
       },
       "sbt": {
-        "version": "1.4.3",
+        "version": "1.4.4",
         "bottle": false
       },
       "shfmt": {
@@ -1981,12 +2005,12 @@
   "system": {
     "macos": {
       "catalina": {
-        "HOMEBREW_VERSION": "2.4.13",
+        "HOMEBREW_VERSION": "2.5.11",
         "HOMEBREW_PREFIX": "/usr/local",
-        "Homebrew/homebrew-core": "085791ecf990b7dfe53173fc0669dd984648e9c1",
-        "CLT": "1103.0.32.62",
-        "Xcode": "11.6",
-        "macOS": "10.15.6"
+        "Homebrew/homebrew-core": "359aa22fb8968303115c7c67d1080b39b3db2216",
+        "CLT": "12.2.0.0.1.1604628099",
+        "Xcode": "12.2",
+        "macOS": "10.15.7"
       },
       "big_sur": {
         "HOMEBREW_VERSION": "2.5.11",
