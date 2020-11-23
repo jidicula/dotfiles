@@ -115,7 +115,7 @@ fi
 # Example aliases
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
-source "$HOME/.zsh_aliases"
+source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 
 source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
