@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: macOS 11.0 Big Sur integration tests
+name: macOS 11.0 Big Sur
 
 # Controls when the action will run.
 on:

@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: macOS 10.15 Catalina integration tests
+name: macOS 10.15 Catalina
 
 # Controls when the action will run.
 on:

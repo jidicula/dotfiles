@@ -1,3 +1,5 @@
+![macOS 11.0 Big Sur](https://github.com/jidicula/dotfiles/workflows/macOS%2011.0%20Big%20Sur/badge.svg) ![macOS 10.15 Catalina](https://github.com/jidicula/dotfiles/workflows/macOS%2010.15%20Catalina/badge.svg)
+
 # dotfiles
 
 A collection of dotfiles I use for config.
