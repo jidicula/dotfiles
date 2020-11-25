@@ -50,6 +50,3 @@ chmod +x system_config.sh
 
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"
-
-# Reboot machine
-sudo reboot
