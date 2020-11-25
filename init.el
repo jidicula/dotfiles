@@ -615,7 +615,8 @@ There are two things you can do about this warning:
   :ensure t
   :hook (company-mode . company-box-mode)
   :config
-  (set-face-background 'company-box-background "#555555")
+  (set-face-background 'company-tooltip "#555555")
+  (set-face-background 'company-tooltip-selection "#999999")
   )
 
 ;; company-emoji
