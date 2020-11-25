@@ -18,7 +18,7 @@ done 2>/dev/null &
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
 
 # Install Homebrew packages
-brew bundle install || exit
+brew bundle install || echo "Error: Bundle failed with exit code $?."
 
 # Install Oh My Zsh
 (sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
