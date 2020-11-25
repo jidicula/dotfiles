@@ -2,12 +2,12 @@
 
 name: macOS 10.15 Catalina integration tests
 
-# Controls when the action will run. 
+# Controls when the action will run.
 on:
   # Triggers the workflow on push or pull request events but only for the master branch
   push:
     branches: [ master ]
-    paths: 
+    paths:
       - 'setup.sh'
       - 'system_config.sh'
       - 'Brewfile'
