@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+HOSTNAME="$1"
+
 sudo xcodebuild -license accept
 
 # copy Git configs and templates
@@ -46,7 +48,7 @@ cp karabiner.json "$HOME/.config/karabiner/"
 
 # Set up macOS system configs
 chmod +x system_config.sh
-./system_config.sh || exit
+./system_config.sh "$HOSTNAME" || exit
 
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"

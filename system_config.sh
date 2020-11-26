@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+HOSTNAME="$1"
+
 # Close any open System Preferences panes, to prevent them from overriding
 # settings we’re about to change
 osascript -e 'tell application "System Preferences" to quit'
@@ -19,11 +21,7 @@ done 2>/dev/null &
 ###############################################################################
 
 # Set computer name (as done via System Preferences → Sharing)
-echo "Computer Name: "
-read -r COMPUTERNAME
-sudo scutil --set ComputerName "$COMPUTERNAME"
-echo "Hostname: "
-read -r HOSTNAME
+sudo scutil --set ComputerName "$HOSTNAME"
 sudo scutil --set HostName "$HOSTNAME"
 sudo scutil --set LocalHostName "$HOSTNAME"
 sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "$HOSTNAME"
