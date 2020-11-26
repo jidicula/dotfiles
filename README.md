@@ -1,4 +1,4 @@
-![macOS 11.0 Big Sur](https://github.com/jidicula/dotfiles/workflows/macOS%2011.0%20Big%20Sur/badge.svg) ![macOS 10.15 Catalina](https://github.com/jidicula/dotfiles/workflows/macOS%2010.15%20Catalina/badge.svg)
+[![macOS 11.0 Big Sur](https://github.com/jidicula/dotfiles/workflows/macOS%2011.0%20Big%20Sur/badge.svg)](https://github.com/jidicula/dotfiles/actions?query=workflow%3A%22macOS+11.0+Big+Sur%22) [![macOS 10.15 Catalina](https://github.com/jidicula/dotfiles/workflows/macOS%2010.15%20Catalina/badge.svg)](https://github.com/jidicula/dotfiles/actions?query=workflow%3A%22macOS+10.15+Catalina%22)
 
 # dotfiles
 
