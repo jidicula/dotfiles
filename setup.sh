@@ -47,7 +47,8 @@ ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
 echo "source \"$HOME/prog/dotfiles/.zshrc\"" >~/.zshrc
 
 # Open Karabiner for the first time
-open "/Applications/Karabiner-Elements.app"
+open "/Applications/Karabiner-Elements.app" && sleep 60
+killall "Karabiner-Elements"
 cp karabiner.json "$HOME/.config/karabiner/"
 
 # Set up macOS system configs
