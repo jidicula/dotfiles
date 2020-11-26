@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 HOSTNAME="$1"
+BREW_STATUS=0
 
 # Update XCode Command Line Tools
 sudo rm -rf /Library/Developer/CommandLineTools
@@ -24,7 +25,14 @@ done 2>/dev/null &
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
 
 # Install Homebrew packages
-brew bundle install
+brew bundle install || BREW_STATUS=7
+
+# Retry brew bundle install once if anything failed
+if [[ "$BREW_STATUS" -ne 0 ]]; then
+	BREW_STATUS=0
+	./teardown.sh
+	brew bundle install || BREW_STATUS=7
+fi
 
 # Install Oh My Zsh
 (sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
@@ -57,3 +65,7 @@ chmod +x system_config.sh
 
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"
+
+if [[ "$BREW_STATUS" -ne 0 ]]; then
+	echo "Homebrew Bundle failed, check logs" && exit "$BREW_STATUS"
+fi
