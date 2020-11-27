@@ -89,6 +89,7 @@ There are two things you can do about this warning:
   :ensure t
   :config
   (setq exec-path-from-shell-check-startup-files nil)
+  (setq exec-path-from-shell-arguments '("-l"))
   (exec-path-from-shell-initialize)
   )
 
