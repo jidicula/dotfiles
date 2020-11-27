@@ -3,10 +3,6 @@
 HOSTNAME="$1"
 BREW_STATUS=0
 
-# Update XCode Command Line Tools
-sudo rm -rf /Library/Developer/CommandLineTools
-xcode-select --install
-
 sudo xcodebuild -license accept
 
 # copy Git configs and templates
