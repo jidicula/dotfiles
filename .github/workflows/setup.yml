@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Validate syntax
-        run: bash -n "*.sh"
+        run: bash -n *.sh
 
       - name: Set XCode version
         if: contains(matrix.os, 'macos-11.0')

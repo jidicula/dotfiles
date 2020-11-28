@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Validate syntax
-        run: bash -n "*.sh"
+        run: bash -n *.sh
 
       - name: Set XCode version
         run: sudo xcode-select -s "/Applications/Xcode_12.2.app"
