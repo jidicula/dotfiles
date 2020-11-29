@@ -17,4 +17,4 @@ sudo scutil --set LocalHostName "$HOSTNAME"` and restart shell.
 5. `cd dotfiles`
 6. Install SFMono fonts.
 7. Set up Terminal theme.
-8. `./setup.sh`
+8. `./setup.sh chosen_hostname`
