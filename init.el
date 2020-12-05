@@ -612,6 +612,9 @@ There are two things you can do about this warning:
   (put 'flycheck-python-mypy-executable 'safe-local-variable #'stringp)
   )
 
+(use-package all-the-icons
+  :ensure t)
+
 ;; company
 (use-package company
   :ensure t
