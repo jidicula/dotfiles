@@ -676,8 +676,9 @@ There are two things you can do about this warning:
 ;; yaml-mode
 (use-package yaml-mode
   :ensure t
-  :init
-  (add-to-list 'auto-mode-alist '("\\.yml\\'" . yaml-mode))
+  :ensure-system-package (yaml-language-server . "npm i -g yaml-language-server")
+  :mode ("\\.yml\\'"
+         "\\.yaml\\'")
   )
 
 ;; elpy
