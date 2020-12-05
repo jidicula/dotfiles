@@ -19,6 +19,15 @@
 
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
+;; Useful for https://github.com/dunn/company-emoji
+;; https://www.reddit.com/r/emacs/comments/8ph0hq/i_have_converted_from_the_mac_port_to_the_ns_port/
+;; not tested with emacs26 (requires a patched Emacs version for multi-color font support)
+(if (version< "27.0" emacs-version)
+    (set-fontset-font
+     "fontset-default" 'unicode "Apple Color Emoji" nil 'prepend)
+  (set-fontset-font
+   t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend))
+
 ;;; Code:
 ;; Adding MELPA to package archives
 (require 'package)
