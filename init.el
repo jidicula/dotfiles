@@ -781,9 +781,15 @@ There are two things you can do about this warning:
 (use-package web-mode
   :ensure t
   :mode
-  ("\\.ejs\\'" "\\.hbs\\'" "\\.html\\'" "\\.php\\'" "\\.[jt]sx?\\'")
+  ("\\.ejs\\'"
+   "\\.hbs\\'"
+   "\\.html\\'"
+   "\\.php\\'"
+   "\\.[jt]sx?\\'"
+   "\\.css?\\'")
   :hook (
 	 (web-mode . company-mode)
+	 (scss-mode . web-mode)
 	 )
   :config
   (setq web-mode-content-types-alist '(("jsx" . "\\.[jt]sx?\\'")))
