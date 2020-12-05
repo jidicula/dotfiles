@@ -748,6 +748,11 @@ There are two things you can do about this warning:
   :ensure t
   )
 
+;; emacs-lisp
+(use-package emacs-lisp
+  :ensure nil
+  :defer t)
+
 ;; xkcd
 (use-package xkcd
   :ensure t)
