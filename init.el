@@ -641,6 +641,7 @@ There are two things you can do about this warning:
 ;; projectile
 (use-package projectile
   :ensure t
+  :diminish projectile-mode
   :init
   (projectile-mode t)
   :bind (
