@@ -2,6 +2,8 @@
 ;;; Commentary:
 ;;; Load it from .emacs with `(load "path/to/init.el")`
 
+(defconst emacs-start-time (current-time))
+
 ;; increase gc-cons-threshold to 100mb
 (setq gc-cons-threshold 100000000)
 
@@ -1017,3 +1019,9 @@ then enter the text in that file's own buffer.")
       '((python-black-extra-args "-S")
 	(eval remove-hook 'elpy-mode-hook 'elpy-format-on-save t)
 	(lexical-binding . t)))
+
+;;; show package load time
+(let ((elapsed (float-time (time-subtract (current-time)
+                                          emacs-start-time))))
+  (message "Loaded packages in %.3fs" elapsed))
+;;; init.el ends here
