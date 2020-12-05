@@ -367,6 +367,11 @@ There are two things you can do about this warning:
 (use-package dockerfile-mode
   :mode "Dockerfile")
 
+;; json-mode
+(use-package json-mode
+  :ensure-system-package (vscode-json-languageserver . "npm i -g vscode-json-languageserver")
+  :defer t)
+
 ;; Scala configs
 ;; Enable scala-mode for highlighting, indentation and motion commands
 (use-package scala-mode
