@@ -363,6 +363,10 @@ There are two things you can do about this warning:
   (put 'python-black-on-save-mode 'safe-local-variable #'booleanp)
   )
 
+;; dockerfile-mode
+(use-package dockerfile-mode
+  :mode "Dockerfile")
+
 ;; Scala configs
 ;; Enable scala-mode for highlighting, indentation and motion commands
 (use-package scala-mode
