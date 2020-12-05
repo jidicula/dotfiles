@@ -66,6 +66,10 @@ There are two things you can do about this warning:
 
 ;; 3rd-party packages
 
+;; Restart Emacs from inside Emacs with `M-x restart-emacs`
+(use-package restart-emacs
+  :defer t)
+
 ;; diminish
 ;; hides modeline displays for minor modes
 (use-package diminish
