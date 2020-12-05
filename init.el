@@ -602,6 +602,7 @@ There are two things you can do about this warning:
 
 ;; flycheck
 (use-package flycheck
+  :diminish "✓"
   :ensure t
   :init
   (global-flycheck-mode t)
