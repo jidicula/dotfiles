@@ -595,6 +595,7 @@ There are two things you can do about this warning:
 ;; company
 (use-package company
   :ensure t
+  :diminish "⇥"
   :config
   ;; company-mode global settings
   ;; Show suggestions after entering one character.
