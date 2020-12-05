@@ -133,6 +133,20 @@ There are two things you can do about this warning:
   :after magit
   )
 
+;; Magit todos
+(use-package magit-todos
+  :requires (magit)
+  :hook (magit-mode . magit-todos-mode)
+  :custom
+  (magit-todos-exclude-globs '("**/node_modules/**"))
+  :init
+  (unless (executable-find "nice") ; don't break Magit on systems that don't have `nice'
+    (setq magit-todos-nice nil)))
+
+(use-package hl-todo
+  :config
+  (global-hl-todo-mode +1))
+
 ;; gitattributes-mode
 (use-package gitattributes-mode
   :ensure t
