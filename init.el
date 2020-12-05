@@ -70,6 +70,11 @@ There are two things you can do about this warning:
 (use-package restart-emacs
   :defer t)
 
+;; use-package-ensure-system-package
+;; provides way to define system package dependencies for Emacs packages
+(use-package use-package-ensure-system-package
+  :ensure t)
+
 ;; diminish
 ;; hides modeline displays for minor modes
 (use-package diminish
