@@ -345,6 +345,7 @@ There are two things you can do about this warning:
 		    ))
    ;; if .dir-locals exists, read it first, then activate mspyls
    (hack-local-variables . (lambda ()
+			     (setq indent-tabs-mode nil)  ; disable tabs
 			     (when (derived-mode-p 'python-mode)
 			       (require 'lsp-python-ms)
 			       (lsp-deferred))
