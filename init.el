@@ -669,6 +669,10 @@ There are two things you can do about this warning:
 	 )
   )
 
+;; toml-mode
+(use-package toml-mode
+  :defer t)
+
 ;; yaml-mode
 (use-package yaml-mode
   :ensure t
