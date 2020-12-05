@@ -57,8 +57,6 @@ There are two things you can do about this warning:
 
 ;; This is only needed once, near the top of the file
 (eval-when-compile
-  ;; Following line is not needed if use-package.el is in ~/.emacs.d
-  ;; (add-to-list 'load-path "<path where use-package is installed>")
   (require 'use-package))
 
 ;; Keep auto-save/backup files separate from source code:  https://github.com/scalameta/metals/issues/1027
@@ -131,14 +129,6 @@ There are two things you can do about this warning:
 (use-package gitignore-mode
   :ensure t
   )
-
-;; Issue insertion
-;; doesn't work with private repos
-;; (use-package git-commit-insert-issue
-;;   :ensure t
-;;   :hook
-;;   (git-commit-mode . git-commit-insert-issue-mode)
-;;   )
 
 ;; which-key shows all available keybindings
 (use-package which-key
@@ -219,7 +209,6 @@ There are two things you can do about this warning:
     ;; The default width and height of the icons is 22 pixels. If you are
     ;; using a Hi-DPI display, uncomment this to double the icon size.
     ;;(treemacs-resize-icons 44)
-
     (treemacs-follow-mode t)
     (treemacs-filewatch-mode t)
     (treemacs-fringe-indicator-mode t)
@@ -264,6 +253,7 @@ There are two things you can do about this warning:
 (use-package lsp-mode
   :ensure t
   :init
+  ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   (setq lsp-keymap-prefix "C-c l")
   :custom
   (lsp-auto-guess-root +1)
@@ -271,7 +261,6 @@ There are two things you can do about this warning:
   (lsp-enable-imenu)
   (setq lsp-prefer-flymake nil)
   (setq lsp-headerline-breadcrumb-enable t)
-  ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
          (python-mode . lsp-deferred)
 	 (scala-mode . lsp-deferred)
@@ -618,21 +607,6 @@ There are two things you can do about this warning:
   (set-face-background 'company-tooltip "#555555")
   (set-face-background 'company-tooltip-selection "#999999")
   )
-
-;; company-emoji
-;; https://github.com/idcrook/.emacs.d/blob/bb05f12d63a4e7753c1585938fc76d3142aea105/elisp/base-platforms.el#L167-L174
-;; (use-package company-emoji
-;;   :after company
-;;   :ensure t
-;;   :init
-;;   (add-to-list 'company-backends 'company-emoji)
-;;   :if (version< "27.0" emacs-version)
-;;   :config
-;;   (set-fontset-font
-;;      "fontset-default" 'unicode "Apple Color Emoji" nil 'prepend)
-;;   (set-fontset-font
-;;    t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend)
-;;   )
 
 ;; company-quickhelp
 (use-package company-quickhelp
