@@ -43,7 +43,6 @@ brew "gh"
 brew "gifsicle"
 brew "git"
 brew "gnu-tar"
-brew "gnupg", link: false
 brew "pango"
 brew "go"
 brew "hdf5"
