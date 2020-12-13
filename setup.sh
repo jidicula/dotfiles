@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 HOSTNAME="$1"
-BREW_STATUS=0
 
 sudo xcodebuild -license accept
 
@@ -21,13 +20,16 @@ done 2>/dev/null &
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
 
 # Install Homebrew packages
-brew bundle install || BREW_STATUS=7
+brew bundle install
+brew bundle check
+BREW_STATUS="$?"
 
 # Retry brew bundle install once if anything failed
 if [[ "$BREW_STATUS" -ne 0 ]]; then
-	BREW_STATUS=0
 	./teardown.sh
-	brew bundle install || BREW_STATUS=7
+	brew bundle install
+	brew bundle check
+	BREW_STATUS="$?"
 fi
 
 # Install Oh My Zsh
