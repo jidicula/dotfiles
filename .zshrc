@@ -121,6 +121,7 @@ source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
 # PATH
 export PATH="/usr/local/sbin:/usr/local/opt/openssl/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/usr/local/MacGPG2/bin:/Library/TeX/texbin:/Users/johanan/.local/bin:"
+export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/opt/openssl/lib/"
 
 # MacPorts Installer addition on 2019-09-18_at_17:08:28: adding an
 # appropriate PATH variable for use with MacPorts.
