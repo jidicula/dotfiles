@@ -42,7 +42,7 @@ npm install --global pure-prompt
 curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
 
 # Set up Emacs config
-echo "(load \"~/prog/dotfiles/init.el\")" >~/.emacs
+echo "(load \"~/prog/dotfiles/init.el\")" >"$HOME/.emacs"
 
 # Link Emacs.app to Applications directory
 ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
