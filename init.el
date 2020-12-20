@@ -86,11 +86,11 @@ There are two things you can do about this warning:
 (use-package use-package-ensure-system-package
   :ensure t)
 
-;; diminish
-;; hides modeline displays for minor modes
-(use-package diminish
+;; delight
+;; hides modeline displays
+(use-package delight
   :ensure t)
-(require 'diminish)                ;; if you use :diminish
+(require 'delight)                ;; if you use :delight
 (require 'bind-key)                ;; if you use any :bind variant
 
 ;; use-package-chords
@@ -166,6 +166,7 @@ There are two things you can do about this warning:
 
 ;; which-key shows all available keybindings
 (use-package which-key
+  :delight
   :ensure t
   :init
   (which-key-mode)
@@ -173,6 +174,7 @@ There are two things you can do about this warning:
 
 ;; smartparens
 (use-package smartparens
+  :delight
   :ensure t
   :config
   ;; (setq-default sp-escape-quotes-after-insert nil) ; Don't escape quotes
@@ -343,6 +345,7 @@ There are two things you can do about this warning:
 
 ;; lsp Python
 (use-package lsp-python-ms
+  :delight python-mode "🐍"
   :after poetry
   :ensure t
   :init
@@ -371,6 +374,7 @@ There are two things you can do about this warning:
 
 ;; python-black
 (use-package python-black
+  :delight python-black-on-save-mode "⚫️"
   :ensure t
   :hook
   (python-mode . python-black-on-save-mode)
@@ -607,6 +611,7 @@ There are two things you can do about this warning:
 
 ;; yasnippet
 (use-package yasnippet
+  :delight yas-minor-mode "🆈"
   :ensure t
   )
 (use-package yasnippet-snippets
@@ -618,7 +623,7 @@ There are two things you can do about this warning:
 
 ;; flycheck
 (use-package flycheck
-  :diminish "✓"
+  :delight "✅"
   :ensure t
   :init
   (global-flycheck-mode t)
@@ -634,7 +639,7 @@ There are two things you can do about this warning:
 ;; company
 (use-package company
   :ensure t
-  :diminish "⇥"
+  :delight "⏭"
   :config
   ;; company-mode global settings
   ;; Show suggestions after entering one character.
@@ -649,6 +654,7 @@ There are two things you can do about this warning:
 
 ;; company-box is a Company frontend with icons
 (use-package company-box
+  :delight
   :after company
   :ensure t
   :hook (company-mode . company-box-mode)
@@ -681,7 +687,7 @@ There are two things you can do about this warning:
 ;; projectile
 (use-package projectile
   :ensure t
-  :diminish projectile-mode
+  :delight
   :init
   (projectile-mode t)
   :bind (
@@ -757,6 +763,7 @@ There are two things you can do about this warning:
 
 ;; highlight-indent-guides.el
 (use-package highlight-indent-guides
+  :delight
   :ensure t
   :init
   :custom
@@ -785,6 +792,7 @@ There are two things you can do about this warning:
 
 ;; markdown-mode
 (use-package markdown-mode
+  :delight markdown-mode ".md"
   :ensure t
   :mode ("\\.md\\'"
          "\\.mkd\\'"
