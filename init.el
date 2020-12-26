@@ -594,11 +594,13 @@ There are two things you can do about this warning:
     (previous-line)
     (indent-according-to-mode)))
 
-;; rg (ripgrep tool)
+;; rg.el (ripgrep tool)
 (use-package rg
   :ensure t
   :init
   (rg-enable-default-bindings)
+  :config
+  (setq rg-default-alias-fallback "everything")
   )
 
 ;; dumb-jump
