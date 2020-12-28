@@ -40,6 +40,9 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git ${ZSH_CUSTOM:
 # Install Pure
 npm install --global pure-prompt
 
+# Install bash-language-server
+npm install --global bash-language-server
+
 # Install Poetry
 curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
 
