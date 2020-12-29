@@ -138,12 +138,19 @@ There are two things you can do about this warning:
 ;; Magit todos
 (use-package magit-todos
   :requires (magit)
+  :after (magit)
   :hook (magit-mode . magit-todos-mode)
   :custom
   (magit-todos-exclude-globs '("**/node_modules/**"))
   :init
   (unless (executable-find "nice") ; don't break Magit on systems that don't have `nice'
-    (setq magit-todos-nice nil)))
+    (setq magit-todos-nice nil))
+  :config
+  (let ((inhibit-message t))
+    (magit-todos-mode 1))
+  (transient-append-suffix 'magit-status-jump '(0 0 -1)
+    '("T " "Todos" magit-todos-jump-to-todos))
+  )
 
 (use-package hl-todo
   :config
