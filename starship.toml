@@ -1,0 +1,45 @@
+# format = "$all"
+format = """$directory$git_branch$git_status$cmd_duration
+$package$python$nodejs$swift
+$hostname$character"""
+
+[directory]
+truncate_to_repo = false
+style = "blue"
+
+[git_branch]
+format = "[$branch]($style) "
+style = "purple"
+
+[git_status]
+format = "([$all_status$ahead_behind]($style) )"
+style = "cyan"
+
+[character]
+success_symbol = "[❯](bright-green)"
+error_symbol = "[❯](bright-red)"
+
+[package]
+format = "[$symbol$version]($style) "
+style = "208"
+
+[python]
+format = '[${symbol}${pyenv_prefix}${version}( \($virtualenv\))]($style) '
+style = "yellow"
+pyenv_version_name = true
+symbol = " "
+
+[hostname]
+format = "[$hostname]($style)"
+
+[nodejs]
+style = "green"
+format = "[$symbol$version]($style) "
+
+[swift]
+style = "202"
+symbol = " "
+
+[cmd_duration]
+style = "yellow"
+format = "[$duration]($style) "

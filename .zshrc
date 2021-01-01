@@ -82,14 +82,6 @@ plugins=(
 
 source $ZSH/oh-my-zsh.sh
 
-# Pure must be loaded after `source $ZSH/oh-my-zsh.sh`
-autoload -U promptinit
-promptinit
-zstyle :prompt:pure:prompt:error color 9   # bright red for failure
-zstyle :prompt:pure:prompt:success color 2 # green for success
-zstyle :prompt:pure:git:branch color 13    # bright magenta for git branch
-prompt pure
-
 # User configuration
 
 # export MANPATH="/usr/local/man:$MANPATH"
@@ -160,3 +152,7 @@ export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
 # source zprofile in case any programs have added configs in there (e.g. FSL)
 touch "$HOME/.zprofile"
 source "$HOME/.zprofile"
+
+# Starship configs
+export STARSHIP_CONFIG="$HOME/prog/dotfiles/starship.toml"
+eval "$(starship init zsh)"
