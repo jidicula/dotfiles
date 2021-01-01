@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euf -o pipefail
+
 HOSTNAME="$1"
 
 # Close any open System Preferences panes, to prevent them from overriding
@@ -13,7 +15,7 @@ sudo -v
 while true; do
 	sudo -n true
 	sleep 60
-	kill -0 "$$" || exit
+	kill -0 "$$"
 done 2>/dev/null &
 
 ###############################################################################

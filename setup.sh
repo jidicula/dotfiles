@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euf -o pipefail
+
 HOSTNAME="$1"
 
 sudo xcodebuild -license accept
@@ -13,7 +15,7 @@ cp -r git-templates ~/.git-templates
 while true; do
 	sudo -n true
 	sleep 60
-	kill -0 "$$" || exit
+	kill -0 "$$"
 done 2>/dev/null &
 
 # Install Homebrew
@@ -21,14 +23,14 @@ done 2>/dev/null &
 
 # Install Homebrew packages
 brew bundle install
-brew bundle check
+brew bundle check || true
 BREW_STATUS="$?"
 
 # Retry brew bundle install once if anything failed
 if [[ "$BREW_STATUS" -ne 0 ]]; then
 	./teardown.sh
 	brew bundle install
-	brew bundle check
+	brew bundle check || true
 	BREW_STATUS="$?"
 fi
 
@@ -66,7 +68,7 @@ cp karabiner.json "$HOME/.config/karabiner/"
 
 # Set up macOS system configs
 chmod +x system_config.sh
-./system_config.sh "$HOSTNAME" || exit
+./system_config.sh "$HOSTNAME"
 
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"
