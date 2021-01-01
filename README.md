@@ -15,6 +15,5 @@ sudo scutil --set LocalHostName "$HOSTNAME"` and restart shell.
 1. `$ mkdir prog && cd prog`
 1. `git clone git@github.com:jidicula/dotfiles.git`
 1. `cd dotfiles`
-1. Install [SFMono fonts](https://developer.apple.com/fonts/).
 1. Set up Terminal theme.
 1. `./setup.sh chosen_hostname`
