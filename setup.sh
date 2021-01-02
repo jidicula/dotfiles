@@ -54,7 +54,8 @@ ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/incl
 ln -s "$HOME/.development/homebrew/Cellar/openssl@1.1/[version]/bin/openssl" "/usr/bin/openssl"
 
 # Set up ZSH config
-echo "source \"$HOME/prog/dotfiles/.zshrc\"" >~/.zshrc
+echo "source \"$HOME/prog/dotfiles/.zshrc\"" >"$HOME/.zshrc"
+source "$HOME/.zshrc"
 
 # Open Karabiner for the first time
 open "/Applications/Karabiner-Elements.app" && sleep 60
