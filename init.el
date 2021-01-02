@@ -709,46 +709,6 @@ There are two things you can do about this warning:
          "\\.yaml\\'")
   )
 
-;; elpy
-(use-package elpy
-  :after poetry
-  :ensure t
-  :config
-  ;; (elpy-enable)
-  (setq elpy-rpc-virtualenv-path 'current)
-  ;; elpy format on save
-  ;; formats using whatever formatter is installed. if file is in a Poetry
-  ;; project it will use the formatter installed in that project. Else it
-  ;; defaults to black, which is installed systemwide.
-  (defun elpy-format-on-save ()
-    (add-hook 'before-save-hook #'elpy-format-code nil t)
-    )
-  ;; clear Elpy keybindings for shifting lines
-  (cl-dolist
-      (key '("M-<up>" "M-<down>" "M-<left>" "M-<right>"))
-    (define-key elpy-mode-map (kbd key) nil)
-    )
-  ;; Remap Elpy keybindings for shifting lines
-  (define-key elpy-mode-map (kbd "M-p") 'elpy-nav-move-line-or-region-up)
-  (define-key elpy-mode-map (kbd "M-n") 'elpy-nav-move-line-or-region-down)
-  (define-key elpy-mode-map (kbd "M-f") 'elpy-nav-move-indent-shift-right)
-  (define-key elpy-mode-map (kbd "M-b") 'elpy-nav-move-indent-shift-left)
-  ;; allows Elpy to see virtualenv
-  (add-hook 'elpy-mode-hook
-	    ;; pyvenv-mode
-	    '(lambda ()
-	       (pyvenv-mode +1)
-	       )
-	    )
-  ;; use flycheck instead of flymake
-  (when (load "flycheck" t t)
-    (setq elpy-modules (delq 'elpy-module-flymake elpy-modules))
-    (add-hook 'elpy-mode-hook 'flycheck-mode))
-  :hook
-  (elpy-mode . poetry-tracking-mode)
-  (elpy-mode . elpy-format-on-save)
-  )
-
 ;; poetry
 (use-package poetry
   :ensure t
