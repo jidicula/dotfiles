@@ -78,6 +78,7 @@ plugins=(
 	scala
 	gpg-agent
 	macports
+	poetry
 )
 
 # shellcheck source=/dev/null

@@ -45,9 +45,6 @@ npm install --global pure-prompt
 # Install bash-language-server
 npm install --global bash-language-server
 
-# Install Poetry
-curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
-
 # Set up Emacs config
 echo "(load \"~/prog/dotfiles/init.el\")" >"$HOME/.emacs"
 
@@ -69,6 +66,11 @@ cp karabiner.json "$HOME/.config/karabiner/"
 # Set up macOS system configs
 chmod +x system_config.sh
 ./system_config.sh "$HOSTNAME"
+
+# Install Poetry
+curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
+mkdir "$ZSH_CUSTOM/plugins/poetry"
+poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
 
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"
