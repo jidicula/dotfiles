@@ -6,6 +6,7 @@
 .python-version
 .eggs/
 .mypy_cache/
+.venv
 
 # Scala
 .metals/
