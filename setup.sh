@@ -67,8 +67,9 @@ chmod +x system_config.sh
 
 # Install Poetry
 curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
-mkdir "$ZSH_CUSTOM/plugins/poetry"
+mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
+mkdir -p "$HOME/Library/Application\ Support/pypoetry/"
 cp "config.toml" "$HOME/Library/Application\ Support/pypoetry/"
 
 # Make user-specific Applications directory
