@@ -193,6 +193,7 @@ There are two things you can do about this warning:
 ;; column-enforce-mode
 ;; highlights text extending beyond a certain column
 (use-package column-enforce-mode
+  :delight "80"
   :ensure t
   :init
   ;; activate mode in all prog-mode
