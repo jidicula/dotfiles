@@ -352,6 +352,7 @@ There are two things you can do about this warning:
   )
 ;; (use-package dap-LANGUAGE) to load the dap adapter for your language
 
+;; Python configs
 ;; lsp Python
 (use-package lsp-python-ms
   :delight python-mode "🐍"
@@ -384,6 +385,21 @@ There are two things you can do about this warning:
   (put 'python-black-extra-args 'safe-local-variable #'stringp)
   (put 'python-black-on-save-mode 'safe-local-variable #'booleanp)
   )
+
+;; poetry
+(use-package poetry
+  :ensure t
+  ;; :init
+  ;; imperfect tracking strategy causes lags in builds
+  ;; (setq poetry-tracking-strategy 'switch-buffer)
+  :hook
+  ;; activate poetry-tracking-mode when python-mode is active
+  (python-mode . poetry-tracking-mode)
+  )
+
+;; disable pyvenv menu
+(setq pyvenv-mode nil)
+;; end Python configs
 
 ;; dockerfile-mode
 (use-package dockerfile-mode
@@ -709,20 +725,6 @@ There are two things you can do about this warning:
   :mode ("\\.yml\\'"
          "\\.yaml\\'")
   )
-
-;; poetry
-(use-package poetry
-  :ensure t
-  ;; :init
-  ;; imperfect tracking strategy causes lags in builds
-  ;; (setq poetry-tracking-strategy 'switch-buffer)
-  :hook
-  ;; activate poetry-tracking-mode when python-mode is active
-  (python-mode . poetry-tracking-mode)
-  )
-
-;; disable pyvenv menu
-(setq pyvenv-mode nil)
 
 ;; highlight-indent-guides.el
 (use-package highlight-indent-guides
