@@ -354,16 +354,11 @@ There are two things you can do about this warning:
 ;; lsp Python
 (use-package lsp-python-ms
   :delight python-mode "🐍"
-  :after poetry
   :ensure t
   :init
   (setq lsp-python-ms-auto-install-server t)
   :config
   (put 'lsp-python-ms-python-executable 'safe-local-variable #'stringp)
-  ;; attempt to activate Poetry env first
-  (when (stringp (poetry-find-project-root))
-    (poetry-venv-workon)
-    )
   :hook
   (
    (python-mode . (lambda ()
@@ -373,9 +368,6 @@ There are two things you can do about this warning:
    ;; if .dir-locals exists, read it first, then activate mspyls
    (hack-local-variables . (lambda ()
 			     (setq indent-tabs-mode nil)  ; disable tabs
-			     (when (derived-mode-p 'python-mode)
-			       (require 'lsp-python-ms)
-			       (lsp-deferred))
 			     ))
    )
   )
