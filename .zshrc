@@ -80,7 +80,8 @@ plugins=(
 	macports
 )
 
-source $ZSH/oh-my-zsh.sh
+# shellcheck source=/dev/null
+source "$ZSH/oh-my-zsh.sh"
 
 # User configuration
 
@@ -107,8 +108,10 @@ fi
 # Example aliases
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
+# shellcheck source=/dev/null
 source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 
+# shellcheck source=/dev/null
 source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
 # PATH
@@ -139,8 +142,8 @@ export PATH="$HOME/.gem/ruby/2.6.0/bin:$PATH"
 eval "$(rbenv init -)"
 
 # Python Tcl-Tk options for pyenv
-PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I/usr/local/opt/tcl-tk/include' --with-tcltk-libs='-L/usr/local/opt/tcl-tk/lib -ltcl8.6 -ltk8.6'"
-TK_SILENCE_DEPRECATION=1
+export PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I/usr/local/opt/tcl-tk/include' --with-tcltk-libs='-L/usr/local/opt/tcl-tk/lib -ltcl8.6 -ltk8.6'"
+export TK_SILENCE_DEPRECATION=1
 
 # pyenv virtualenv-init
 eval "$(pyenv virtualenv-init -)"
@@ -151,6 +154,7 @@ export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
 
 # source zprofile in case any programs have added configs in there (e.g. FSL)
 touch "$HOME/.zprofile"
+# shellcheck source=/dev/null
 source "$HOME/.zprofile"
 
 # Starship configs
