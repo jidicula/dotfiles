@@ -580,11 +580,11 @@ There are two things you can do about this warning:
 	    :help "Run an arbitrary command"))))
   )
 
+;; Clang stuff
 ;; clang-format
 (use-package clang-format
   :ensure t
   )
-;; Clang stuff
 (defun clang-format-on-save ()
   (add-hook 'before-save-hook #'clang-format-buffer nil 'local))
 (add-hook 'c++-mode-hook 'clang-format-on-save)
@@ -602,8 +602,8 @@ There are two things you can do about this warning:
 	     )
 	  )
 
-;; newline after a brace and position point
 (defun my-open-block-c-mode (id action context)
+;; newline after a brace and position point
   (when (eq action 'insert)
     (newline)
     (newline)
