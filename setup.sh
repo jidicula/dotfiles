@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-set -euf -o pipefail
-
 HOSTNAME="$1"
 
 sudo xcodebuild -license accept
@@ -15,7 +13,7 @@ cp -r git-templates ~/.git-templates
 while true; do
 	sudo -n true
 	sleep 60
-	kill -0 "$$"
+	kill -0 "$$" || exit
 done 2>/dev/null &
 
 # Install Homebrew
@@ -23,14 +21,14 @@ done 2>/dev/null &
 
 # Install Homebrew packages
 brew bundle install
-brew bundle check || true
+brew bundle check
 BREW_STATUS="$?"
 
 # Retry brew bundle install once if anything failed
 if [[ "$BREW_STATUS" -ne 0 ]]; then
 	./teardown.sh
 	brew bundle install
-	brew bundle check || true
+	brew bundle check
 	BREW_STATUS="$?"
 fi
 
@@ -65,7 +63,7 @@ cp karabiner.json "$HOME/.config/karabiner/"
 
 # Set up macOS system configs
 chmod +x system_config.sh
-./system_config.sh "$HOSTNAME"
+./system_config.sh "$HOSTNAME" || exit
 
 # Install Poetry
 curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
