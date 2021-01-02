@@ -21,14 +21,14 @@ done 2>/dev/null &
 
 # Install Homebrew packages
 brew bundle install
-brew bundle check
+brew bundle check --verbose
 BREW_STATUS="$?"
 
 # Retry brew bundle install once if anything failed
 if [[ "$BREW_STATUS" -ne 0 ]]; then
 	./teardown.sh
 	brew bundle install
-	brew bundle check
+	brew bundle check --verbose
 	BREW_STATUS="$?"
 fi
 
