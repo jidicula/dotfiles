@@ -127,6 +127,10 @@ export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/opt/openssl/lib/"
 if command -v pyenv 1>/dev/null 2>&1; then
 	eval "$(pyenv init -)"
 fi
+
+export LDFLAGS="-L/usr/local/opt/zlib/lib -L/usr/local/opt/bzip2/lib"
+export CPPFLAGS="-I/usr/local/opt/zlib/include -I/usr/local/opt/bzip2/include"
+
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1
 
@@ -151,7 +155,7 @@ eval "$(pyenv virtualenv-init -)"
 
 # openjdk11
 export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
-export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
+export CPPFLAGS="-I/usr/local/opt/openjdk@11/include $CPPFLAGS"
 
 # source zprofile in case any programs have added configs in there (e.g. FSL)
 touch "$HOME/.zprofile"
