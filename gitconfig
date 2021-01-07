@@ -5,7 +5,7 @@
 	email = ""
 	signingkey = ""
 [commit]
-	template = ~/prog/dotfiles/commit-message
+	template = ~/dotfiles/commit-message
 	gpgSign = true
 [init]
 	templatedir = ~/.git-templates
@@ -13,7 +13,7 @@
 [branch]
 	autosetuprebase = always
 [core]
-	excludesfile = ~/prog/dotfiles/gitignore
+	excludesfile = ~/dotfiles/gitignore
 	autocrlf = input
 [github]
 	user = jidicula

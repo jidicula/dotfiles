@@ -44,7 +44,7 @@ npm install --global pure-prompt
 npm install --global bash-language-server
 
 # Set up Emacs config
-echo "(load \"~/prog/dotfiles/init.el\")" >"$HOME/.emacs"
+echo "(load \"$HOME/dotfiles/init.el\")" >"$HOME/.emacs"
 
 # Link Emacs.app to Applications directory
 ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
@@ -54,7 +54,7 @@ ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/incl
 ln -s "$HOME/.development/homebrew/Cellar/openssl@1.1/[version]/bin/openssl" "/usr/bin/openssl"
 
 # Set up ZSH config
-echo "source \"$HOME/prog/dotfiles/.zshrc\"" >"$HOME/.zshrc"
+echo "source \"$HOME/dotfiles/.zshrc\"" >"$HOME/.zshrc"
 source "$HOME/.zshrc"
 
 # Open Karabiner for the first time

@@ -163,5 +163,5 @@ touch "$HOME/.zprofile"
 source "$HOME/.zprofile"
 
 # Starship configs
-export STARSHIP_CONFIG="$HOME/prog/dotfiles/starship.toml"
+export STARSHIP_CONFIG="$HOME/dotfiles/starship.toml"
 eval "$(starship init zsh)"
