@@ -789,6 +789,7 @@ There are two things you can do about this warning:
 
 ;; web-mode
 (use-package web-mode
+  :delight web-mode "🕸"
   :ensure t
   :mode
   ("\\.ejs\\'"
