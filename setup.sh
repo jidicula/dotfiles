@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
 HOSTNAME="$1"
+DOTFILESDIR="$(pwd -P)"
 
 sudo xcodebuild -license accept
 
 # copy Git configs and templates
-cp gitconfig ~/.gitconfig
-cp gitignore ~/.gitignore
-cp -r git-templates ~/.git-templates
+ln -sfv "$DOTFILESDIR/gitconfig" ~/.gitconfig
+ln -sfv "$DOTFILESDIR/gitignore" ~/.gitignore
+ln -sfv "$DOTFILESDIR/git-templates" ~/.git-templates
 
 # sudo access until finished
 while true; do
@@ -60,7 +61,7 @@ source "$HOME/.zshrc"
 # Open Karabiner for the first time
 open "/Applications/Karabiner-Elements.app" && sleep 60
 killall "Karabiner-Elements"
-cp karabiner.json "$HOME/.config/karabiner/"
+ln -sfv "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
 
 # Set up macOS system configs
 chmod +x system_config.sh
@@ -71,7 +72,7 @@ curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poet
 mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
 mkdir -p "$HOME/Library/Application\ Support/pypoetry/"
-cp "config.toml" "$HOME/Library/Application\ Support/pypoetry/"
+ln -sfv "$DOTFILESDIR/config.toml" "$HOME/Library/Application Support/pypoetry/config.toml"
 
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"
