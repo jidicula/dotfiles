@@ -6,9 +6,9 @@ DOTFILESDIR="$(pwd -P)"
 sudo xcodebuild -license accept
 
 # copy Git configs and templates
-ln -sfv "$DOTFILESDIR/gitconfig" ~/.gitconfig
-ln -sfv "$DOTFILESDIR/gitignore" ~/.gitignore
-ln -sfv "$DOTFILESDIR/git-templates" ~/.git-templates
+ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
+ln -sfv "$DOTFILESDIR/gitignore" "$HOME/.gitignore"
+ln -sfv "$DOTFILESDIR/git-templates" "$HOME/.git-templates"
 
 # sudo access until finished
 while true; do
