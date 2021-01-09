@@ -1,9 +1,9 @@
-# This is Git's per-user configuration file.
-[user]
-# Please adapt and uncomment the following lines:
-	name = jidicula
-	email = ""
-	signingkey = ""
+# default user email and key
+[include]
+        path = ~/dotfiles/gitconfig-personal
+# When working with Work
+[includeIf "gitdir:**/DND/**/.git"]
+        path = ~/dotfiles/gitconfig-dnd
 [commit]
 	template = ~/dotfiles/commit-message
 	gpgSign = true
