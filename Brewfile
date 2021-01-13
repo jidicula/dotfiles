@@ -76,7 +76,7 @@ brew "pdf2svg"
 brew "pigz"
 brew "postgresql@9.5"
 brew "pre-commit"
-brew "pyenv"
+brew "pyenv", args: ["HEAD"]
 brew "pyenv-ccache"
 brew "pyenv-virtualenv"
 brew "ruby-build"
