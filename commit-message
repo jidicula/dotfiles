@@ -1,6 +1,4 @@
 type(scope): TITLE 50 CHARS
-types: fix, feat, build, chore, ci, docs, style, refactor, perf, test
-append ! to keyword prefix for breaking changes
 
 **Why this change was necessary**
 
@@ -12,7 +10,12 @@ append ! to keyword prefix for breaking changes
 
 
 **Additional context/notes/links**
+
 Resolves [issue](
 https://linktoissue)
 Related to [issue](
 https://linktoissue)
+
+
+# types: fix, feat, build, chore, ci, docs, style, refactor, perf, test
+# append ! to keyword prefix for breaking changes
