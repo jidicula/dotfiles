@@ -23,3 +23,8 @@
 	conflictstyle=diff3
 [pull]
 	rebase = true
+[diff]
+        # Use the slower but better patience diff algorithm
+	algorithm = patience
+	# Use new diff algorithm to make e.g. function diffs look better.
+	compactionheuristic = true
