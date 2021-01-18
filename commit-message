@@ -13,5 +13,6 @@ Resolves: [issue](
 https://linktoissue)
 Related to: [issue](
 https://linktoissue)
+
 # types: fix, feat, build, chore, ci, docs, style, refactor, perf, test
 # append ! to keyword prefix for breaking changes
