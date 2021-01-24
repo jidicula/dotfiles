@@ -117,6 +117,7 @@ There are two things you can do about this warning:
          ("C-x G" . magit-status-with-prefix)
 	 ("C-c g" . magit-file-dispatch))
   :config
+  (setq magit-git-executable "/usr/local/bin/git")
   ;; Disable emacs native VC (it just slows things down, magit is better)
   (setq vc-handled-backends nil)
   (setq magit-display-buffer-function
