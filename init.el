@@ -129,6 +129,7 @@ There are two things you can do about this warning:
   ;; magit-mode. DO NOT refactor with use-package `:hook` directive.
   (with-eval-after-load 'magit-mode
   (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
+  (put 'magit-todos-exclude-globs 'safe-local-variable #'seqp)
   )
 
 ;; Interact with forges directly
@@ -141,7 +142,7 @@ There are two things you can do about this warning:
 (use-package magit-todos
   :requires (magit)
   :after (magit)
-  :hook (magit-mode . magit-todos-mode)
+  :hook (magit-status-mode . magit-todos-mode)
   :custom
   (magit-todos-exclude-globs '("**/node_modules/**"))
   :init
