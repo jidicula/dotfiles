@@ -118,7 +118,7 @@ There are two things you can do about this warning:
 	 ("C-c g" . magit-file-dispatch))
   :config
   (setq magit-git-executable "/usr/local/bin/git")
-  (setq auth-sources "~/.authinfo")
+  (setq auth-sources '("~/.authinfo"))
   ;; Disable emacs native VC (it just slows things down, magit is better)
   (setq vc-handled-backends nil)
   (setq magit-display-buffer-function
