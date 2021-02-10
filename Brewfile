@@ -93,7 +93,7 @@ brew "yarn"
 brew "youtube-dl"
 brew "zlib"
 brew "coursier/formulas/coursier"
-brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-mailutils", "with-modern-black-variant-icon", "with-xwidgets"]
+brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-elrumo2-icon", "with-mailutils", "with-xwidgets"]
 cask "adobe-acrobat-reader"
 cask "balenaetcher"
 cask "db-browser-for-sqlite"
