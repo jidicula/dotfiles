@@ -119,8 +119,6 @@ There are two things you can do about this warning:
   :config
   (setq magit-git-executable "/usr/local/bin/git")
   (setq auth-sources '("~/.authinfo"))
-  ;; Disable emacs native VC (it just slows things down, magit is better)
-  (setq vc-handled-backends nil)
   (setq magit-display-buffer-function
 	#'magit-display-buffer-fullframe-status-v1)
   ;; magit transient levels, allows GPG option to be visible
@@ -131,6 +129,9 @@ There are two things you can do about this warning:
   (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
   (put 'magit-todos-exclude-globs 'safe-local-variable #'seqp)
   )
+
+;; Disable emacs native VC (it just slows things down, magit is better)
+(setq vc-handled-backends nil)
 
 ;; Interact with forges directly
 (use-package forge
