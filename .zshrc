@@ -119,10 +119,6 @@ source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 export PATH="/usr/local/sbin:/usr/local/opt/openssl/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/usr/local/MacGPG2/bin:/Library/TeX/texbin:$HOME/.local/bin:"
 export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/opt/openssl/lib/"
 
-# MacPorts Installer addition on 2019-09-18_at_17:08:28: adding an
-# appropriate PATH variable for use with MacPorts.
-# export PATH="/opt/local/bin:/opt/local/sbin:$PATH"
-
 # git config --global branch.autosetuprebase always
 if command -v pyenv 1>/dev/null 2>&1; then
 	eval "$(pyenv init -)"
