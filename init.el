@@ -299,6 +299,7 @@ There are two things you can do about this warning:
 
 ;; lsp-mode configs
 (use-package lsp-mode
+  :delight lsp-lens-mode "🔍"
   :ensure t
   :init
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
