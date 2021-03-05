@@ -1,6 +1,6 @@
 # format = "$all"
 format = """$directory$git_branch$git_status$cmd_duration
-$package$python$nodejs$swift
+$package$python$nodejs$swift$golang
 $hostname$character"""
 
 [directory]
@@ -35,6 +35,11 @@ format = "[$hostname]($style)"
 [nodejs]
 style = "green"
 format = "[$symbol$version]($style) "
+
+[golang]
+style = "bold cyan"
+format = "[$symbol($version )]($style) "
+symbol = " "
 
 [swift]
 style = "202"

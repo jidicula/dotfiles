@@ -74,6 +74,9 @@ poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
 mkdir -p "$HOME/Library/Application Support/pypoetry/"
 ln -sfv "$DOTFILESDIR/config.toml" "$HOME/Library/Application Support/pypoetry/config.toml"
 
+# Install gopls
+GO111MODULE=on go get golang.org/x/tools/gopls@latest
+
 # Make user-specific Applications directory
 mkdir "$HOME/Applications"
 
