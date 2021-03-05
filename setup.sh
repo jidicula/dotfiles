@@ -75,6 +75,7 @@ mkdir -p "$HOME/Library/Application Support/pypoetry/"
 ln -sfv "$DOTFILESDIR/config.toml" "$HOME/Library/Application Support/pypoetry/config.toml"
 
 # Install gopls
+mkdir $HOME/.go
 GO111MODULE=on go get golang.org/x/tools/gopls@latest
 
 # Make user-specific Applications directory
