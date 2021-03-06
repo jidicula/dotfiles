@@ -159,7 +159,8 @@ export CPPFLAGS="-I/usr/local/opt/openjdk@11/include $CPPFLAGS"
 # go
 export GOPATH="$HOME/go"
 export GOROOT="/usr/local/opt/go/libexec"
-export PATH="$PATH:${GOPATH}/bin:${GOROOT}/bin"
+export PATH="$PATH:$GOPATH/bin"
+export PATH="$PATH:$GOROOT/bin"
 
 # source zprofile in case any programs have added configs in there (e.g. FSL)
 touch "$HOME/.zprofile"
