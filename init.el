@@ -191,7 +191,8 @@ There are two things you can do about this warning:
   ;; (setq-default sp-escape-quotes-after-insert nil) ; Don't escape quotes
   (smartparens-global-mode t)
   (setq sp-highlight-pair-overlay nil)
-  (sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-c-mode))
+  (sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-brace-mode))
+  (sp-local-pair 'go-mode "{" nil :post-handlers '(:add my-open-block-brace-mode))
   )
 
 ;; column-enforce-mode
@@ -616,7 +617,7 @@ There are two things you can do about this warning:
 	     )
 	  )
 
-(defun my-open-block-c-mode (id action context)
+(defun my-open-block-brace-mode (id action context)
 ;; newline after a brace and position point
   (when (eq action 'insert)
     (newline)
