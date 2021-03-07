@@ -19,6 +19,9 @@
 ;; no large file warning
 (setq large-file-warning-threshold nil)
 
+;; Don't switch frames when changing buffers
+(setq ido-default-buffer-method 'selected-window)
+
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
 ;; Useful for https://github.com/dunn/company-emoji
