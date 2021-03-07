@@ -878,13 +878,11 @@ then enter the text in that file's own buffer.")
 ;; set window size
 (setq initial-frame-alist
       '(
-	(top . 1) (left . 300)
 	(width . 84) (height . 500)
 	)
       )
 (setq default-frame-alist
       '(
-	;; (top . 1) (left . 1)
 	(width . 84) (height . 500)
 	)
       )
