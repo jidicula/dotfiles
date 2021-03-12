@@ -37,7 +37,7 @@ style = "green"
 format = "[$symbol$version]($style) "
 
 [golang]
-style = "bold cyan"
+style = "cyan"
 format = "[$symbol($version )]($style) "
 symbol = " "
 
