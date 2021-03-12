@@ -129,7 +129,8 @@ There are two things you can do about this warning:
   ;; Refresh magit buffer on save. This must only be evaluated when in
   ;; magit-mode. DO NOT refactor with use-package `:hook` directive.
   (with-eval-after-load 'magit-mode
-  (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
+    (magit-todos-mode)
+    (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
   (put 'magit-todos-exclude-globs 'safe-local-variable #'seqp)
   )
 
@@ -146,12 +147,10 @@ There are two things you can do about this warning:
 (use-package magit-todos
   :requires (magit)
   :after (magit)
-  :hook (magit-status-mode . magit-todos-mode)
+  :hook
+  (magit-mode . magit-todos-mode)
   :custom
   (magit-todos-exclude-globs '("**/node_modules/**"))
-  :init
-  (unless (executable-find "nice") ; don't break Magit on systems that don't have `nice'
-    (setq magit-todos-nice nil))
   :config
   (let ((inhibit-message t))
     (magit-todos-mode 1))
