@@ -195,7 +195,6 @@ There are two things you can do about this warning:
   (smartparens-global-mode t)
   (setq sp-highlight-pair-overlay nil)
   (sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-brace-mode))
-  (sp-local-pair 'go-mode "{" nil :post-handlers '(:add my-open-block-brace-mode))
   )
 
 ;; column-enforce-mode
