@@ -750,6 +750,7 @@ There are two things you can do about this warning:
   (highlight-indent-guides-auto-even-face-perc 15)
   :hook
   (prog-mode . highlight-indent-guides-mode)
+  (yaml-mode . highlight-indent-guides-mode)
   )
 
 ;; html5-schema
