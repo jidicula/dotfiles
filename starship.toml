@@ -1,11 +1,19 @@
 # format = "$all"
-format = """$directory$git_branch$git_status$cmd_duration
+format = """$directory$git_branch$git_commit$git_status$cmd_duration
 $package$python$nodejs$swift$golang
 $hostname$character"""
 
 [directory]
 truncate_to_repo = false
 style = "blue"
+
+[git_commit]
+style = "203"
+format = "[$hash]($style) [$tag]($style)"
+commit_hash_length = 8
+tag_symbol = "🏷  "
+only_detached = false
+tag_disabled = false
 
 [git_branch]
 format = "[$branch]($style) "
