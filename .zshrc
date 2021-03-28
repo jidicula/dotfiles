@@ -161,6 +161,7 @@ export CPPFLAGS="-I/usr/local/opt/openjdk@11/include $CPPFLAGS"
 export GOPATH="$HOME/go"
 export PATH="$PATH:$GOPATH/bin"
 export PATH="$PATH:$GOROOT/bin"
+alias gt="go test -v"
 alias gtc="go test -coverprofile=coverage.out && go tool cover -html=coverage.out"
 alias gtch="go test -covermode=count -coverprofile=count.out && go tool cover -html=count.out"
 
