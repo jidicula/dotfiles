@@ -9,10 +9,8 @@ type(scope): TITLE 50 CHARS
 **Any side-effects?**
 
 
-Resolves: [issue](
-https://linktoissue)
-Related to: [issue](
-https://linktoissue)
+Resolves: #
+Related to: #
 
 # types: fix, feat, build, chore, ci, docs, style, refactor, perf, test
 # append ! to keyword prefix for breaking changes
