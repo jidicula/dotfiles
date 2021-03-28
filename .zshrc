@@ -1,3 +1,4 @@
+set -o pipefail
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
@@ -161,10 +162,24 @@ export CPPFLAGS="-I/usr/local/opt/openjdk@11/include $CPPFLAGS"
 export GOPATH="$HOME/go"
 export PATH="$PATH:$GOPATH/bin"
 export PATH="$PATH:$GOROOT/bin"
-alias gt="go test"
-alias gtv="go test -v"
-alias gtc="go test -coverprofile=coverage.out && go tool cover -html=coverage.out"
-alias gtch="go test -covermode=count -coverprofile=count.out && go tool cover -html=count.out"
+gt() {
+	go test | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
+gtv() {
+	go test -v | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
+gtc() {
+	local t=$(mktemp -t cover)
+	go test $COVERFLAGS -coverprofile="$t" $@ | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' &&
+		go tool cover -html="$t" &&
+		unlink "$t"
+}
+gtch() {
+	local t=$(mktemp -t cover)
+	go test $COVERFLAGS -covermode=count -coverprofile="$t" $@ | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' &&
+		go tool cover -html="$t" &&
+		unlink "$t"
+}
 
 # source zprofile in case any programs have added configs in there (e.g. FSL)
 touch "$HOME/.zprofile"
