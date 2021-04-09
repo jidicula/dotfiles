@@ -22,6 +22,9 @@
 ;; Don't switch frames when changing buffers
 (setq ido-default-buffer-method 'selected-window)
 
+;; 4-space tabs
+(setq-default tab-width 4)
+
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
 ;; Useful for https://github.com/dunn/company-emoji
