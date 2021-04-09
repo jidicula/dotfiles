@@ -180,6 +180,7 @@ gtch() {
 		go tool cover -html="$t" &&
 		unlink "$t"
 }
+alias gl="golangci-lint run"
 
 # source zprofile in case any programs have added configs in there (e.g. FSL)
 touch "$HOME/.zprofile"
