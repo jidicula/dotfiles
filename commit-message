@@ -1,4 +1,4 @@
-type(scope): TITLE 50 CHARS
+type(): TITLE 50 CHARS
 
 **Why this change was necessary**
 
@@ -10,7 +10,6 @@ type(scope): TITLE 50 CHARS
 
 
 Resolves: #
-Related to: #
 
 # types: fix, feat, build, chore, ci, docs, style, refactor, perf, test
 # append ! to keyword prefix for breaking changes
