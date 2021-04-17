@@ -420,13 +420,6 @@ There are two things you can do about this warning:
   (before-save . lsp-organize-imports)
   )
 
-;; flycheck-golang-ci-lint
-(use-package flycheck-golangci-lint
-  :ensure t
-  :hook
-  (go-mode . flycheck-golangci-lint-setup)
-  )
-
 ;; json-mode
 (use-package json-mode
   :ensure-system-package (vscode-json-languageserver . "npm i -g vscode-json-languageserver")
