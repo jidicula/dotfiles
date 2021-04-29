@@ -112,7 +112,7 @@ fi
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 # shellcheck source=/dev/null
-alias cdr="cd $(git rev-parse --show-toplevel)"
+alias cdr='cd $(git rev-parse --show-toplevel)'
 source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 
 # shellcheck source=/dev/null
