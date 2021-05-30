@@ -1,14 +1,5 @@
 type(): TITLE 50 CHARS
 
-**Why this change was necessary**
-
-
-**What this change does**
-
-
-**Any side-effects?**
-
-
 Resolves: #
 
 # types: fix, feat, build, chore, ci, docs, style, refactor, perf, test
