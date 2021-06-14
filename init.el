@@ -941,6 +941,7 @@ then enter the text in that file's own buffer.")
 (global-set-key (kbd "s-<down>") 'end-of-buffer)
 (global-set-key (kbd "s-<kp-delete>") 'kill-word)
 (global-set-key (kbd "s-<backspace>") 'kill-word)
+(global-set-key (kbd "s-/") 'comment-line)
 
 ;; other keybinds
 (global-set-key (kbd "M-<kp-delete>") 'kill-word)
