@@ -48,8 +48,8 @@ echo "(load \"$HOME/dotfiles/init.el\")" >"$HOME/.emacs"
 ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
 
 # Link Homebrew-installed OpenSSL
-ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/include"
-ln -s "$HOME/.development/homebrew/Cellar/openssl@1.1/[version]/bin/openssl" "/usr/bin/openssl"
+# ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/include"
+# ln -s "$HOME/.development/homebrew/Cellar/openssl@1.1/1.1.1k/bin/openssl" "/usr/bin/openssl"
 
 # Set up ZSH config
 echo "source \"$HOME/dotfiles/.zshrc\"" >"$HOME/.zshrc"
