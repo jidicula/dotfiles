@@ -315,6 +315,7 @@ There are two things you can do about this warning:
          (python-mode . lsp-deferred)
 	     (scala-mode . lsp-deferred)
 	     (sh-mode . lsp-deferred)
+         (dockerfile-mode . lsp-deferred)
          (go-mode . lsp-deferred)
          ;; if you want which-key integration
          (lsp-mode . lsp-enable-which-key-integration)
