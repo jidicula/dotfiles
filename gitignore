@@ -7,11 +7,3 @@
 .eggs/
 .mypy_cache/
 .venv
-
-# Scala
-.metals/
-.bloop/
-.ammonite/
-metals.sbt
-target
-*.class

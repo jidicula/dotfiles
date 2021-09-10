@@ -75,8 +75,6 @@ plugins=(
 	emacs
 	python
 	pip
-	sbt
-	scala
 	gpg-agent
 	macports
 	poetry
