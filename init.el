@@ -123,7 +123,8 @@ There are two things you can do about this warning:
          ("C-x G" . magit-status-with-prefix)
 	 ("C-c g" . magit-file-dispatch))
   :config
-  (setq magit-git-executable "/usr/local/bin/git")
+
+  (setq magit-git-executable (shell-command-to-string "which git"))
   (setq auth-sources '("~/.authinfo"))
   (setq magit-display-buffer-function
 	#'magit-display-buffer-fullframe-status-v1)
