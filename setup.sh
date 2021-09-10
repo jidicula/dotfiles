@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+if [[ $(arch) == "arm64" ]]; then
+	ARCH="arm64"
+fi
+
 HOSTNAME="$1"
 DOTFILESDIR="$(pwd -P)"
 
@@ -25,34 +29,27 @@ brew bundle install
 brew bundle check --verbose
 BREW_STATUS="$?"
 
-# Retry brew bundle install once if anything failed
-if [[ "$BREW_STATUS" -ne 0 ]]; then
-	./teardown.sh
-	brew bundle install
-	brew bundle check --verbose
-	BREW_STATUS="$?"
-fi
-
 # Install Oh My Zsh
 (sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
 
 git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}"/plugins/zsh-syntax-highlighting
 
-# Install bash-language-server
-npm install --global bash-language-server
-
 # Set up Emacs config
 echo "(load \"$HOME/dotfiles/init.el\")" >"$HOME/.emacs"
 
 # Link Emacs.app to Applications directory
-ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
+if [[ -z "$ARCH" ]]; then
+	ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
+else
+	ln -s /opt/homebrew/opt/emacs-plus@27/Emacs.app /Applications
+fi
 
 # Link Homebrew-installed OpenSSL
 # ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/include"
 # ln -s "$HOME/.development/homebrew/Cellar/openssl@1.1/1.1.1k/bin/openssl" "/usr/bin/openssl"
 
 # Set up ZSH config
-echo "source \"$HOME/dotfiles/.zshrc\"" >"$HOME/.zshrc"
+ln -sfv "$HOME/dotfiles/.zshrc" "$HOME/.zshrc"
 source "$HOME/.zshrc"
 
 # Open Karabiner for the first time
@@ -64,8 +61,11 @@ ln -sfv "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
 chmod +x system_config.sh
 ./system_config.sh "$HOSTNAME" || exit
 
+# Install bash-language-server
+npm install --global bash-language-server
+
 # Install Poetry
-curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
+curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
 mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
 mkdir -p "$HOME/Library/Application Support/pypoetry/"
