@@ -193,3 +193,6 @@ source "$HOME/.zprofile"
 # Starship configs
 export STARSHIP_CONFIG="$HOME/dotfiles/starship.toml"
 eval "$(starship init zsh)"
+
+# Homebrew shellenv
+eval "$(/opt/homebrew/bin/brew shellenv)
