@@ -65,7 +65,7 @@ chmod +x system_config.sh
 ./system_config.sh "$HOSTNAME" || exit
 
 # Install Poetry
-curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
+curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
 mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
 mkdir -p "$HOME/Library/Application Support/pypoetry/"
