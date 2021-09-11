@@ -341,8 +341,6 @@ There are two things you can do about this warning:
   :commands lsp-treemacs-errors-list
   )
 
-(use-package company-lsp)
-
 ;; Use the Debug Adapter Protocol for running tests and debugging
 (use-package posframe
   :ensure t
