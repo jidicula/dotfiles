@@ -5,3 +5,4 @@ brew uninstall emacs-plus
 
 # Clean up hardlinked files
 rm "$HOME/.git-templates"
+rm '~'
