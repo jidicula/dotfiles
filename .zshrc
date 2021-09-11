@@ -126,6 +126,12 @@ if command -v pyenv 1>/dev/null 2>&1; then
 	eval "$(pyenv init --path)"
 fi
 
+if command -v nodenv 1>/dev/null 2>&1; then
+	export NODENV_ROOT="$HOME/.nodenv"
+	export PATH="$NODENV_ROOT/bin:$PATH"
+	eval "$(nodenv init -)"
+fi
+
 if command -v rbenv 1>/dev/null 2>&1; then
 	eval "$(rbenv init -)"
 fi
