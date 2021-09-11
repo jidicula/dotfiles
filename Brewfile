@@ -26,7 +26,6 @@ brew "clang-format"
 brew "coreutils"
 brew "cowsay"
 brew "dcm2niix"
-brew "docker"
 brew "docker-compose", link: false
 brew "ghostscript"
 brew "libidn2"
