@@ -7,3 +7,6 @@
 .eggs/
 .mypy_cache/
 .venv
+
+# Node
+node_modules/
