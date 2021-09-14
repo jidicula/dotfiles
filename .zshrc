@@ -143,7 +143,7 @@ export CPPFLAGS="-I/usr/local/opt/zlib/include -I/usr/local/opt/bzip2/include"
 export PIPENV_VENV_IN_PROJECT=1
 
 # Poetry
-export PATH="$HOME/.poetry/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 
 # Ruby Gems
 export PATH="$HOME/.gem/ruby/2.6.0/bin:$PATH"
