@@ -199,4 +199,10 @@ export STARSHIP_CONFIG="$HOME/dotfiles/starship.toml"
 eval "$(starship init zsh)"
 
 # Homebrew shellenv
-eval "$(/opt/homebrew/bin/brew shellenv)"
+if [[ $(arch) == "arm64" ]]; then
+	ARCH="arm64"
+fi
+
+if [[ $ARCH == "arm64" ]]; then
+	eval "$(/opt/homebrew/bin/brew shellenv)"
+fi
