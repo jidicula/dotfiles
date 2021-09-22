@@ -9,7 +9,7 @@ style = "blue"
 
 [git_commit]
 style = "203"
-format = "[$hash]($style) [$tag]($style)"
+format = "[$hash]($style) [$tag]($style) "
 commit_hash_length = 8
 tag_symbol = "🏷  "
 only_detached = false
