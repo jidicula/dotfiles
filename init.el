@@ -363,17 +363,15 @@ There are two things you can do about this warning:
 
 ;; Python configs
 ;; lsp Python
-(use-package lsp-python-ms
+(use-package lsp-pyright
   :delight python-mode "🐍"
   :ensure t
-  :init
-  (setq lsp-python-ms-auto-install-server t)
   :config
-  (put 'lsp-python-ms-python-executable 'safe-local-variable #'stringp)
+  (put 'lsp-pyright-python-executable-cmd 'safe-local-variable #'stringp)
   :hook
   (
    (python-mode . (lambda ()
-                    (require 'lsp-python-ms)
+                    (require 'lsp-pyright)
                     (lsp-deferred)
 		    ))
    ;; if .dir-locals exists, read it first, then activate mspyls
