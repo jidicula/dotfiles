@@ -628,9 +628,8 @@ There are two things you can do about this warning:
 (use-package flycheck
   :delight "✅"
   :ensure t
-  :init
-  (global-flycheck-mode t)
   :config
+  (global-flycheck-mode t)
   (global-set-key (kbd "C-c n") 'flycheck-next-error)
   (global-set-key (kbd "C-c p") 'flycheck-previous-error)
   (put 'flycheck-python-mypy-executable 'safe-local-variable #'stringp)
