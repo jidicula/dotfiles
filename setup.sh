@@ -11,7 +11,9 @@ fi
 HOSTNAME="$1"
 DOTFILESDIR="$(pwd -P)"
 
-sudo xcodebuild -license accept
+if [[ -n "$OS" ]]; then
+	sudo xcodebuild -license accept
+fi
 
 # copy Git configs and templates
 ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
