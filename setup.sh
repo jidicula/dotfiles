@@ -4,6 +4,10 @@ if [[ $(arch) == "arm64" ]]; then
 	ARCH="arm64"
 fi
 
+if [[ $OSTYPE == darwin* ]]; then
+	OS="macos"
+fi
+
 HOSTNAME="$1"
 DOTFILESDIR="$(pwd -P)"
 
@@ -21,13 +25,21 @@ while true; do
 	kill -0 "$$" || exit
 done 2>/dev/null &
 
-# Install Homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+if [[ -n "$OS" ]]; then
 
-# Install Homebrew packages
-brew bundle install
-brew bundle check --verbose
-BREW_STATUS="$?"
+	# Install Homebrew
+	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+	# Install Homebrew packages
+	brew bundle install
+	brew bundle check --verbose
+	BREW_STATUS="$?"
+
+else
+	apt-get update
+	apt-get upgrade -y
+	apt-get install -y emacs npm
+fi
 
 # Install Oh My Zsh
 (sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
@@ -37,31 +49,36 @@ git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "${ZSH_CUSTOM
 # Set up Emacs config
 echo "(load \"$HOME/dotfiles/init.el\")" >"$HOME/.emacs"
 
-# Link Emacs.app to Applications directory
-if [[ -z "$ARCH" ]]; then
-	ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
-else
-	ln -s /opt/homebrew/opt/emacs-plus@27/Emacs.app /Applications
-fi
-# Run Emacs as a background launchctl service
-brew services start d12frosted/emacs-plus/emacs-plus@27
+if [[ -n "$OS" ]]; then
+
+	# Link Emacs.app to Applications directory
+	if [[ -z "$ARCH" ]]; then
+		ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
+	else
+		ln -s /opt/homebrew/opt/emacs-plus@27/Emacs.app /Applications
+	fi
+	# Run Emacs as a background launchctl service
+	brew services start d12frosted/emacs-plus/emacs-plus@27
 
 # Link Homebrew-installed OpenSSL
 # ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/include"
 # ln -s "$HOME/.development/homebrew/Cellar/openssl@1.1/1.1.1k/bin/openssl" "/usr/bin/openssl"
+fi
 
 # Set up ZSH config
 ln -sfv "$HOME/dotfiles/.zshrc" "$HOME/.zshrc"
 source "$HOME/.zshrc"
 
-# Open Karabiner for the first time
-open "/Applications/Karabiner-Elements.app" && sleep 60
-killall "Karabiner-Elements"
-ln -sfv "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
+if [[ -n "$OS" ]]; then
+	# Open Karabiner for the first time
+	open "/Applications/Karabiner-Elements.app" && sleep 60
+	killall "Karabiner-Elements"
+	ln -sfv "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
 
-# Set up macOS system configs
-chmod +x system_config.sh
-./system_config.sh "$HOSTNAME" || exit
+	# Set up macOS system configs
+	chmod +x system_config.sh
+	./system_config.sh "$HOSTNAME" || exit
+fi
 
 # Install bash-language-server
 npm install --global bash-language-server
@@ -70,16 +87,21 @@ npm install --global bash-language-server
 curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -
 mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
-mkdir -p "$HOME/Library/Application Support/pypoetry/"
-ln -sfv "$DOTFILESDIR/config.toml" "$HOME/Library/Application Support/pypoetry/config.toml"
+POETRY_CONFIG_PATH="$HOME/pypoetry/"
+if [[ -z "$OS" ]]; then
+	POETRY_CONFIG_PATH="$HOME/Library/Application Support/pypoetry/"
+fi
+mkdir -p "$POETRY_CONFIG_PATH"
+ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH"
 
 # Install go tools
-mkdir $HOME/go
+mkdir "$HOME/go"
 GO111MODULE=on go get -u golang.org/x/tools/...
 
-# Make user-specific Applications directory
-mkdir "$HOME/Applications"
-
-if [[ "$BREW_STATUS" -ne 0 ]]; then
-	echo "Homebrew Bundle failed, check logs" && exit "$BREW_STATUS"
+if [[ -z "$OS" ]]; then
+	# Make user-specific Applications directory
+	mkdir "$HOME/Applications"
+	if [[ "$BREW_STATUS" -ne 0 ]]; then
+		echo "Homebrew Bundle failed, check logs" && exit "$BREW_STATUS"
+	fi
 fi
