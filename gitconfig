@@ -1,6 +1,8 @@
 # default user email and key
 [include]
         path = ~/dotfiles/gitconfig-personal
+[includeIf "gitdir:**/work/**/.git"]
+        path = ~/dotfiles/gitconfig-work
 [commit]
 	template = ~/dotfiles/commit-message
 	gpgSign = true
