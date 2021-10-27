@@ -111,7 +111,9 @@ fi
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 # shellcheck source=/dev/null
 alias cdr='cd $(git rev-parse --show-toplevel)'
-source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
+if [[ $OSTYPE == darwin* ]]; then
+	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
+fi
 
 # shellcheck source=/dev/null
 source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
@@ -119,17 +121,23 @@ source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 # PATH
 export PATH="/opt/homebrew/bin:/usr/local/sbin:/usr/local/opt/openssl/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/usr/local/MacGPG2/bin:/Library/TeX/texbin:$HOME/.local/bin"
 export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/opt/openssl/lib/"
+if [[ $OSTYPE == darwin* ]]; then
+	if command -v pyenv 1>/dev/null 2>&1; then
+		export PYENV_ROOT="$HOME/.pyenv"
+		export PATH="$PYENV_ROOT/bin:$PATH"
+		eval "$(pyenv init --path)"
 
-if command -v pyenv 1>/dev/null 2>&1; then
-	export PYENV_ROOT="$HOME/.pyenv"
-	export PATH="$PYENV_ROOT/bin:$PATH"
-	eval "$(pyenv init --path)"
+		# pyenv virtualenv-init
+		eval "$(pyenv virtualenv-init -)"
+	fi
 fi
 
-if command -v nodenv 1>/dev/null 2>&1; then
-	export NODENV_ROOT="$HOME/.nodenv"
-	export PATH="$NODENV_ROOT/bin:$PATH"
-	eval "$(nodenv init -)"
+if [[ $OSTYPE == darwin* ]]; then
+	if command -v nodenv 1>/dev/null 2>&1; then
+		export NODENV_ROOT="$HOME/.nodenv"
+		export PATH="$NODENV_ROOT/bin:$PATH"
+		eval "$(nodenv init -)"
+	fi
 fi
 
 if command -v rbenv 1>/dev/null 2>&1; then
@@ -148,18 +156,9 @@ export PATH="$HOME/.local/bin:$PATH"
 # Ruby Gems
 export PATH="$HOME/.gem/ruby/2.6.0/bin:$PATH"
 
-# Ruby stuff
-# export RUBY_CONFIGURE_OPTS="--with-openssl-dir=$(brew --prefix openssl@1.1)"
-
-# rbenv
-eval "$(rbenv init -)"
-
 # Python Tcl-Tk options for pyenv
 export PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I/usr/local/opt/tcl-tk/include' --with-tcltk-libs='-L/usr/local/opt/tcl-tk/lib -ltcl8.6 -ltk8.6'"
 export TK_SILENCE_DEPRECATION=1
-
-# pyenv virtualenv-init
-eval "$(pyenv virtualenv-init -)"
 
 # openjdk11
 export PATH="/usr/local/opt/openjdk@11/bin:$PATH"

@@ -90,7 +90,7 @@ curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-
 mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
 POETRY_CONFIG_PATH="$HOME/pypoetry/"
-if [[ -z "$OS" ]]; then
+if [[ -n "$OS" ]]; then
 	POETRY_CONFIG_PATH="$HOME/Library/Application Support/pypoetry/"
 fi
 mkdir -p "$POETRY_CONFIG_PATH"
@@ -100,7 +100,7 @@ ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH"
 mkdir "$HOME/go"
 GO111MODULE=on go get -u golang.org/x/tools/...
 
-if [[ -z "$OS" ]]; then
+if [[ -n "$OS" ]]; then
 	# Make user-specific Applications directory
 	mkdir "$HOME/Applications"
 	if [[ "$BREW_STATUS" -ne 0 ]]; then
