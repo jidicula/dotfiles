@@ -160,6 +160,9 @@ defaults write com.apple.finder FXInfoPanesExpanded -dict \
 	OpenWith -bool true \
 	Privileges -bool true
 
+# Search current folder by default
+defaults write com.apple.finder FXDefaultSearchScope -string "SCcf"
+
 ###############################################################################
 #                             Dock and hot corners                            #
 ###############################################################################
