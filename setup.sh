@@ -38,9 +38,9 @@ if [[ -n "$OS" ]]; then
 	BREW_STATUS="$?"
 
 else
-	apt-get update
-	apt-get upgrade -y
-	apt-get install -y emacs npm
+	sudo apt-get update
+	sudo apt-get upgrade -y
+	sudo apt-get install -y emacs npm
 fi
 
 # Install Oh My Zsh
