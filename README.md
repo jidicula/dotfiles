@@ -1,4 +1,4 @@
-[![macOS 11.0 Big Sur](https://github.com/jidicula/dotfiles/workflows/macOS%2011.0%20Big%20Sur/badge.svg)](https://github.com/jidicula/dotfiles/actions?query=workflow%3A%22macOS+11.0+Big+Sur%22)
+[![Setup](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml/badge.svg)](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml)
 
 # dotfiles
 
