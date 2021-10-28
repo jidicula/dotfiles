@@ -1,4 +1,4 @@
-[![Setup](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml/badge.svg)](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml)
+[![Build](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml/badge.svg)](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml)
 
 # dotfiles
 
