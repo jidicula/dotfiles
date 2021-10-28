@@ -172,18 +172,8 @@ There are two things you can do about this warning:
   :config
   (global-hl-todo-mode +1))
 
-;; gitattributes-mode
-(use-package gitattributes-mode
-  :ensure t
-  )
-
-;; gitconfig-mode
-(use-package gitconfig-mode
-  :ensure t
-  )
-
-;; gitignore-mode
-(use-package gitignore-mode
+;; git-modes
+(use-package git-modes
   :ensure t
   )
 
