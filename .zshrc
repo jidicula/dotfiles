@@ -72,7 +72,6 @@ export ZSH="$HOME/.oh-my-zsh"
 plugins=(
 	osx
 	brew
-	emacs
 	python
 	pip
 	gpg-agent
