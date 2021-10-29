@@ -4,7 +4,7 @@
 if [[ "$OSTYPE" == darwin* ]]; then
 	git log -1 --format=format:%h | pbcopy
 elif [[ -n "$WSL_DISTRO_NAME" ]]; then
-	git log -1 --format=format:%h | clip.exe
+	git log -1 --format=format:%h
 fi
 
 # Add other post-commit hooks
