@@ -94,7 +94,7 @@ source "$ZSH/oh-my-zsh.sh"
 if [[ -n $SSH_CONNECTION ]]; then
 	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
 else
-	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
+	export EDITOR="/usr/bin/env emacs"
 fi
 
 # Compilation flags
