@@ -5,9 +5,6 @@
         path = ~/dotfiles/gitconfig-work
 [commit]
 	template = ~/dotfiles/commit-message
-	gpgSign = true
-[tag]
-        gpgSign = true
 [init]
 	templatedir = ~/.git-templates
 	defaultBranch = "main"

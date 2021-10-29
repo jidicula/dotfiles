@@ -2,3 +2,7 @@
 	name = jidicula
 	email = "johanan@forcepush.tech"
 	signingkey = "94CC8CDB"
+[commit]
+	gpgSign = true
+[tag]
+    gpgSign = true
