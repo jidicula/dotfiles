@@ -2,3 +2,7 @@
     name = jidicula
     email = "johanan.idicula@ssc-spc.gc.ca"
     signingkey = "19BA0720"
+[commit]
+    gpgSign = false
+[tag]
+    gpgSign = false
