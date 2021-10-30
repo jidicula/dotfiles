@@ -118,8 +118,7 @@ fi
 source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
 # PATH
-export PATH="/opt/homebrew/bin:/usr/local/sbin:/usr/local/opt/openssl/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/usr/local/MacGPG2/bin:/Library/TeX/texbin:$HOME/.local/bin"
-export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/opt/openssl/lib/"
+export PATH="/opt/homebrew/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin:$HOME/.local/bin"
 if [[ $OSTYPE == darwin* ]]; then
 	if command -v pyenv 1>/dev/null 2>&1; then
 		export PYENV_ROOT="$HOME/.pyenv"
