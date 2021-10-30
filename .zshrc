@@ -110,6 +110,7 @@ fi
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 # shellcheck source=/dev/null
 alias cdr='cd $(git rev-parse --show-toplevel)'
+alias gcce="gcc -Wextra -Wpedantic"
 if [[ $OSTYPE == darwin* ]]; then
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
