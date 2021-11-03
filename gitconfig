@@ -1,8 +1,3 @@
-# default user email and key
-[include]
-        path = ~/dotfiles/gitconfig-personal
-[includeIf "gitdir:**/work/**/.git"]
-        path = ~/dotfiles/gitconfig-work
 [commit]
 	template = ~/dotfiles/commit-message
     gpgSign = true
@@ -23,7 +18,12 @@
 [pull]
 	rebase = true
 [diff]
-        # Use the slower but better patience diff algorithm
+    # Use the slower but better patience diff algorithm
 	algorithm = patience
 	# Use new diff algorithm to make e.g. function diffs look better.
 	compactionheuristic = true
+# default user email and key
+[include]
+    path = ~/dotfiles/gitconfig-personal
+[includeIf "gitdir:**/work/**/.git"]
+    path = ~/dotfiles/gitconfig-work
