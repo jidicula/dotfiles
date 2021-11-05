@@ -72,7 +72,9 @@ export ZSH="$HOME/.oh-my-zsh"
 plugins=(
 	osx
 	brew
+	kubectl
 	python
+	pyenv
 	pip
 	gpg-agent
 	macports
