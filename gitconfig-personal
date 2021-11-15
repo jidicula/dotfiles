@@ -1,7 +1,9 @@
+[gpg]
+    format = ssh
 [user]
 	name = jidicula
 	email = "johanan@forcepush.tech"
-	signingkey = "94CC8CDB"
+	signingkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIItsMINYPmT3lCIUyQtPWKlBsGMXDCU+liN+XkqQAm0R johanan@forcepush.tech"
 [commit]
 	gpgSign = true
 [tag]
