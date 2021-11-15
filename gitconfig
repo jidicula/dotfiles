@@ -22,6 +22,8 @@
 	algorithm = patience
 	# Use new diff algorithm to make e.g. function diffs look better.
 	compactionheuristic = true
+[help]
+    autocorrect = prompt
 # default user email and key
 [include]
     path = ~/dotfiles/gitconfig-personal
