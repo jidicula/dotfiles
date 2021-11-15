@@ -1,5 +1,7 @@
 [gpg]
     format = ssh
+[gpg "ssh"]
+    allowedSignersFile = "~/dotfiles/allowed-signers"
 [user]
 	name = jidicula
 	email = "johanan@forcepush.tech"
