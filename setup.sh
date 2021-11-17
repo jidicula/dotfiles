@@ -98,7 +98,7 @@ ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH"
 
 # Install go tools
 mkdir "$HOME/go"
-GO111MODULE=on go get -u golang.org/x/tools/...
+go install golang.org/x/tools/...@latest
 
 if [[ -n "$OS" ]]; then
 	# Make user-specific Applications directory
