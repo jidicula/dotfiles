@@ -206,3 +206,7 @@ fi
 if [[ $ARCH == "arm64" ]]; then
 	eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
+
+PLAN9=/usr/local/plan9
+export PLAN9
+export PATH="$PATH:$PLAN9/bin"
