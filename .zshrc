@@ -117,6 +117,11 @@ if [[ $OSTYPE == darwin* ]]; then
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
 
+function dir() {
+	mkdir -p -- "$1" &&
+		cd -P -- "$1"
+}
+
 # shellcheck source=/dev/null
 source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
