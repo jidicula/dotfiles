@@ -407,7 +407,7 @@ There are two things you can do about this warning:
 
 ;; go-mode
 (use-package go-mode
-  :delight ""
+  :delight ""
   :hook
   (before-save . lsp-format-buffer)
   (before-save . lsp-organize-imports)

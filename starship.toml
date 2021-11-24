@@ -47,7 +47,7 @@ format = "[$symbol$version]($style) "
 [golang]
 style = "cyan"
 format = "[$symbol($version )]($style) "
-symbol = " "
+symbol = "ﳑ "
 
 [swift]
 style = "202"
