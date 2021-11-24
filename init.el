@@ -123,13 +123,13 @@ There are two things you can do about this warning:
          ("C-x G" . magit-status-with-prefix)
 	 ("C-c g" . magit-file-dispatch))
   :config
-  (if (string= (shell-command-to-string "arch") "arm64")
-      (setq magit-git-executable "/opt/homebrew/bin/git")
-    (if (string= (shell-command-to-string "uname") "Darwin")
-        (setq magit-git-executable "/usr/local/bin/git")
-        (setq magit-git-executable "/usr/bin/git")
-        )
-    )
+  ;; (if (string= (shell-command-to-string "arch") "arm64")
+  ;;     (setq magit-git-executable "/opt/homebrew/bin/git")
+  ;;   (if (string= (shell-command-to-string "uname") "Darwin")
+  ;;       (setq magit-git-executable "/usr/local/bin/git")
+  ;;       (setq magit-git-executable "/usr/bin/git")
+  ;;       )
+  ;;   )
   
   (setq auth-sources '("~/.authinfo"))
   (setq magit-display-buffer-function
