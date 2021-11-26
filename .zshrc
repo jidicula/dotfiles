@@ -180,6 +180,12 @@ gt() {
 gtv() {
 	go test -v | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
 }
+gtb() {
+	go test -bench=. | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
+gtbv() {
+	go test -v -bench=. | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
 gtc() {
 	local t=$(mktemp -t cover)
 	go test $COVERFLAGS -coverprofile="$t" $@ | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' &&
