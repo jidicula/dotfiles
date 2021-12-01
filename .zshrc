@@ -64,9 +64,6 @@ export ZSH="$HOME/.oh-my-zsh"
 # Would you like to use another custom folder than $ZSH/custom?
 # ZSH_CUSTOM=/path/to/new-custom-folder
 
-# shellcheck source=/dev/null
-source "$ZSH/oh-my-zsh.sh"
-
 # User configuration
 
 # export MANPATH="/usr/local/man:$MANPATH"
@@ -204,9 +201,6 @@ PLAN9=/usr/local/plan9
 export PLAN9
 export PATH="$PATH:$PLAN9/bin"
 
-# Which plugins would you like to load?
-# Standard plugins can be found in ~/.oh-my-zsh/plugins/*
-# Custom plugins may be added to ~/.oh-my-zsh/custom/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
@@ -221,3 +215,6 @@ plugins=(
 	poetry
 	golang
 )
+
+# shellcheck source=/dev/null
+source "$ZSH/oh-my-zsh.sh"
