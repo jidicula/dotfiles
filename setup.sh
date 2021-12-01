@@ -89,12 +89,12 @@ npm install --global bash-language-server
 curl -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -
 mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
-POETRY_CONFIG_PATH="$HOME/pypoetry/"
+POETRY_CONFIG_PATH="$HOME/.config/pypoetry/"
 if [[ -n "$OS" ]]; then
 	POETRY_CONFIG_PATH="$HOME/Library/Application Support/pypoetry/"
 fi
 mkdir -p "$POETRY_CONFIG_PATH"
-ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH"
+ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
 
 # Install go tools
 mkdir "$HOME/go"
