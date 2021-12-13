@@ -1,11 +1,11 @@
-[gpg]
-    format = ssh
-[gpg "ssh"]
-    allowedSignersFile = "~/dotfiles/allowed-signers"
+# [gpg]
+#     format = ssh
+# [gpg "ssh"]
+#     allowedSignersFile = "~/dotfiles/allowed-signers"
 [user]
 	name = jidicula
 	email = "johanan@forcepush.tech"
-	signingkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIItsMINYPmT3lCIUyQtPWKlBsGMXDCU+liN+XkqQAm0R johanan@forcepush.tech"
+	signingkey = "94CC8CDB"
 [commit]
 	gpgSign = true
 [tag]

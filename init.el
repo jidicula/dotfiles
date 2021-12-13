@@ -639,7 +639,7 @@ There are two things you can do about this warning:
   ;; company-mode global settings
   ;; Show suggestions after entering one character.
   (setq company-minimum-prefix-length 1)
-  (setq company-idle-delay 0.5)
+  (setq company-idle-delay 0.05)
   ;; Use tab key to cycle through suggestions.
   ;; ('tng' means 'tab and go')
   ;; disabled because it doesn't expand function signatures >:|
