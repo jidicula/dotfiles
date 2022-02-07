@@ -311,6 +311,12 @@ There are two things you can do about this warning:
   :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
          (python-mode . lsp-deferred)
 	     (sh-mode . lsp-deferred)
+         (mhtml-mode . lsp-deferred)
+         (scss-mode . lsp-deferred)
+         (js-jsx-mode . lsp-deferred)
+         (js-mode . lsp-deferred)
+         (css-mode . lsp-deferred)
+         (typescript-mode . lsp-deferred)
          (dockerfile-mode . lsp-deferred)
          (go-mode . lsp-deferred)
          ;; if you want which-key integration
@@ -319,6 +325,23 @@ There are two things you can do about this warning:
 	     (lsp-after-open . 'lsp-enable-imenu)
 	     )
   :commands (lsp lsp-deferred))
+
+(use-package css-mode
+  :ensure nil
+  :delight scss-mode ""
+  :delight ""
+  )
+
+(use-package mhtml-mode
+  :ensure nil
+  :delight ""
+  )
+
+(use-package prog-mode
+  :ensure nil
+  :delight typescript-mode ""
+  :delight js-mode ""
+  )
 
 ;; optionally
 (use-package lsp-ui
@@ -717,12 +740,6 @@ There are two things you can do about this warning:
   (yaml-mode . highlight-indent-guides-mode)
   )
 
-;; html5-schema
-;; This is sourced from GNU ELPA
-(use-package html5-schema
-  :ensure t
-  )
-
 ;; emacs-lisp
 (use-package emacs-lisp
   :ensure nil
@@ -741,55 +758,6 @@ There are two things you can do about this warning:
          "\\.markdown\\'"
 	 "\\.mdx\\'"
 	 )
-  )
-
-;; react-snippets
-(use-package react-snippets
-  :ensure t)
-
-;; tide (for Typescript)
-(use-package tide
-  :ensure t
-  :after (typescript-mode company flycheck)
-  :hook ((typescript-mode . tide-setup)
-	 (web-mode . my/activate-tide-mode)
-         (typescript-mode . tide-hl-identifier-mode)
-         (before-save . tide-format-before-save)))
-
-;; activate tide automatically
-(defun my/activate-tide-mode ()
-  "Use hl-identifier-mode only on js or ts buffers."
-  (when (and (stringp buffer-file-name)
-             (string-match "\\.[tj]sx?\\'" buffer-file-name))
-    (tide-setup)
-    (tide-hl-identifier-mode)))
-
-;; web-mode
-(use-package web-mode
-  :delight web-mode "🕸"
-  :ensure t
-  :mode
-  ("\\.ejs\\'"
-   "\\.hbs\\'"
-   "\\.html\\'"
-   "\\.php\\'"
-   "\\.[jt]sx?\\'"
-   "\\.css?\\'")
-  :hook (
-	 (web-mode . company-mode)
-	 (scss-mode . web-mode)
-	 )
-  :config
-  (setq web-mode-content-types-alist '(("jsx" . "\\.[jt]sx?\\'")))
-  (setq web-mode-markup-indent-offset 2)
-  (setq web-mode-css-indent-offset 2)
-  (setq web-mode-code-indent-offset 2)
-  (setq web-mode-script-padding 2)
-  (setq web-mode-block-padding 2)
-  (setq web-mode-style-padding 2)
-  (setq web-mode-enable-auto-pairing t)
-  (setq web-mode-enable-auto-closing t)
-  (setq web-mode-enable-current-element-highlight t)
   )
 
 ;; prettier.el for linting web files
