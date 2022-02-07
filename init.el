@@ -751,7 +751,7 @@ There are two things you can do about this warning:
 
 ;; markdown-mode
 (use-package markdown-mode
-  :delight markdown-mode ".md"
+  :delight markdown-mode ""
   :ensure t
   :mode ("\\.md\\'"
          "\\.mkd\\'"
