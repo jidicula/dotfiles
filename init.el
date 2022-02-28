@@ -317,6 +317,7 @@ There are two things you can do about this warning:
          (js-mode . lsp-deferred)
          (css-mode . lsp-deferred)
          (typescript-mode . lsp-deferred)
+         (web-mode . lsp-deferred)
          (dockerfile-mode . lsp-deferred)
          (go-mode . lsp-deferred)
          ;; if you want which-key integration
