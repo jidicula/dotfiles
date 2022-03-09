@@ -105,28 +105,14 @@ function dir() {
 source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
 
 # PATH
-export PATH="/opt/homebrew/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin:$HOME/.local/bin"
-if [[ $OSTYPE == darwin* ]]; then
-	if command -v pyenv 1>/dev/null 2>&1; then
-		export PYENV_ROOT="$HOME/.pyenv"
-		export PATH="$PYENV_ROOT/bin:$PATH"
-		eval "$(pyenv init --path)"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin:$HOME/.local/bin"
 
-		# pyenv virtualenv-init
-		eval "$(pyenv virtualenv-init -)"
-	fi
+# Homebrew shellenv
+if [[ $(arch) == "arm64" ]]; then
+	ARCH="arm64"
 fi
-
-if [[ $OSTYPE == darwin* ]]; then
-	if command -v nodenv 1>/dev/null 2>&1; then
-		export NODENV_ROOT="$HOME/.nodenv"
-		export PATH="$NODENV_ROOT/bin:$PATH"
-		eval "$(nodenv init -)"
-	fi
-fi
-
-if command -v rbenv 1>/dev/null 2>&1; then
-	eval "$(rbenv init -)"
+if [[ $ARCH == "arm64" ]]; then
+	eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
 
 export LDFLAGS="-L/usr/local/opt/zlib/lib -L/usr/local/opt/bzip2/lib"
@@ -188,13 +174,24 @@ source "$HOME/.zprofile"
 export STARSHIP_CONFIG="$HOME/dotfiles/starship.toml"
 eval "$(starship init zsh)"
 
-# Homebrew shellenv
-if [[ $(arch) == "arm64" ]]; then
-	ARCH="arm64"
+if [[ $OSTYPE == darwin* ]]; then
+	if command -v pyenv 1>/dev/null 2>&1; then
+		export PYENV_ROOT="$HOME/.pyenv"
+		export PATH="$PYENV_ROOT/bin:$PATH"
+		eval "$(pyenv init --path)"
+	fi
 fi
 
-if [[ $ARCH == "arm64" ]]; then
-	eval "$(/opt/homebrew/bin/brew shellenv)"
+if [[ $OSTYPE == darwin* ]]; then
+	if command -v nodenv 1>/dev/null 2>&1; then
+		export NODENV_ROOT="$HOME/.nodenv"
+		export PATH="$NODENV_ROOT/bin:$PATH"
+		eval "$(nodenv init -)"
+	fi
+fi
+
+if command -v rbenv 1>/dev/null 2>&1; then
+	eval "$(rbenv init -)"
 fi
 
 PLAN9=/usr/local/plan9
