@@ -750,6 +750,14 @@ There are two things you can do about this warning:
 (use-package xkcd
   :ensure t)
 
+(use-package typescript-mode
+  :ensure t
+  :mode ("\\.ts\\'"
+         "\\.tsx\\'"
+         "\\.vue\\'"
+         )
+  )
+
 ;; markdown-mode
 (use-package markdown-mode
   :delight markdown-mode ""
@@ -758,16 +766,6 @@ There are two things you can do about this warning:
          "\\.mkd\\'"
          "\\.markdown\\'"
 	 "\\.mdx\\'"
-	 )
-  )
-
-;; prettier.el for linting web files
-(use-package prettier
-  :ensure t
-  :config
-  (put 'prettier-mode 'safe-local-variable #'fixnump)
-  :hook (
-	 (web-mode . prettier-mode)
 	 )
   )
 
