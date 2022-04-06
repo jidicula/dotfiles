@@ -179,6 +179,7 @@ if [[ $OSTYPE == darwin* ]]; then
 		export PYENV_ROOT="$HOME/.pyenv"
 		export PATH="$PYENV_ROOT/bin:$PATH"
 		eval "$(pyenv init --path)"
+		export ZSH_PYENV_VIRTUALENV=true
 	fi
 fi
 
