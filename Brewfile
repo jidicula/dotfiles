@@ -129,7 +129,7 @@ brew "wget"
 brew "yarn"
 brew "youtube-dl"
 brew "zlib"
-brew "d12frosted/emacs-plus/emacs-plus@27", args: ["HEAD", "with-elrumo2-icon", "with-mailutils", "with-xwidgets"]
+brew "d12frosted/emacs-plus/emacs-plus@28", args: ["with-elrumo2-icon", "with-mailutils", "with-xwidgets", "--with-native-comp", "--with-imagemagick", "--with-no-frame-refocus"]
 brew "jakehilborn/jakehilborn/displayplacer"
 cask "adobe-acrobat-reader"
 cask "balenaetcher"
