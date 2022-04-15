@@ -115,17 +115,11 @@ if [[ $ARCH == "arm64" ]]; then
 	eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
 
-export LDFLAGS="-L/usr/local/opt/zlib/lib -L/usr/local/opt/bzip2/lib"
-export CPPFLAGS="-I/usr/local/opt/zlib/include -I/usr/local/opt/bzip2/include"
-
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1
 
 # Poetry
 export PATH="$HOME/.local/bin:$PATH"
-
-# Ruby Gems
-export PATH="$HOME/.gem/ruby/2.6.0/bin:$PATH"
 
 # Python Tcl-Tk options for pyenv
 export PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I/usr/local/opt/tcl-tk/include' --with-tcltk-libs='-L/usr/local/opt/tcl-tk/lib -ltcl8.6 -ltk8.6'"
@@ -192,6 +186,8 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 if command -v rbenv 1>/dev/null 2>&1; then
+	export RBENV_ROOT="$HOME/.rbenv"
+	export PATH="$RBENV_ROOT/bin:$PATH"
 	eval "$(rbenv init -)"
 fi
 
@@ -208,6 +204,8 @@ plugins=(
 	python
 	pyenv
 	pip
+	rbenv
+	ruby
 	gpg-agent
 	macports
 	poetry

@@ -320,6 +320,7 @@ There are two things you can do about this warning:
          (web-mode . lsp-deferred)
          (dockerfile-mode . lsp-deferred)
          (go-mode . lsp-deferred)
+         (ruby-mode . lsp-deferred)
          ;; if you want which-key integration
          (lsp-mode . lsp-enable-which-key-integration)
 	     (lsp-mode . lsp-lens-mode)
@@ -436,6 +437,15 @@ There are two things you can do about this warning:
   (before-save . lsp-format-buffer)
   (before-save . lsp-organize-imports)
   )
+
+(use-package ruby-mode
+  :delight " "
+  :config
+  (setq lsp-solargraph-autoformat t)
+  :hook
+  (ruby-mode . (lambda ()
+                 (add-hook 'before-save-hook #'lsp-format-buffer nil t)))
+)
 
 ;; json-mode
 (use-package json-mode
