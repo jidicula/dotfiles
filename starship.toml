@@ -61,3 +61,4 @@ symbol = " "
 [cmd_duration]
 style = "yellow"
 format = "[$duration]($style) "
+show_notifications = true
