@@ -74,6 +74,7 @@ brew "libheif"
 brew "imagemagick"
 brew "ispell"
 brew "jansson"
+brew "jq"
 brew "latex2html"
 brew "libgccjit"
 brew "libpq", link: true
