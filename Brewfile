@@ -75,6 +75,7 @@ brew "imagemagick"
 brew "ispell"
 brew "jansson"
 brew "latex2html"
+brew "libgccjit"
 brew "libpq", link: true
 brew "locust"
 brew "magic-wormhole"
@@ -129,7 +130,7 @@ brew "wget"
 brew "yarn"
 brew "youtube-dl"
 brew "zlib"
-brew "d12frosted/emacs-plus/emacs-plus@28", args: ["with-elrumo2-icon", "with-mailutils", "with-xwidgets", "--with-native-comp", "--with-imagemagick", "--with-no-frame-refocus"]
+brew "d12frosted/emacs-plus/emacs-plus@28", args: ["with-elrumo2-icon", "with-imagemagick", "with-mailutils", "with-native-comp", "with-no-frame-refocus", "with-xwidgets"]
 brew "jakehilborn/jakehilborn/displayplacer"
 cask "adobe-acrobat-reader"
 cask "balenaetcher"
