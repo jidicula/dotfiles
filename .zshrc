@@ -195,6 +195,10 @@ PLAN9=/usr/local/plan9
 export PLAN9
 export PATH="$PATH:$PLAN9/bin"
 
+# GNU dependencies for building some Homebrew formulae, like Emacs
+export PATH="/opt/homebrew/opt/gnu-tar/libexec/gnubin:$PATH"
+export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
+
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
