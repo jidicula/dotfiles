@@ -2,13 +2,23 @@
 ;;; Commentary:
 ;;; Load it from .emacs with `(load "path/to/init.el")`
 
-(defconst emacs-start-time (current-time))
+;; Startup timer
+(add-hook 'emacs-startup-hook
+          (lambda ()
+            (message "Emacs ready in %s with %d garbage collections."
+                     (format "%.2f seconds"
+                             (float-time
+                              (time-subtract after-init-time before-init-time)))
+                     gcs-done)))
 
 ;; increase gc-cons-threshold to 100mb
 (setq gc-cons-threshold 100000000)
 
 ;; increase amount of data Emacs reads from process to 1mb
 (setq read-process-output-max (* 1024 1024))
+
+(message (format "%s" file-name-handler-alist))
+(setq file-name-handler-alist nil)
 
 ;; confirm before quitting
 (setq confirm-kill-emacs 'y-or-n-p)
@@ -18,6 +28,9 @@
 
 ;; no large file warning
 (setq large-file-warning-threshold nil)
+
+;; highlight trailing whitespace
+(whitespace-mode 1)
 
 ;; Don't switch frames when changing buffers
 (setq ido-default-buffer-method 'selected-window)
@@ -81,21 +94,50 @@ There are two things you can do about this warning:
       backup-directory-alist `((".*" . ,temporary-file-directory))
       auto-save-file-name-transforms `((".*" ,temporary-file-directory t)))
 
+;; return to last place in file
+(use-package saveplace
+  :defer 1
+  :ensure nil
+  :config
+  (save-place-mode)
+  )
+
+;; auto-revert buffer if changed outside
+(use-package autorevert
+  :defer 1
+  :diminish auto-revert-mode
+  :ensure nil
+  :config
+  ;; Reverts buffers automatically when files are changed externally.
+  (global-auto-revert-mode t)
+  )
+
 ;; 3rd-party packages
+
+;; Emacs startup profiler
+(use-package esup
+  :ensure t
+  :defer 2
+  :config
+  (setq esup-depth 0)
+  ;; To use MELPA Stable use ":pin melpa-stable",
+  :pin melpa)
 
 ;; Restart Emacs from inside Emacs with `M-x restart-emacs`
 (use-package restart-emacs
-  :defer t)
+  :defer 2)
 
 ;; use-package-ensure-system-package
 ;; provides way to define system package dependencies for Emacs packages
 (use-package use-package-ensure-system-package
-  :ensure t)
+  :ensure t
+  :defer 2)
 
 ;; delight
 ;; hides modeline displays
 (use-package delight
-  :ensure t)
+  :ensure t
+  :defer 2)
 (require 'delight)                ;; if you use :delight
 (require 'bind-key)                ;; if you use any :bind variant
 
@@ -151,12 +193,14 @@ There are two things you can do about this warning:
 (use-package forge
   :ensure t
   :after magit
+  :defer 2
   )
 
 ;; Magit todos
 (use-package magit-todos
   :requires (magit)
   :after (magit)
+  :defer 2
   :hook
   (magit-mode . magit-todos-mode)
   :custom
@@ -169,8 +213,9 @@ There are two things you can do about this warning:
   )
 
 (use-package hl-todo
+  :defer 2
   :config
-  (global-hl-todo-mode +1))
+  (global-hl-todo-mode 1))
 
 ;; git-modes
 (use-package git-modes
@@ -181,6 +226,7 @@ There are two things you can do about this warning:
 (use-package which-key
   :delight
   :ensure t
+  :defer 2
   :init
   (which-key-mode)
   )
@@ -210,7 +256,7 @@ There are two things you can do about this warning:
 ;; treemacs
 (use-package treemacs
   :ensure t
-  :defer t
+  :defer 2
   :init
   (with-eval-after-load 'winum
     (define-key winum-keymap (kbd "M-0") #'treemacs-select-window))
@@ -279,20 +325,24 @@ There are two things you can do about this warning:
 
 (use-package treemacs-projectile
   :after treemacs projectile
-  :ensure t)
+  :ensure t
+  :defer 2)
 
 (use-package treemacs-icons-dired
   :after treemacs dired
   :ensure t
+  :defer 2
   :config (treemacs-icons-dired-mode))
 
 (use-package treemacs-magit
   :after treemacs magit
-  :ensure t)
+  :ensure t
+  :defer 2)
 
 (use-package treemacs-persp
   :after treemacs persp-mode
   :ensure t
+  :defer 2
   :config (treemacs-set-scope-type 'Perspectives))
 
 ;; lsp-mode configs
@@ -303,7 +353,7 @@ There are two things you can do about this warning:
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   (setq lsp-keymap-prefix "C-c l")
   :custom
-  (lsp-auto-guess-root +1)
+  (lsp-auto-guess-root 1)
   :config
   (lsp-enable-imenu)
   (setq lsp-prefer-flymake nil)
@@ -373,6 +423,7 @@ There are two things you can do about this warning:
 (use-package dap-mode
   :after lsp-mode
   :ensure t
+  :defer 2
   :hook
   (lsp-mode . dap-mode)
   (lsp-mode . dap-ui-mode)
@@ -643,10 +694,12 @@ There are two things you can do about this warning:
 (use-package yasnippet
   :delight yas-minor-mode "🆈"
   :ensure t
+  :defer 2
   )
 (use-package yasnippet-snippets
   :after yasnippet
   :ensure t
+  :defer 2
   :config
   (yas-global-mode t)
   )
@@ -663,7 +716,8 @@ There are two things you can do about this warning:
   )
 
 (use-package all-the-icons
-  :ensure t)
+  :ensure t
+  :defer 2)
 
 ;; company
 (use-package company
@@ -717,6 +771,7 @@ There are two things you can do about this warning:
 (use-package projectile
   :ensure t
   :delight
+  :defer 2
   :init
   (projectile-mode t)
   :bind (
@@ -758,7 +813,8 @@ There are two things you can do about this warning:
 
 ;; xkcd
 (use-package xkcd
-  :ensure t)
+  :ensure t
+  :defer 2)
 
 (use-package typescript-mode
   :ensure t
@@ -947,8 +1003,6 @@ then enter the text in that file's own buffer.")
 	(eval remove-hook 'elpy-mode-hook 'elpy-format-on-save t)
 	(lexical-binding . t)))
 
-;;; show package load time
-(let ((elapsed (float-time (time-subtract (current-time)
-                                          emacs-start-time))))
-  (message "Loaded packages in %.3fs" elapsed))
+;; Make gc pauses faster by decreasing the threshold.
+(setq gc-cons-threshold (* 2 1000 1000))
 ;;; init.el ends here
