@@ -211,9 +211,9 @@ plugins=(
 	rbenv
 	ruby
 	gpg-agent
-	macports
 	poetry
 	golang
+	dotnet
 )
 
 # shellcheck source=/dev/null
