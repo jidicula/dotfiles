@@ -371,12 +371,18 @@ There are two things you can do about this warning:
          (dockerfile-mode . lsp-deferred)
          (go-mode . lsp-deferred)
          (ruby-mode . lsp-deferred)
+         (csharp-mode . lsp-deferred)
          ;; if you want which-key integration
          (lsp-mode . lsp-enable-which-key-integration)
 	     (lsp-mode . lsp-lens-mode)
 	     (lsp-after-open . 'lsp-enable-imenu)
 	     )
   :commands (lsp lsp-deferred))
+
+(use-package csharp-mode
+  :ensure t
+  :delight ""
+)
 
 (use-package css-mode
   :ensure nil

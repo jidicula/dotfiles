@@ -195,6 +195,10 @@ PLAN9=/usr/local/plan9
 export PLAN9
 export PATH="$PATH:$PLAN9/bin"
 
+# dotnet
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export PATH="$HOME/.dotnet/tools:$PATH"
+
 # GNU dependencies for building some Homebrew formulae, like Emacs
 export PATH="/opt/homebrew/opt/gnu-tar/libexec/gnubin:$PATH"
 export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"

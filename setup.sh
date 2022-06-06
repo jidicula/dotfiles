@@ -100,6 +100,9 @@ ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
 mkdir "$HOME/go"
 go install golang.org/x/tools/...@latest
 
+# Install C# tools
+dotnet tool install -g csharp-ls
+
 if [[ -n "$OS" ]]; then
 	# Make user-specific Applications directory
 	mkdir "$HOME/Applications"
