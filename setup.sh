@@ -101,7 +101,7 @@ mkdir "$HOME/go"
 go install golang.org/x/tools/...@latest
 
 # Install C# tools
-dotnet tool install -g csharp-ls
+"$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
 
 if [[ -n "$OS" ]]; then
 	# Make user-specific Applications directory
