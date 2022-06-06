@@ -93,7 +93,7 @@ brew "nethogs"
 brew "nghttp2"
 brew "nmap"
 brew "node-build"
-brew "nodenv"
+brew "nodenv", args: ["HEAD"]
 brew "pstoedit"
 brew "qscintilla2"
 brew "sundials"
