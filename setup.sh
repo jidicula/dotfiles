@@ -57,10 +57,10 @@ if [[ -n "$OS" ]]; then
 	if [[ -z "$ARCH" ]]; then
 		ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
 	else
-		ln -s /opt/homebrew/opt/emacs-plus@27/Emacs.app /Applications
+		ln -s /opt/homebrew/opt/emacs-plus@28/Emacs.app /Applications
 	fi
 	# Run Emacs as a background launchctl service
-	brew services start d12frosted/emacs-plus/emacs-plus@27
+	brew services start d12frosted/emacs-plus/emacs-plus@28
 
 # Link Homebrew-installed OpenSSL
 # ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/include"
