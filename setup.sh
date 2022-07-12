@@ -69,7 +69,9 @@ fi
 
 # Set up ZSH config
 ln -sfv "$HOME/dotfiles/.zshrc" "$HOME/.zshrc"
-source "$HOME/.zshrc"
+if [[ -e "$HOME/.zshrc" ]]; then
+	source "$HOME/.zshrc"
+fi
 
 if [[ -n "$OS" ]]; then
 	# Open Karabiner for the first time
