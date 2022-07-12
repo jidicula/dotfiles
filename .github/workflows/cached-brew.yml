@@ -38,7 +38,7 @@ jobs:
           key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
           restore-keys: ${{ runner.os }}
 
-      - name: Run setup script
+      - name: Install Homebrew packages
         run: |
           brew bundle install
           brew bundle check --verbose
