@@ -1,0 +1,44 @@
+name: Cached Homebrew Check
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Brewfile'
+      - '.github/workflows/*.yml'
+  # Run every Saturday at midnight
+  schedule:
+    - cron: '0 0 * * 6'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - 'macos-12'
+          - 'ubuntu-latest'
+
+    steps:
+      - uses: actions/checkout@v2
+
+      # Kludge until .NET 6 is available in macos-12 runner
+      - name: Install .NET 6
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: '6.x.x'
+
+      # Cache Homebrew directories
+      - uses: actions/cache@v3
+        with:
+          path: |
+            /opt/homebrew/bin
+            /opt/homebrew/Cellar
+          key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
+          restore-keys: ${{ runner.os }}
+
+      - name: Run setup script
+        run: |
+          brew bundle install
+          brew bundle check --verbose
