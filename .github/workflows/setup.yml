@@ -29,5 +29,11 @@ jobs:
       - name: Validate syntax
         run: bash -n *.sh
 
+      # Kludge until .NET 6 is available in macos-12 runner
+      - name: Install .NET 6
+        uses: actions/setup-dotnet@v2
+        with:
+          dotnet-version: '6.x.x'
+
       - name: Run setup script
         run: ./setup.sh "TEST_HOSTNAME"
