@@ -92,7 +92,7 @@ fi
 # shellcheck source=/dev/null
 alias cdr='cd $(git rev-parse --show-toplevel)'
 alias gcce="gcc -Wextra -Wpedantic"
-if [[ $OSTYPE == darwin* ]]; then
+if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]]; then
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
 
