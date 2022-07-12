@@ -102,7 +102,7 @@ function dir() {
 }
 
 # shellcheck source=/dev/null
-source "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+source "/opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 
 # PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin:$HOME/.local/bin"

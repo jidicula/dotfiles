@@ -133,6 +133,7 @@ brew "wget"
 brew "yarn"
 brew "youtube-dl"
 brew "zlib"
+brew "zsh-syntax-highlighting"
 brew "d12frosted/emacs-plus/emacs-plus@28", args: ["with-elrumo2-icon", "with-imagemagick", "with-mailutils", "with-native-comp", "with-no-frame-refocus", "with-xwidgets"]
 brew "jakehilborn/jakehilborn/displayplacer"
 cask "adobe-acrobat-reader"
