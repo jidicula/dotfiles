@@ -24,6 +24,8 @@
 	compactionheuristic = true
 [help]
     autocorrect = prompt
+[push]
+    autoSetupRemote = true
 # default user email and key
 [include]
     path = ~/dotfiles/gitconfig-personal
