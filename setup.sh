@@ -15,6 +15,9 @@ if [[ -n "$OS" ]]; then
 	sudo xcodebuild -license accept
 fi
 
+# Make folder for code
+mkdir "$HOME/Developer"
+
 # copy Git configs and templates
 ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
 ln -sfv "$DOTFILESDIR/gitignore" "$HOME/.gitignore"
