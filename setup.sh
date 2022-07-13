@@ -16,7 +16,7 @@ if [[ -n "$OS" ]]; then
 fi
 
 # Make folder for code
-mkdir "$HOME/Developer"
+mkdir -p "$HOME/Developer/work"
 
 # copy Git configs and templates
 ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
