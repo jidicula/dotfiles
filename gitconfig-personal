@@ -4,8 +4,8 @@
 #     allowedSignersFile = "~/dotfiles/allowed-signers"
 [user]
 	name = jidicula
-	email = "johanan@forcepush.tech"
-	signingkey = "94CC8CDB"
+	email = "johanan.idicula@gmail.com"
+	signingkey = "608066E1"
 [commit]
 	gpgSign = true
 [tag]
