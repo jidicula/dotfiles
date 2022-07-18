@@ -30,6 +30,7 @@ mkdir -p "$HOME/.gnupg"
 
 # copy GPG config
 ln -sfv "$DOTFILESDIR/gpg.conf" "$HOME/.gnupg/gpg.conf"
+ln -sfv "$DOTFILESDIR/gpg-agent.conf" "$HOME/.gnupg/gpg-agent.conf"
 
 # copy Git configs and templates
 ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
