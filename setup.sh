@@ -18,6 +18,12 @@ fi
 # Make folder for code
 mkdir -p "$HOME/Developer/work"
 
+# Make folder for GnuPG
+mkdir -p "$HOME/.gnupg"
+
+# copy GPG config
+ln -sfv "$DOTFILESDIR/gpg.conf" "$HOME/.gnupg/gpg.conf"
+
 # copy Git configs and templates
 ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
 ln -sfv "$DOTFILESDIR/gitignore" "$HOME/.gitignore"
