@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# sudo access until finished
+while true; do
+	sudo -n true
+	sleep 60
+	kill -0 "$$" || exit
+done 2>/dev/null &
+
 if [[ $(arch) == "arm64" ]]; then
 	ARCH="arm64"
 fi
@@ -29,12 +36,6 @@ ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
 ln -sfv "$DOTFILESDIR/gitignore" "$HOME/.gitignore"
 ln -sfv "$DOTFILESDIR/git-templates" "$HOME/.git-templates"
 
-# sudo access until finished
-while true; do
-	sudo -n true
-	sleep 60
-	kill -0 "$$" || exit
-done 2>/dev/null &
 
 if [[ -n "$OS" ]]; then
 
