@@ -2,7 +2,7 @@
 
 # dotfiles
 
-A collection of dotfiles I use for config.
+A collection of config dotfiles.
 
 # Steps
 
@@ -16,3 +16,4 @@ sudo scutil --set LocalHostName "$HOSTNAME"` and restart shell.
 1. `cd dotfiles`
 1. Set up Terminal theme.
 1. `./setup.sh chosen_hostname`
+1. Import GPG signing key(s).
