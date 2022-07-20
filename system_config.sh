@@ -276,10 +276,13 @@ defaults write com.apple.SoftwareUpdate AutomaticDownload -int 1
 defaults -currentHost write com.apple.ImageCapture disableHotPlug -bool true
 
 ###############################################################################
-#                                   Messages                                  #
+#                                   Text input                                #
 ###############################################################################
 
-# Disable smart quotes as it's annoying for messages that contain code
-defaults write com.apple.messageshelper.MessageController SOInputLineSettings -dict-add "automaticQuoteSubstitutionEnabled" -bool false
+# Disable smart quotes as it's annoying for text that contain code
+for d in $(defaults domains | tr -d ,); do
+	osascript -e "app id \"$d\"" &>/dev/null || continue
+	defaults write "$d" SmartQuotes -bool false
+done
 
 echo "Done. Note that some of these changes require a logout/restart to take effect."
