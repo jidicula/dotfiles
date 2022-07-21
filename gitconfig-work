@@ -1,6 +1,4 @@
 [user]
     name = jidicula
-[commit]
-    gpgSign = false
-[tag]
-    gpgSign = false
+    email = "jidicula@github.com"
+    signingkey = "D97377F4"
