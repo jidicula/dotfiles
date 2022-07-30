@@ -17,8 +17,8 @@ fi
 
 # Enable touchID sudo authentication
 if [[ -n "$OS" ]]; then
-	chmod +x sudo-touchid.sh
-	./sudo-touchid.sh || exit
+	chmod +x touchid-sudo.sh
+	./touchid-sudo.sh || exit
 fi
 
 HOSTNAME="$1"
