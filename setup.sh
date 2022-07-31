@@ -109,6 +109,7 @@ ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
 # Install go tools
 mkdir "$HOME/go"
 go install golang.org/x/tools/...@latest
+go install golang.org/x/tools/gopls@latest
 
 # Install C# tools
 "$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
