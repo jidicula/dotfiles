@@ -13,19 +13,32 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  bootstrap:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os:
           - 'macos-12'
           - 'ubuntu-latest'
+        amend-scratch:
+          - 'amend'
+          - 'scratch'
 
     steps:
       - uses: actions/checkout@v2
 
       - name: Validate syntax
         run: bash -n *.sh
+
+      # Cache Homebrew directories for amend matrix option
+      - uses: actions/cache@v3
+        if: ${{ matrix.amend-scratch == 'amend' }}
+        with:
+          path: |
+            /opt/homebrew/bin
+            /opt/homebrew/Cellar
+          key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
+          restore-keys: ${{ runner.os }}
 
       # Kludge until .NET 6 is available in macos-12 runner
       - name: Install .NET 6
