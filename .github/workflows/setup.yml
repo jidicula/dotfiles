@@ -37,6 +37,9 @@ jobs:
           path: |
             /opt/homebrew/bin
             /opt/homebrew/Cellar
+            /usr/local/Cellar
+            /usr/local/bin
+            /usr/local/opt
           key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
           restore-keys: ${{ runner.os }}
 
