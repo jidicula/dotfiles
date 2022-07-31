@@ -107,7 +107,8 @@ defaults write com.apple.screensaver askForPassword -int 1
 defaults write com.apple.screensaver askForPasswordDelay -int 0
 
 # Save screenshots to custom location
-mkdir -p "$HOME/Pictures/Screenshots"
+mkdir -p "$HOME/Documents/photos/Screenshots"
+ln -sfv "$HOME/Documents/photos/Screenshots" "$HOME/Pictures/Screenshots"
 defaults write com.apple.screencapture location -string "${HOME}/Pictures/Screenshots"
 
 # Enable subpixel font rendering on non-Apple LCDs
