@@ -107,6 +107,7 @@ There are two things you can do about this warning:
 
 ;; return to last place in file
 (use-package saveplace
+  :straight t
   :defer 1
   :config
   (save-place-mode)
@@ -134,6 +135,7 @@ There are two things you can do about this warning:
 
 ;; Restart Emacs from inside Emacs with `M-x restart-emacs`
 (use-package restart-emacs
+  :straight t
   :defer 2)
 
 ;; use-package-ensure-system-package
@@ -207,6 +209,7 @@ There are two things you can do about this warning:
 
 ;; Magit todos
 (use-package magit-todos
+  :straight t
   :requires (magit)
   :after (magit)
   :defer 2
@@ -222,6 +225,7 @@ There are two things you can do about this warning:
   )
 
 (use-package hl-todo
+  :straight t
   :defer 2
   :config
   (global-hl-todo-mode 1))
@@ -491,10 +495,12 @@ There are two things you can do about this warning:
 
 ;; dockerfile-mode
 (use-package dockerfile-mode
+  :straight t
   :mode "Dockerfile")
 
 ;; go-mode
 (use-package go-mode
+  :straight t
   :delight ""
   :hook
   (before-save . lsp-format-buffer)
@@ -512,6 +518,7 @@ There are two things you can do about this warning:
 
 ;; json-mode
 (use-package json-mode
+  :straight t
   :ensure-system-package (vscode-json-languageserver . "npm i -g vscode-json-languageserver")
   :defer t)
 
@@ -793,6 +800,7 @@ There are two things you can do about this warning:
 
 ;; toml-mode
 (use-package toml-mode
+  :straight t
   :defer t)
 
 ;; yaml-mode
