@@ -40,7 +40,6 @@ jobs:
             /usr/local/Cellar
             /usr/local/bin
             /usr/local/opt
-            /Applications
           key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
           restore-keys: |
             ${{ runner.os }}-
