@@ -80,24 +80,34 @@ There are two things you can do about this warning:
   )
 (package-initialize)
 
+;; Install straight.el
+(defvar bootstrap-version)
+(let ((bootstrap-file
+       (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
+      (bootstrap-version 5))
+  (unless (file-exists-p bootstrap-file)
+    (with-current-buffer
+        (url-retrieve-synchronously
+         "https://raw.githubusercontent.com/raxod502/straight.el/develop/install.el"
+         'silent 'inhibit-cookies)
+      (goto-char (point-max))
+      (eval-print-last-sexp)))
+  (load bootstrap-file nil 'nomessage))
+
 ;; Ensure use-package is installed
-(when (not (package-installed-p 'use-package))
-  (package-refresh-contents)
-  (package-install 'use-package))
+(straight-use-package 'use-package)
 
 ;; This is only needed once, near the top of the file
 (eval-when-compile
   (require 'use-package))
 
 ;; Keep auto-save/backup files separate from source code:  https://github.com/scalameta/metals/issues/1027
-(setq use-package-always-ensure t
-      backup-directory-alist `((".*" . ,temporary-file-directory))
+(setq backup-directory-alist `((".*" . ,temporary-file-directory))
       auto-save-file-name-transforms `((".*" ,temporary-file-directory t)))
 
 ;; return to last place in file
 (use-package saveplace
   :defer 1
-  :ensure nil
   :config
   (save-place-mode)
   )
@@ -106,7 +116,6 @@ There are two things you can do about this warning:
 (use-package autorevert
   :defer 1
   :diminish auto-revert-mode
-  :ensure nil
   :config
   ;; Reverts buffers automatically when files are changed externally.
   (global-auto-revert-mode t)
@@ -116,7 +125,7 @@ There are two things you can do about this warning:
 
 ;; Emacs startup profiler
 (use-package esup
-  :ensure t
+  :straight t
   :defer 2
   :config
   (setq esup-depth 0)
@@ -130,13 +139,13 @@ There are two things you can do about this warning:
 ;; use-package-ensure-system-package
 ;; provides way to define system package dependencies for Emacs packages
 (use-package use-package-ensure-system-package
-  :ensure t
+  :straight t
   :defer 2)
 
 ;; delight
 ;; hides modeline displays
 (use-package delight
-  :ensure t
+  :straight t
   :defer 2)
 (require 'delight)                ;; if you use :delight
 (require 'bind-key)                ;; if you use any :bind variant
@@ -144,7 +153,7 @@ There are two things you can do about this warning:
 ;; use-package-chords
 ;; allows chord bindings
 (use-package use-package-chords
-  :ensure t
+  :straight t
   :config
   (key-chord-mode 1)
   )
@@ -152,7 +161,7 @@ There are two things you can do about this warning:
 ;; set PATH using exec-path-from-shell package
 (use-package exec-path-from-shell
   :if (memq window-system '(mac ns))
-  :ensure t
+  :straight t
   :config
   (setq exec-path-from-shell-check-startup-files nil)
   (exec-path-from-shell-initialize)
@@ -160,7 +169,7 @@ There are two things you can do about this warning:
 
 ;; magit
 (use-package magit
-  :ensure t
+  :straight t
   :bind (("C-x g" . magit-status)
          ("C-x G" . magit-status-with-prefix)
 	 ("C-c g" . magit-file-dispatch))
@@ -191,7 +200,7 @@ There are two things you can do about this warning:
 
 ;; Interact with forges directly
 (use-package forge
-  :ensure t
+  :straight t
   :after magit
   :defer 2
   )
@@ -219,13 +228,13 @@ There are two things you can do about this warning:
 
 ;; git-modes
 (use-package git-modes
-  :ensure t
+  :straight t
   )
 
 ;; which-key shows all available keybindings
 (use-package which-key
   :delight
-  :ensure t
+  :straight t
   :defer 2
   :init
   (which-key-mode)
@@ -234,7 +243,7 @@ There are two things you can do about this warning:
 ;; smartparens
 (use-package smartparens
   :delight
-  :ensure t
+  :straight t
   :config
   ;; (setq-default sp-escape-quotes-after-insert nil) ; Don't escape quotes
   (smartparens-global-mode t)
@@ -246,7 +255,7 @@ There are two things you can do about this warning:
 ;; highlights text extending beyond a certain column
 (use-package column-enforce-mode
   :delight "80"
-  :ensure t
+  :straight t
   :init
   ;; activate mode in all prog-mode
   :hook
@@ -255,7 +264,7 @@ There are two things you can do about this warning:
 
 ;; treemacs
 (use-package treemacs
-  :ensure t
+  :straight t
   :defer 2
   :init
   (with-eval-after-load 'winum
@@ -325,30 +334,30 @@ There are two things you can do about this warning:
 
 (use-package treemacs-projectile
   :after treemacs projectile
-  :ensure t
+  :straight t
   :defer 2)
 
 (use-package treemacs-icons-dired
   :after treemacs dired
-  :ensure t
+  :straight t
   :defer 2
   :config (treemacs-icons-dired-mode))
 
 (use-package treemacs-magit
   :after treemacs magit
-  :ensure t
+  :straight t
   :defer 2)
 
 (use-package treemacs-persp
   :after treemacs persp-mode
-  :ensure t
+  :straight t
   :defer 2
   :config (treemacs-set-scope-type 'Perspectives))
 
 ;; lsp-mode configs
 (use-package lsp-mode
   :delight lsp-lens-mode "🔍"
-  :ensure t
+  :straight t
   :init
   ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
   (setq lsp-keymap-prefix "C-c l")
@@ -380,23 +389,20 @@ There are two things you can do about this warning:
   :commands (lsp lsp-deferred))
 
 (use-package csharp-mode
-  :ensure t
+  :straight t
   :delight ""
 )
 
 (use-package css-mode
-  :ensure nil
   :delight scss-mode ""
   :delight ""
   )
 
 (use-package mhtml-mode
-  :ensure nil
   :delight ""
   )
 
 (use-package prog-mode
-  :ensure nil
   :delight typescript-mode ""
   :delight js-mode ""
   )
@@ -404,7 +410,7 @@ There are two things you can do about this warning:
 ;; optionally
 (use-package lsp-ui
   :after lsp-mode
-  :ensure t
+  :straight t
   :commands lsp-ui-mode
   :hook
   (lsp-mode . lsp-ui-mode)
@@ -414,13 +420,13 @@ There are two things you can do about this warning:
 
 (use-package lsp-treemacs
   :after lsp-mode treemacs
-  :ensure t
+  :straight t
   :commands lsp-treemacs-errors-list
   )
 
 ;; Use the Debug Adapter Protocol for running tests and debugging
 (use-package posframe
-  :ensure t
+  :straight t
   ;; Posframe is a pop-up tool that must be manually installed for dap-mode
   )
 
@@ -428,7 +434,7 @@ There are two things you can do about this warning:
 ;; optionally if you want to use debugger
 (use-package dap-mode
   :after lsp-mode
-  :ensure t
+  :straight t
   :defer 2
   :hook
   (lsp-mode . dap-mode)
@@ -440,7 +446,7 @@ There are two things you can do about this warning:
 ;; lsp Python
 (use-package lsp-pyright
   :delight python-mode "🐍"
-  :ensure t
+  :straight t
   :config
   (put 'lsp-pyright-python-executable-cmd 'safe-local-variable #'stringp)
   :hook
@@ -459,7 +465,7 @@ There are two things you can do about this warning:
 ;; python-black
 (use-package python-black
   :delight python-black-on-save-mode "⚫️"
-  :ensure t
+  :straight t
   :hook
   (python-mode . python-black-on-save-mode)
   :init
@@ -470,7 +476,7 @@ There are two things you can do about this warning:
 
 ;; poetry
 (use-package poetry
-  :ensure t
+  :straight t
   ;; :init
   ;; imperfect tracking strategy causes lags in builds
   ;; (setq poetry-tracking-strategy 'switch-buffer)
@@ -523,7 +529,7 @@ There are two things you can do about this warning:
   )
 
 (use-package auctex-latexmk
-  :ensure t
+  :straight t
   :config
   (setq auctex-latexmk-inherit-TeX-PDF-mode t)
   (setq TeX-command-list
@@ -651,7 +657,7 @@ There are two things you can do about this warning:
 ;; Clang stuff
 ;; clang-format
 (use-package clang-format
-  :ensure t
+  :straight t
   )
 (defun clang-format-on-save ()
   (add-hook 'before-save-hook #'clang-format-buffer nil 'local))
@@ -681,7 +687,7 @@ There are two things you can do about this warning:
 
 ;; rg.el (ripgrep tool)
 (use-package rg
-  :ensure t
+  :straight t
   :init
   (rg-enable-default-bindings)
   :config
@@ -690,7 +696,7 @@ There are two things you can do about this warning:
 
 ;; dumb-jump
 (use-package dumb-jump
-  :ensure t
+  :straight t
   :config
   ;; dumb-jump-go (C-M-g) jumps to the definition of thing under point
   (dumb-jump-mode)
@@ -699,12 +705,12 @@ There are two things you can do about this warning:
 ;; yasnippet
 (use-package yasnippet
   :delight yas-minor-mode "🆈"
-  :ensure t
+  :straight t
   :defer 2
   )
 (use-package yasnippet-snippets
   :after yasnippet
-  :ensure t
+  :straight t
   :defer 2
   :config
   (yas-global-mode t)
@@ -713,7 +719,7 @@ There are two things you can do about this warning:
 ;; flycheck
 (use-package flycheck
   :delight "✅"
-  :ensure t
+  :straight t
   :config
   (global-flycheck-mode t)
   (global-set-key (kbd "C-c n") 'flycheck-next-error)
@@ -722,12 +728,12 @@ There are two things you can do about this warning:
   )
 
 (use-package all-the-icons
-  :ensure t
+  :straight t
   :defer 2)
 
 ;; company
 (use-package company
-  :ensure t
+  :straight t
   :delight "⏭"
   :config
   ;; company-mode global settings
@@ -745,7 +751,7 @@ There are two things you can do about this warning:
 (use-package company-box
   :delight
   :after company
-  :ensure t
+  :straight t
   :hook (company-mode . company-box-mode)
   :config
   (set-face-background 'company-tooltip "#555555")
@@ -755,7 +761,7 @@ There are two things you can do about this warning:
 ;; company-quickhelp
 (use-package company-quickhelp
   :after company
-  :ensure t
+  :straight t
   :init
   (company-quickhelp-mode)
   (define-key company-active-map (kbd "C-c h") #'company-quickhelp-manual-begin)
@@ -763,7 +769,7 @@ There are two things you can do about this warning:
 
 ;; multiple-cursors
 (use-package multiple-cursors
-  :ensure t
+  :straight t
   :bind (
 	 ("C-c m c" . mc/edit-lines)
 	 ("C->" . mc/mark-next-like-this)
@@ -775,7 +781,7 @@ There are two things you can do about this warning:
 
 ;; projectile
 (use-package projectile
-  :ensure t
+  :straight t
   :delight
   :defer 2
   :init
@@ -791,7 +797,7 @@ There are two things you can do about this warning:
 
 ;; yaml-mode
 (use-package yaml-mode
-  :ensure t
+  :straight t
   :ensure-system-package (yaml-language-server . "npm i -g yaml-language-server")
   :mode ("\\.yml\\'"
          "\\.yaml\\'")
@@ -800,7 +806,7 @@ There are two things you can do about this warning:
 ;; highlight-indent-guides.el
 (use-package highlight-indent-guides
   :delight
-  :ensure t
+  :straight t
   :init
   :custom
   (highlight-indent-guides-responsive "stack" "Highlight ancestral guides of current guide")
@@ -814,16 +820,15 @@ There are two things you can do about this warning:
 
 ;; emacs-lisp
 (use-package emacs-lisp
-  :ensure nil
   :defer t)
 
 ;; xkcd
 (use-package xkcd
-  :ensure t
+  :straight t
   :defer 2)
 
 (use-package typescript-mode
-  :ensure t
+  :straight t
   :mode ("\\.ts\\'"
          "\\.tsx\\'"
          "\\.vue\\'"
@@ -833,7 +838,7 @@ There are two things you can do about this warning:
 ;; markdown-mode
 (use-package markdown-mode
   :delight markdown-mode ""
-  :ensure t
+  :straight t
   :mode ("\\.md\\'"
          "\\.mkd\\'"
          "\\.markdown\\'"
@@ -843,7 +848,7 @@ There are two things you can do about this warning:
 
 ;; shfmt.el for autoformatting shell scripts
 (use-package shfmt
-  :ensure t
+  :straight t
   :hook (
 	 (sh-mode . shfmt-on-save-mode)
 	 )
