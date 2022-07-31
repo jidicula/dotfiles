@@ -4,10 +4,8 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'setup.sh'
-      - 'system_config.sh'
+      - '*.sh'
       - 'Brewfile'
-      - 'Brewfile.lock.json'
       - '.github/workflows/*.yml'
   # Run every Saturday at midnight
   schedule:
@@ -36,4 +34,8 @@ jobs:
           dotnet-version: '6.x.x'
 
       - name: Run setup script
-        run: ./setup.sh "TEST_HOSTNAME"
+        run: |
+          # Kludge to remove pre-installed tools from GitHub Actions runner
+          ./actions-runner-preclean.sh
+
+          ./setup.sh "TEST_HOSTNAME"

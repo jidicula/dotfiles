@@ -4,6 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
+      - 'actions-runner-preclean.sh'
       - 'Brewfile'
       - '.github/workflows/*.yml'
   # Run every Saturday at midnight
@@ -23,12 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      # Kludge until .NET 6 is available in macos-12 runner
-      - name: Install .NET 6
-        uses: actions/setup-dotnet@v2
-        with:
-          dotnet-version: '6.x.x'
-
       # Cache Homebrew directories
       - uses: actions/cache@v3
         with:
@@ -40,6 +35,9 @@ jobs:
 
       - name: Install Homebrew packages
         run: |
+          # Kludge to remove pre-installed tools from GitHub Actions runner
+          ./actions-runner-preclean.sh
+
           /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)"
           /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           brew bundle install

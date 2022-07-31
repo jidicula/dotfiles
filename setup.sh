@@ -48,13 +48,6 @@ if [[ -n "$OS" ]]; then
 	# Install Homebrew
 	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-	if [[ -n "$GITHUB_ENV" ]]; then
-		rm '/usr/local/bin/aws'
-		rm '/usr/local/bin/go'
-		rm '/usr/local/bin/clusterdb'
-		rm '/usr/local/bin/dotnet'
-	fi
-
 	# Install Homebrew packages
 	brew bundle install
 	brew bundle check --verbose
