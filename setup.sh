@@ -73,10 +73,6 @@ if [[ $OSTYPE == darwin* ]]; then
 	fi
 	# Run Emacs as a background launchctl service
 	brew services start d12frosted/emacs-plus/emacs-plus@28
-
-# Link Homebrew-installed OpenSSL
-# ln -s "$HOME/.development/homebrew/opt/openssl/include/openssl" "/usr/local/include"
-# ln -s "$HOME/.development/homebrew/Cellar/openssl@1.1/1.1.1k/bin/openssl" "/usr/bin/openssl"
 fi
 
 # Set up ZSH config
