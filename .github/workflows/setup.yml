@@ -42,7 +42,8 @@ jobs:
             /usr/local/opt
             /Applications
           key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
-          restore-keys: ${{ runner.os }}
+          restore-keys: |
+            ${{ runner.os }}-
 
       - name: Run setup script
         run: |
