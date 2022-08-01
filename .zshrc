@@ -105,7 +105,7 @@ function dir() {
 source "/opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 
 # PATH
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin:$HOME/.local/bin"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin"
 
 # Homebrew shellenv
 if [[ $(arch) == "arm64" ]]; then

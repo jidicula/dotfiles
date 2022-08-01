@@ -358,6 +358,32 @@ There are two things you can do about this warning:
   :defer 2
   :config (treemacs-set-scope-type 'Perspectives))
 
+(use-package copilot
+  :after company
+  :config
+  (delq 'company-preview-if-just-one-frontend company-frontends)
+  ;; Kludge - the version is a hardlink pointing to the binary
+  (setq copilot-node-executable "17.9.1")
+  (unless (executable-find copilot-node-executable)
+    nil
+    (setq copilot-node-command (format "nodenv install %s && ln -sfv \"$HOME/.nodenv/versions/%s/bin/node\" \"$HOME/.local/bin/%s\""
+                                       copilot-node-executable
+                                       copilot-node-executable
+                                       copilot-node-executable
+                                       ))
+    (async-shell-command copilot-node-command)
+    )
+  :straight (:host github :repo "zerolfx/copilot.el" :files ("dist" "*.el"))
+  :bind (("C-c e" . copilot-mode)
+         :map copilot-completion-map
+              ("C-S-<tab>" . #'copilot-accept-completion-by-line)
+              ("C-<tab>" . #'copilot-accept-completion)
+              ("C-g" . #'copilot-clear-overlay)
+              ("C-n" . #'copilot-next-completion)
+              ("C-p" . #'copilot-previous-completion)
+              )
+  )
+
 ;; lsp-mode configs
 (use-package lsp-mode
   :delight lsp-lens-mode "🔍"

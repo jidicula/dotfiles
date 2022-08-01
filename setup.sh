@@ -30,6 +30,9 @@ mkdir -p "$HOME/Developer/work"
 # Make folder for GnuPG
 mkdir -p "$HOME/.gnupg"
 
+# Make local bin folder
+mkdir -p "$HOME/.local/bin"
+
 # copy GPG config
 ln -sfv "$DOTFILESDIR/gpg.conf" "$HOME/.gnupg/gpg.conf"
 ln -sfv "$DOTFILESDIR/gpg-agent.conf" "$HOME/.gnupg/gpg-agent.conf"
