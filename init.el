@@ -176,6 +176,8 @@ There are two things you can do about this warning:
          ("C-x G" . magit-status-with-prefix)
 	 ("C-c g" . magit-file-dispatch))
   :config
+  (put 'magit-revision-mode 'magit-diff-default-arguments
+       `("--show-signature" ,@(get 'magit-diff-mode 'magit-diff-default-arguments)))
   ;; (if (string= (shell-command-to-string "arch") "arm64")
   ;;     (setq magit-git-executable "/opt/homebrew/bin/git")
   ;;   (if (string= (shell-command-to-string "uname") "Darwin")
