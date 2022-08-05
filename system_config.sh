@@ -77,9 +77,6 @@ defaults write com.apple.systemuiserver menuExtras -array \
 	"/System/Library/CoreServices/Menu Extras/Volume.menu" \
 	"/System/Library/CoreServices/Menu Extras/Clock.menu"
 
-# show battery percentage
-defaults write com.apple.menuextra.battery ShowPercent -string "YES"
-
 # Restart menu bar
 killall SystemUIServer
 
