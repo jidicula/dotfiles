@@ -893,6 +893,9 @@ There are two things you can do about this warning:
 ;; end of 3rd-party packages
 (put 'upcase-region 'disabled nil)
 
+;; Use SSH as default tramp method
+(setq tramp-default-method "ssh")
+
 ;; set option key as Meta
 (setq mac-option-modifier 'meta)
 
