@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 if [[ $OSTYPE == darwin* ]]; then
-	rm -rf /Applications && mkdir /Applications
+	sudo rm -rf /Applications && sudo mkdir /Applications
 	rm "/usr/local/bin/aws*" \
 		"/usr/local/bin/go*" \
 		"/usr/local/bin/clusterdb" \
