@@ -404,6 +404,7 @@ There are two things you can do about this warning:
 	     (sh-mode . lsp-deferred)
          (mhtml-mode . lsp-deferred)
          (scss-mode . lsp-deferred)
+         (java-mode . lsp-deferred)
          (js-jsx-mode . lsp-deferred)
          (js-mode . lsp-deferred)
          (css-mode . lsp-deferred)
@@ -420,10 +421,15 @@ There are two things you can do about this warning:
 	     )
   :commands (lsp lsp-deferred))
 
+(use-package lsp-java
+  :straight t
+  :delight "☕️"
+  )
+
 (use-package csharp-mode
   :straight t
   :delight ""
-)
+  )
 
 (use-package css-mode
   :delight scss-mode ""
