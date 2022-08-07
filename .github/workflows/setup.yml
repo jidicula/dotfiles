@@ -30,6 +30,9 @@ jobs:
       - name: Validate syntax
         run: bash -n *.sh
 
+      - name: Remove pre-installed tools from GitHub Actions runner
+        run: ./actions-runner-preclean.sh
+
       # Cache Homebrew directories for amend matrix option
       - uses: actions/cache@v3
         if: ${{ matrix.amend-scratch == 'amend' }}
@@ -44,9 +47,6 @@ jobs:
           key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
           restore-keys: |
             ${{ runner.os }}-
-
-      - name: Remove pre-installed tools from GitHub Actions runner
-        run: ./actions-runner-preclean.sh
 
       - name: Run setup script
         run: ./setup.sh "TEST_HOSTNAME"
