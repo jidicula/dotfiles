@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 if [[ $OSTYPE == darwin* ]]; then
-	sudo find /Applications ! -name 'Safari.app' -type d -exec rm -rf {} +
+	sudo find /Applications ! -path '/Applications/Safari.app/*' -type df -exec rm -rf {} +
 	rm "/usr/local/bin/aws*" \
 		"/usr/local/bin/go*" \
 		"/usr/local/bin/clusterdb" \
