@@ -2,7 +2,7 @@
 shopt -s extglob
 
 if [[ $OSTYPE == darwin* ]]; then
-	rm -rf /Applications/!(Safari.app)
+	sudo rm -rf /Applications/!(Safari.app)
 	rm "/usr/local/bin/aws*" \
 		"/usr/local/bin/go*" \
 		"/usr/local/bin/clusterdb" \
