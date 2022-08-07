@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
+shopt -s extglob
 
 if [[ $OSTYPE == darwin* ]]; then
-	shopt -s extglob
 	rm -rf /Applications/!(Safari.app)
 	rm "/usr/local/bin/aws*" \
 		"/usr/local/bin/go*" \
