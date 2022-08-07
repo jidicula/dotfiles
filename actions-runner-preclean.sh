@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 if [[ $OSTYPE == darwin* ]]; then
-	sudo find '/Applications' ! -path '/Applications/Safari.app*' -type df -exec rm -rf {} +
+	shopt -s extglob
+	sudo rm -rf /Applications/!(Safari.app)
 	rm "/usr/local/bin/aws*" \
 		"/usr/local/bin/go*" \
 		"/usr/local/bin/clusterdb" \
