@@ -45,9 +45,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-
 
-      - name: Run setup script
-        run: |
-          # Kludge to remove pre-installed tools from GitHub Actions runner
-          ./actions-runner-preclean.sh
+      - name: Remove pre-installed tools from GitHub Actions runner
+        run: ./actions-runner-preclean.sh
 
-          ./setup.sh "TEST_HOSTNAME"
+      - name: Run setup script
+        run: ./setup.sh "TEST_HOSTNAME"
