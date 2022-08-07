@@ -32,7 +32,9 @@ jobs:
           bash -O extglob -n *.sh
 
       - name: Remove pre-installed tools from GitHub Actions runner
-        run: ./actions-runner-preclean.sh
+        run: |
+          shopt -s extglob
+          ./actions-runner-preclean.sh
 
       # Cache Homebrew directories for amend matrix option
       - uses: actions/cache@v3
