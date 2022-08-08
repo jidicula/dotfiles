@@ -81,21 +81,6 @@ fi
 # Compilation flags
 # export ARCHFLAGS="-arch x86_64"
 
-# Set personal aliases, overriding those provided by oh-my-zsh libs,
-# plugins, and themes. Aliases can be placed here, though oh-my-zsh
-# users are encouraged to define aliases within the ZSH_CUSTOM folder.
-# For a full list of active aliases, run `alias`.
-#
-# Example aliases
-# alias zshconfig="mate ~/.zshrc"
-# alias ohmyzsh="mate ~/.oh-my-zsh"
-# shellcheck source=/dev/null
-alias cdr='cd $(git rev-parse --show-toplevel)'
-alias gcce="gcc -Wextra -Wpedantic"
-if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]]; then
-	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
-fi
-
 function dir() {
 	mkdir -p -- "$1" &&
 		cd -P -- "$1"
@@ -222,3 +207,19 @@ plugins=(
 
 # shellcheck source=/dev/null
 source "$ZSH/oh-my-zsh.sh"
+
+# Set personal aliases, overriding those provided by oh-my-zsh libs,
+# plugins, and themes. Aliases can be placed here, though oh-my-zsh
+# users are encouraged to define aliases within the ZSH_CUSTOM folder.
+# For a full list of active aliases, run `alias`.
+#
+# Example aliases
+# alias zshconfig="mate ~/.zshrc"
+# alias ohmyzsh="mate ~/.oh-my-zsh"
+# shellcheck source=/dev/null
+alias cdr='cd $(git rev-parse --show-toplevel)'
+alias gcce="gcc -Wextra -Wpedantic"
+alias ls="ls --color=auto"
+if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]]; then
+	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
+fi
