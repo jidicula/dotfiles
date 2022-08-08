@@ -64,8 +64,10 @@ fi
 git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}"/plugins/zsh-syntax-highlighting
 
 # Set up Emacs config
-mkdir "$HOME/.emacs.d"
+mkdir "$HOME/.emacs.d/straight"
 ln -sfv "$HOME/dotfiles/init.el" "$HOME/.emacs.d/init.el"
+ln -sfv "$HOME/dotfiles/straight/versions" "$HOME/.emacs.d/straight/versions"
+emacs --batch --load "$HOME/dotfiles/init.el" --eval '(straight-thaw-versions)'
 
 if [[ $OSTYPE == darwin* ]]; then
 
