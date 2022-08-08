@@ -1,6 +1,6 @@
 # format = "$all"
 format = """$directory$git_branch$git_commit$git_status$cmd_duration
-$package$dotnet$kubernetes$golang$nodejs$python$ruby$swift
+$package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
 $hostname$character"""
 
 # Utilities
@@ -71,5 +71,7 @@ style = "202"
 symbol = " "
 
 # Tools
+
 [kubernetes]
 disabled = false
+symbol = "ﴱ "
