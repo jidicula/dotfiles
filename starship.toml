@@ -36,7 +36,7 @@ style = "purple"
 style = "203"
 format = "[$hash]($style) [$tag]($style) "
 commit_hash_length = 8
-tag_symbol = "🏷  "
+tag_symbol = "🏷 "
 only_detached = false
 tag_disabled = false
 
