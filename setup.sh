@@ -64,7 +64,8 @@ fi
 git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}"/plugins/zsh-syntax-highlighting
 
 # Set up Emacs config
-echo "(load \"$HOME/dotfiles/init.el\")" >"$HOME/.emacs"
+mkdir "$HOME/.emacs.d"
+ln -sfv "$HOME/dotfiles/init.el" "$HOME/.emacs.d/init.el"
 
 if [[ $OSTYPE == darwin* ]]; then
 

@@ -1050,7 +1050,7 @@ then enter the text in that file's own buffer.")
 
 ;; custom theme path
 ;; (setq custom-safe-themes t)
-(add-to-list 'custom-theme-load-path (file-name-directory load-file-name))
+(add-to-list 'custom-theme-load-path "~/dotfiles/")
 (load-theme 'jidiculous-dark t)
 
 ;; set dir local vars as safe
