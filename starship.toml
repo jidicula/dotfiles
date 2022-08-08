@@ -1,27 +1,14 @@
 # format = "$all"
 format = """$directory$git_branch$git_commit$git_status$cmd_duration
-$package$python$nodejs$swift$golang$ruby
+$package$dotnet$kubernetes$golang$nodejs$python$ruby$swift
 $hostname$character"""
 
+# Utilities
+
 [directory]
-truncate_to_repo = false
+truncate_to_repo = true
 style = "blue"
-
-[git_commit]
-style = "203"
-format = "[$hash]($style) [$tag]($style) "
-commit_hash_length = 8
-tag_symbol = "🏷  "
-only_detached = false
-tag_disabled = false
-
-[git_branch]
-format = "[$branch]($style) "
-style = "purple"
-
-[git_status]
-format = "([$all_status$ahead_behind]($style) )"
-style = "cyan"
+truncation_symbol = "…/"
 
 [character]
 success_symbol = "[❯](bright-green)"
@@ -31,23 +18,48 @@ error_symbol = "[❯](bright-red)"
 format = "[$symbol$version]($style) "
 style = "208"
 
-[python]
-format = '[${symbol}${pyenv_prefix}${version}( \($virtualenv\))]($style) '
-style = "yellow"
-pyenv_version_name = true
-symbol = " "
-
 [hostname]
 format = "[$hostname]($style)"
 
-[nodejs]
-style = "green"
-format = "[$symbol$version]($style) "
+[cmd_duration]
+style = "yellow"
+format = "[$duration]($style) "
+show_notifications = true
+
+# Git
+
+[git_branch]
+format = "[$branch]($style) "
+style = "purple"
+
+[git_commit]
+style = "203"
+format = "[$hash]($style) [$tag]($style) "
+commit_hash_length = 8
+tag_symbol = "🏷  "
+only_detached = false
+tag_disabled = false
+
+[git_status]
+format = "([$all_status$ahead_behind]($style) )"
+style = "cyan"
+
+# Languages
 
 [golang]
 style = "cyan"
 format = "[$symbol($version )]($style) "
 symbol = "ﳑ "
+
+[nodejs]
+style = "green"
+format = "[$symbol$version]($style) "
+
+[python]
+format = '[${symbol}${pyenv_prefix}${version}( \($virtualenv\))]($style) '
+style = "yellow"
+pyenv_version_name = true
+symbol = " "
 
 [ruby]
 style = "red"
@@ -58,7 +70,6 @@ symbol = " "
 style = "202"
 symbol = " "
 
-[cmd_duration]
-style = "yellow"
-format = "[$duration]($style) "
-show_notifications = true
+# Tools
+[kubernetes]
+disabled = false
