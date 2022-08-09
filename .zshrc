@@ -219,3 +219,7 @@ alias ls="ls --color=auto"
 if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]]; then
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
+
+# GCloud
+export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+source "/opt/homebrew/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
