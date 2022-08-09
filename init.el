@@ -543,6 +543,7 @@ There are two things you can do about this warning:
 
 (use-package ruby-mode
   :delight " "
+  :ensure-system-package (solargraph . "gem install solargraph")
   :config
   (setq lsp-solargraph-autoformat t)
   :hook
