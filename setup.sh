@@ -52,6 +52,9 @@ if [[ $OSTYPE == darwin* ]]; then
 	brew bundle check --verbose
 	BREW_STATUS="$?"
 
+	# Set up launchdns
+	chmod +x dns.sh
+	./dns.sh || exit
 else
 	sudo apt-get update
 	sudo apt-get upgrade -y

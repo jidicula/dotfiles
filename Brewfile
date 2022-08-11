@@ -86,6 +86,7 @@ brew "ispell"
 brew "jansson"
 brew "jq"
 brew "latex2html"
+brew "launchdns", restart_service: true
 brew "libgccjit"
 brew "libpq"
 brew "linkerd"
