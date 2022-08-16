@@ -414,12 +414,17 @@ There are two things you can do about this warning:
          (go-mode . lsp-deferred)
          (ruby-mode . lsp-deferred)
          (csharp-mode . lsp-deferred)
+         (powershell-mode . lsp-deferred)
          ;; if you want which-key integration
          (lsp-mode . lsp-enable-which-key-integration)
 	     (lsp-mode . lsp-lens-mode)
 	     (lsp-after-open . 'lsp-enable-imenu)
 	     )
   :commands (lsp lsp-deferred))
+
+(use-package powershell
+  :straight t
+  :delight "🐚")
 
 (use-package lsp-java
   :straight t
