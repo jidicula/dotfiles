@@ -194,7 +194,6 @@ There are two things you can do about this warning:
   ;; Refresh magit buffer on save. This must only be evaluated when in
   ;; magit-mode. DO NOT refactor with use-package `:hook` directive.
   (with-eval-after-load 'magit-mode
-    (magit-todos-mode)
     (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
   (put 'magit-todos-exclude-globs 'safe-local-variable #'seqp)
   )
@@ -207,23 +206,6 @@ There are two things you can do about this warning:
   :straight t
   :after magit
   :defer 2
-  )
-
-;; Magit todos
-(use-package magit-todos
-  :straight t
-  :requires (magit)
-  :after (magit)
-  :defer 2
-  :hook
-  (magit-mode . magit-todos-mode)
-  :custom
-  (magit-todos-exclude-globs '("**/node_modules/**"))
-  :config
-  (let ((inhibit-message t))
-    (magit-todos-mode 1))
-  (transient-append-suffix 'magit-status-jump '(0 0 -1)
-    '("T " "Todos" magit-todos-jump-to-todos))
   )
 
 (use-package hl-todo
