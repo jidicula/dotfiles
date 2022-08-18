@@ -373,6 +373,13 @@ There are two things you can do about this warning:
   :delight "🪵"
   )
 
+(use-package codespaces
+  :straight (:host github :repo "patrickt/codespaces.el" :files ("dist" "*.el"))
+  :ensure-system-package gh
+  :config
+  (codespaces-setup)
+  )
+
 ;; lsp-mode configs
 (use-package lsp-mode
   :delight lsp-lens-mode "🔍"

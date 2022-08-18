@@ -216,6 +216,7 @@ source "$ZSH/oh-my-zsh.sh"
 alias cdr='cd $(git rev-parse --show-toplevel)'
 alias gcce="gcc -Wextra -Wpedantic"
 alias ls="ls --color=auto"
+alias cs="gh codespace ssh"
 if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]]; then
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
