@@ -57,20 +57,20 @@ if [[ $OSTYPE == darwin* ]]; then
 	./dns.sh || exit
 else
 	sudo apt-get update
-	sudo apt-get upgrade -y
-	sudo apt-get install -y emacs npm
+	sudo apt-get install -y zsh-syntax-highlighting
+	if ! [[ $CODESPACES ]]; then
+		sudo apt-get install -y emacs npm
+	fi
 fi
 
 # Install Oh My Zsh
 (sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
 
-git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}"/plugins/zsh-syntax-highlighting
-
 # Set up Emacs config
 mkdir "$HOME/.emacs.d/straight"
-ln -sfv "$HOME/dotfiles/init.el" "$HOME/.emacs.d/init.el"
-ln -sfv "$HOME/dotfiles/straight/versions" "$HOME/.emacs.d/straight/versions"
-emacs --batch --load "$HOME/dotfiles/init.el" --eval '(straight-thaw-versions)'
+ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
+ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
+emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
 
 if [[ $OSTYPE == darwin* ]]; then
 
@@ -85,7 +85,12 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 # Set up ZSH config
-ln -sfv "$HOME/dotfiles/.zshrc" "$HOME/.zshrc"
+if [[ $CODESPACES ]]; then
+	ln -sfv "$DOTFILESDIR/.zshrc" "$HOME/.zshrc"
+else
+	ln -sfv "$DOTFILESDIR/.zshrc" "$HOME/.zshrc"
+fi
+
 if [[ -e "$HOME/.zshrc" ]]; then
 	source "$HOME/.zshrc"
 fi
@@ -121,7 +126,9 @@ go install golang.org/x/tools/...@latest
 go install golang.org/x/tools/gopls@latest
 
 # Install C# tools
-"$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
+if [[ $OSTYPE == darwin* ]]; then
+	"$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
+fi
 
 if [[ $OSTYPE == darwin* ]]; then
 	# Make user-specific Applications directory
