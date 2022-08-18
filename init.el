@@ -368,6 +368,11 @@ There are two things you can do about this warning:
               )
   )
 
+(use-package logview
+  :straight t
+  :delight "🪵"
+  )
+
 ;; lsp-mode configs
 (use-package lsp-mode
   :delight lsp-lens-mode "🔍"
