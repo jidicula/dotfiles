@@ -87,7 +87,9 @@ function dir() {
 }
 
 # shellcheck source=/dev/null
-source "/opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+if [[ $OSTYPE == darwin* ]]; then
+	source "/opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+fi
 
 # PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin"
@@ -146,7 +148,7 @@ touch "$HOME/.zprofile"
 source "$HOME/.zprofile"
 
 # Starship configs
-export STARSHIP_CONFIG="$HOME/dotfiles/starship.toml"
+export STARSHIP_CONFIG="$HOME/.starship.toml"
 eval "$(starship init zsh)"
 
 if [[ $OSTYPE == darwin* ]]; then
@@ -221,6 +223,8 @@ if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
 
-# GCloud
-export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-source "/opt/homebrew/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+if [[ $OSTYPE == darwin* ]]; then
+	# GCloud
+	export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+	source "/opt/homebrew/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+fi

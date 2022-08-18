@@ -7,6 +7,12 @@ while true; do
 	kill -0 "$$" || exit
 done 2>/dev/null &
 
+# Always want to use ZSH as my default shell (e.g. for SSH)
+if ! grep -q "root.*/bin/zsh" /etc/passwd; then
+	sudo chsh -s /bin/zsh root
+	sudo chsh -s /bin/zsh codespace
+fi
+
 if [[ $(arch) == "arm64" ]]; then
 	ARCH="arm64"
 fi
@@ -57,20 +63,26 @@ if [[ $OSTYPE == darwin* ]]; then
 	./dns.sh || exit
 else
 	sudo apt-get update
-	sudo apt-get install -y zsh-syntax-highlighting
+
+	curl -sS https://starship.rs/install.sh | sh
+	sudo apt-get install -y zsh-syntax-highlighting \
+		npm
 	if ! [[ $CODESPACES ]]; then
-		sudo apt-get install -y emacs npm
+		sudo apt-get install -y emacs
 	fi
 fi
 
-# Install Oh My Zsh
-(sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
+if ! [[ $CODESPACES ]]; then
 
-# Set up Emacs config
-mkdir "$HOME/.emacs.d/straight"
-ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
-ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
-emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
+	# Install Oh My Zsh
+	(sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
+
+	# Set up Emacs config
+	mkdir -p "$HOME/.emacs.d/straight"
+	ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
+	ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
+	emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
+fi
 
 if [[ $OSTYPE == darwin* ]]; then
 
@@ -85,11 +97,8 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 # Set up ZSH config
-if [[ $CODESPACES ]]; then
-	ln -sfv "$DOTFILESDIR/.zshrc" "$HOME/.zshrc"
-else
-	ln -sfv "$DOTFILESDIR/.zshrc" "$HOME/.zshrc"
-fi
+ln -sfv "$DOTFILESDIR/.zshrc" "$HOME/.zshrc"
+ln -sfv "$DOTFILESDIR/starship.toml" "$HOME/.starship.toml"
 
 if [[ -e "$HOME/.zshrc" ]]; then
 	source "$HOME/.zshrc"
@@ -111,11 +120,10 @@ npm install --global bash-language-server
 
 # Install Poetry
 curl -sSL https://install.python-poetry.org | python3 -
-mkdir -p "$ZSH_CUSTOM/plugins/poetry"
-poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
-POETRY_CONFIG_PATH="$HOME/.config/pypoetry/"
+zsh poetry_setup.sh
+POETRY_CONFIG_PATH="$HOME/.config/pypoetry"
 if [[ $OSTYPE == darwin* ]]; then
-	POETRY_CONFIG_PATH="$HOME/Library/Application Support/pypoetry/"
+	POETRY_CONFIG_PATH="$HOME/Library/Application Support/pypoetry"
 fi
 mkdir -p "$POETRY_CONFIG_PATH"
 ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
