@@ -99,9 +99,15 @@ if [[ $(arch) == "arm64" ]]; then
 	ARCH="arm64"
 fi
 if [[ $ARCH == "arm64" ]]; then
-	eval "$(/opt/homebrew/bin/brew shellenv)"
+	if [[ $OSTYPE == darwin* ]]; then
+		eval "$(/opt/homebrew/bin/brew shellenv)"
+	fi
 fi
 
+DOTFILESDIR="$HOME/dotfiles"
+if [[ $CODESPACES ]]; then
+	DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
+fi
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1
 

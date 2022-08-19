@@ -7,10 +7,12 @@ while true; do
 	kill -0 "$$" || exit
 done 2>/dev/null &
 
-# Always want to use ZSH as my default shell (e.g. for SSH)
-if ! grep -q "root.*/bin/zsh" /etc/passwd; then
-	sudo chsh -s /bin/zsh root
-	sudo chsh -s /bin/zsh codespace
+if [[ $CODESPACES ]]; then
+	# Always want to use ZSH as my default shell (e.g. for SSH)
+	if ! grep -q "root.*/bin/zsh" /etc/passwd; then
+		sudo chsh -s /bin/zsh root
+		sudo chsh -s /bin/zsh codespace
+	fi
 fi
 
 if [[ $(arch) == "arm64" ]]; then
@@ -64,7 +66,7 @@ if [[ $OSTYPE == darwin* ]]; then
 else
 	sudo apt-get update
 
-	curl -sS https://starship.rs/install.sh | sh
+	curl -sS https://starship.rs/install.sh -y | sh
 	sudo apt-get install -y zsh-syntax-highlighting \
 		npm
 	if ! [[ $CODESPACES ]]; then
