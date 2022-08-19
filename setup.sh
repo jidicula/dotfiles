@@ -66,7 +66,7 @@ if [[ $OSTYPE == darwin* ]]; then
 else
 	sudo apt-get update
 
-	curl -sS https://starship.rs/install.sh -y | sh
+	curl -sS https://starship.rs/install.sh | sh -s - -y
 	sudo apt-get install -y zsh-syntax-highlighting \
 		npm
 	if ! [[ $CODESPACES ]]; then
