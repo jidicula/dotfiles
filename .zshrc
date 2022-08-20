@@ -106,6 +106,10 @@ if [[ $ARCH == "arm64" ]]; then
 	fi
 fi
 
+if [[ $CODESPACES ]]; then
+	eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+fi
+
 DOTFILESDIR="$HOME/dotfiles"
 if [[ $CODESPACES ]]; then
 	DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
