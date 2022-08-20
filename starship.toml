@@ -1,5 +1,5 @@
 # format = "$all"
-format = """$directory$git_branch$git_commit$git_status$cmd_duration
+format = """$directory$git_branch$git_status$git_state$cmd_duration
 $package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
 $hostname$character"""
 
@@ -31,14 +31,6 @@ show_notifications = true
 [git_branch]
 format = "[$branch]($style) "
 style = "purple"
-
-[git_commit]
-style = "203"
-format = "[$hash]($style) [$tag]($style) "
-commit_hash_length = 8
-tag_symbol = "🏷 "
-only_detached = false
-tag_disabled = false
 
 [git_status]
 format = "([$all_status$ahead_behind]($style) )"
