@@ -50,26 +50,24 @@ ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
 ln -sfv "$DOTFILESDIR/gitignore" "$HOME/.gitignore"
 ln -sfv "$DOTFILESDIR/git-templates" "$HOME/.git-templates"
 
-if [[ $OSTYPE == darwin* ]]; then
-
-	# Install Homebrew
+# Install Homebrew packages
+if [[ $CODESPACES ]]; then
+	eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+	brew bundle install --file codespaces-Brewfile
+else
 	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-	# Install Homebrew packages
 	brew bundle install
-	brew bundle check --verbose
-	BREW_STATUS="$?"
+fi
+brew bundle check --verbose
+BREW_STATUS="$?"
 
+if [[ $OSTYPE == darwin* ]]; then
 	# Set up launchdns
 	chmod +x dns.sh
 	./dns.sh || exit
 else
-	sudo apt-get update
-
-	curl -sS https://starship.rs/install.sh | sh -s - -y
-	sudo apt-get install -y zsh-syntax-highlighting \
-		npm
 	if ! [[ $CODESPACES ]]; then
+		sudo apt-get update
 		sudo apt-get install -y emacs
 	fi
 fi
