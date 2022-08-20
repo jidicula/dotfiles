@@ -89,6 +89,8 @@ function dir() {
 # shellcheck source=/dev/null
 if [[ $OSTYPE == darwin* ]]; then
 	source "/opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+else
+	source "/usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 fi
 
 # PATH
