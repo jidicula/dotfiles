@@ -72,10 +72,10 @@ DISABLE_UNTRACKED_FILES_DIRTY="true"
 # export LANG=en_US.UTF-8
 
 # Preferred editor for local and remote sessions
-if [[ -n $SSH_CONNECTION ]]; then
+if [[ -z $SSH_CONNECTION ]]; then
 	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
 else
-	export EDITOR="/usr/bin/env emacs"
+	export EDITOR="/usr/bin/env nano"
 fi
 
 # Compilation flags
