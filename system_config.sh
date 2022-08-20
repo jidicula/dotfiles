@@ -206,6 +206,9 @@ defaults write com.apple.Safari com.apple.Safari.ContentPageGroupIdentifier.WebK
 # Add a context menu item for showing the Web Inspector in web views
 defaults write NSGlobalDomain WebKitDeveloperExtras -bool true
 
+# Disable ⌘I and ⌘-Shift-I for emailing page and emailing link to page.
+defaults write com.apple.Safari NSUserKeyEquivalents -dict-add 'Email Link to This Page' '\0' 'Email This Page' '\0'
+
 ###############################################################################
 #                                 Time machine                                #
 ###############################################################################
