@@ -109,8 +109,8 @@ if [[ $OSTYPE == darwin* ]]; then
 	ln -sfv "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
 
 	# Set up macOS system configs
-	chmod +x system_config.sh
-	./system_config.sh "$HOSTNAME" || exit
+	chmod +x script/macos-setup
+	script/macos-setup "$HOSTNAME" || exit
 fi
 
 # Install bash-language-server

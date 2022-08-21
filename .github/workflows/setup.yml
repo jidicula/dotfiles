@@ -52,4 +52,4 @@ jobs:
             ${{ runner.os }}-
 
       - name: Run setup script
-        run: ./setup.sh "TEST_HOSTNAME"
+        run: script/setup "TEST_HOSTNAME"
