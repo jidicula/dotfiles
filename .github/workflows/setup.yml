@@ -30,7 +30,18 @@ jobs:
 
       - name: Validate syntax
         run: |
-          bash -O extglob -n *.sh
+          FAILURE=0
+          for file in script/*;
+          do
+            head -1 $file | grep -q bash && echo $file && bash -O extglob -n $file
+            # Grep fails out with 1 if it doesn't find the pattern.
+            # Bash fails out with 2 for syntax issues.
+            if [[ $? -gt 1 ]]; then
+              echo "$file failed test"
+              FAILURE=1
+            fi
+          done
+          exit "$FAILURE"
 
       - name: Remove pre-installed tools from GitHub Actions runner
         run: |
