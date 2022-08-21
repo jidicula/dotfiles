@@ -232,3 +232,5 @@ fi
 # GCloud
 export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+
+echo "this is a change to the dotfile"
