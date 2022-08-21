@@ -192,6 +192,9 @@ export PATH="$HOME/.dotnet/tools:$PATH"
 export PATH="$HOMEBREW_PREFIX/opt/gnu-tar/libexec/gnubin:$PATH"
 export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 
+# Brew curl first in path
+export PATH="/opt/homebrew/opt/curl/bin:$PATH"
+
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
