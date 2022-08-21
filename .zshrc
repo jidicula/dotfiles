@@ -106,9 +106,9 @@ source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.z
 # Extend PATH
 export PATH="$PATH:/usr/local/sbin:"
 
-DOTFILESDIR="$HOME/dotfiles"
+export DOTFILESDIR="$HOME/dotfiles"
 if [[ $CODESPACES ]]; then
-	DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
+	export DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
 fi
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1
