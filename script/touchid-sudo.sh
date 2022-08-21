@@ -7,7 +7,7 @@ if ls /usr/lib/pam/pam_tid.so*; then
 	PAM_FILE="/etc/pam.d/sudo"
 	FIRST_LINE="# sudo: auth account password session"
 	if grep -q pam_tid.so "$PAM_FILE"; then
-		echo "OK"
+		echo "Already configured! No-op exiting."
 	elif ! head -n1 "$PAM_FILE" | grep -q "$FIRST_LINE"; then
 		echo "$PAM_FILE is not in the expected format!"
 	else
@@ -16,6 +16,6 @@ if ls /usr/lib/pam/pam_tid.so*; then
 			"s/$FIRST_LINE/$FIRST_LINE\n$TOUCHID_LINE/" \
 			"$PAM_FILE"
 		sudo rm "$PAM_FILE.bak"
-		echo "OK"
+		echo "TouchID sudo configuration complete."
 	fi
 fi

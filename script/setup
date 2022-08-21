@@ -21,8 +21,8 @@ fi
 
 # Enable touchID sudo authentication
 if [[ $OSTYPE == darwin* ]]; then
-	chmod +x touchid-sudo.sh
-	./touchid-sudo.sh || exit
+	chmod +x script/touchid-sudo.sh
+	script/touchid-sudo.sh || exit
 fi
 
 HOSTNAME="$1"
