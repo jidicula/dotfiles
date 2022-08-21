@@ -34,7 +34,7 @@ jobs:
 
       - name: Remove pre-installed tools from GitHub Actions runner
         run: |
-          ./actions-runner-preclean.sh
+          script/actions-runner-preclean.sh
 
       # Cache Homebrew directories for amend matrix option
       - uses: actions/cache@v3

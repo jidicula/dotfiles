@@ -2,7 +2,7 @@
 
 # dotfiles
 
-A collection of config dotfiles.
+A collection of config dotfiles. All scripts are in `script/`: helpers end with `.sh` and [scripts to rule them all](https://github.com/github/scripts-to-rule-them-all) have no suffix.
 
 # Steps
 

@@ -64,8 +64,7 @@ fi
 
 if [[ $OSTYPE == darwin* ]]; then
 	# Set up launchdns
-	chmod +x dns.sh
-	./dns.sh || exit
+	script/dns.sh || exit
 else
 	if ! [[ $CODESPACES ]]; then
 		sudo apt-get update
@@ -118,7 +117,7 @@ npm install --global bash-language-server
 
 # Install Poetry
 curl -sSL https://install.python-poetry.org | python3 -
-zsh poetry_setup.sh
+script/poetry_setup.sh
 POETRY_CONFIG_PATH="$HOME/.config/pypoetry"
 if [[ $OSTYPE == darwin* ]]; then
 	POETRY_CONFIG_PATH="$HOME/Library/Application Support/pypoetry"

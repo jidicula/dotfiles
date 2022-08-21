@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Enables touchID for sudo authentication
+# Configures DNS for development
 
 if ! [[ -d "${RESOLVER_PATH:=/etc/resolver}" ]]; then
 	sudo mkdir -p "$RESOLVER_PATH"
