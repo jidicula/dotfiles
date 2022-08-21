@@ -86,29 +86,25 @@ function dir() {
 		cd -P -- "$1"
 }
 
-# shellcheck source=/dev/null
-if [[ $OSTYPE == darwin* ]]; then
-	source "/opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-else
-	source "/usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-fi
-
-# PATH
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/X11/bin:/Library/TeX/texbin"
-
 # Homebrew shellenv
 if [[ $(arch) == "arm64" ]]; then
 	ARCH="arm64"
 fi
 if [[ $ARCH == "arm64" ]]; then
-	if [[ $OSTYPE == darwin* ]]; then
-		eval "$(/opt/homebrew/bin/brew shellenv)"
+	eval "$(/opt/homebrew/bin/brew shellenv)"
+else
+	if [[ $CODESPACES ]]; then
+		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+	else
+		eval "$(/usr/local/bin/brew shellenv)"
 	fi
 fi
 
-if [[ $CODESPACES ]]; then
-	eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-fi
+# Set up ZSH syntax highlighting
+source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+
+# Extend PATH
+export PATH="$PATH:/usr/local/sbin:"
 
 DOTFILESDIR="$HOME/dotfiles"
 if [[ $CODESPACES ]]; then
@@ -193,8 +189,8 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export PATH="$HOME/.dotnet/tools:$PATH"
 
 # GNU dependencies for building some Homebrew formulae, like Emacs
-export PATH="/opt/homebrew/opt/gnu-tar/libexec/gnubin:$PATH"
-export PATH="/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"
+export PATH="$HOMEBREW_PREFIX/opt/gnu-tar/libexec/gnubin:$PATH"
+export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
@@ -233,8 +229,6 @@ if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
 
-if [[ $OSTYPE == darwin* ]]; then
-	# GCloud
-	export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-	source "/opt/homebrew/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
-fi
+# GCloud
+export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"

@@ -87,11 +87,8 @@ fi
 if [[ $OSTYPE == darwin* ]]; then
 
 	# Link Emacs.app to Applications directory
-	if [[ -z "$ARCH" ]]; then
-		ln -s "/usr/local/opt/emacs-plus/Emacs.app" "/Applications"
-	else
-		ln -s "/opt/homebrew/opt/emacs-plus@28/Emacs.app" "/Applications"
-	fi
+	ln -s "$HOMEBREW_PREFIX/opt/emacs-plus@28/Emacs.app" "/Applications"
+
 	# Run Emacs as a background launchctl service
 	brew services start d12frosted/emacs-plus/emacs-plus@28
 fi
