@@ -232,6 +232,8 @@ if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
 
-# GCloud
-export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+if [[ $OSTYPE == darwin* ]]; then
+	# GCloud
+	export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+	source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+fi
