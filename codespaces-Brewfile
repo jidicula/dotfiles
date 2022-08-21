@@ -12,7 +12,7 @@ brew "awscli"
 brew "azure-cli"
 brew "bash"
 brew "bzip2"
-brew "c-ares"
+brew "c-ares" # async DNS library
 brew "glib"
 brew "hiredis"
 brew "ccache" # Object-file caching compiler wrapper
