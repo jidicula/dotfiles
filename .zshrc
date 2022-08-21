@@ -163,13 +163,11 @@ source "$HOME/.zprofile"
 export STARSHIP_CONFIG="$HOME/.starship.toml"
 eval "$(starship init zsh)"
 
-if [[ $OSTYPE == darwin* ]]; then
-	if command -v pyenv 1>/dev/null 2>&1; then
-		export PYENV_ROOT="$HOME/.pyenv"
-		export PATH="$PYENV_ROOT/bin:$PATH"
-		eval "$(pyenv init --path)"
-		export ZSH_PYENV_VIRTUALENV=true
-	fi
+if command -v pyenv 1>/dev/null 2>&1; then
+	export PYENV_ROOT="$HOME/.pyenv"
+	export PATH="$PYENV_ROOT/bin:$PATH"
+	eval "$(pyenv init --path)"
+	export ZSH_PYENV_VIRTUALENV=true
 fi
 
 if [[ $OSTYPE == darwin* ]]; then
