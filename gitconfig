@@ -1,5 +1,5 @@
 [commit]
-	template = ~/dotfiles/commit-message
+	template = ~/.git-commit-message
     gpgSign = true
 [tag]
     gpgSign = true
@@ -9,7 +9,7 @@
 [branch]
 	autosetuprebase = always
 [core]
-	excludesfile = ~/dotfiles/gitignore
+	excludesfile = ~/.gitignore
 	autocrlf = input
 [github]
 	user = jidicula
@@ -33,6 +33,6 @@
 	required = true
 	clean = git-lfs clean -- %f
 [include]
-    path = ~/dotfiles/gitconfig-personal
+    path = ~/.gitconfig-personal
 [includeIf "gitdir:**/work/**/.git"]
-    path = ~/dotfiles/gitconfig-work
+    path = ~/.gitconfig-work
