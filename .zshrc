@@ -75,7 +75,7 @@ DISABLE_UNTRACKED_FILES_DIRTY="true"
 if [[ -z $SSH_CONNECTION ]]; then
 	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
 else
-	export EDITOR="/usr/bin/env nano"
+	export EDITOR="/usr/bin/env emacs"
 fi
 
 # Compilation flags
