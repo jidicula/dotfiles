@@ -10,3 +10,6 @@ go install golang.org/x/tools/gopls@latest
 if [[ $OSTYPE == darwin* ]]; then
 	"$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
 fi
+
+# Install python LSP
+sudo npm install -g pyright
