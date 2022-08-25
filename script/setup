@@ -145,3 +145,7 @@ if [[ $OSTYPE == darwin* ]]; then
 		echo "Homebrew Bundle failed, check logs" && exit "$BREW_STATUS"
 	fi
 fi
+
+if [[ $CODESPACES ]]; then
+	curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"Codespace $CODESPACE_NAME ready\"}" "$NOTIFICATION_URL"
+fi
