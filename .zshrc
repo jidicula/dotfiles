@@ -86,7 +86,11 @@ function dir() {
 if [[ $OSTYPE == darwin* || $CODESPACES ]]; then
 	function notify {
 		local msg="$*"
-		curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"$msg\"}" "$NOTIFICATION_URL"
+		curl --show-error --silent -o /dev/null -X POST -H 'Content-type: application/json' --data "{\"text\":\"$msg\"}" "$NOTIFICATION_URL"
+		if [[ "$?" -ne 0 ]]; then
+			echo "Notify curl failed." >&2
+			return 10
+		fi
 	}
 fi
 
