@@ -105,6 +105,14 @@ There are two things you can do about this warning:
 (setq backup-directory-alist `((".*" . ,temporary-file-directory))
       auto-save-file-name-transforms `((".*" ,temporary-file-directory t)))
 
+
+;; Freeze versions on startup to clean unused packages.
+(straight-freeze-versions)
+(use-package straight
+  ;; Freeze after installing new packages.
+  :hook (straight-vc-git-post-clone-hook . straight-freeze-versions)
+  )
+
 ;; return to last place in file
 (use-package saveplace
   :straight t
@@ -380,50 +388,26 @@ There are two things you can do about this warning:
   (codespaces-setup)
   )
 
-;; lsp-mode configs
-(use-package lsp-mode
-  :delight lsp-lens-mode "🔍"
+(use-package eglot
   :straight t
-  :init
-  ;; set prefix for lsp-command-keymap (few alternatives - "C-l", "C-c l")
-  (setq lsp-keymap-prefix "C-c l")
-  :custom
-  (lsp-auto-guess-root 1)
-  :config
-  (lsp-enable-imenu)
-  (setq lsp-prefer-flymake nil)
-  (setq lsp-headerline-breadcrumb-enable t)
-  :hook (;; replace XXX-mode with concrete major-mode(e. g. python-mode)
-         (python-mode . lsp-deferred)
-	     (sh-mode . lsp-deferred)
-         (mhtml-mode . lsp-deferred)
-         (scss-mode . lsp-deferred)
-         (java-mode . lsp-deferred)
-         (js-jsx-mode . lsp-deferred)
-         (js-mode . lsp-deferred)
-         (css-mode . lsp-deferred)
-         (typescript-mode . lsp-deferred)
-         (web-mode . lsp-deferred)
-         (dockerfile-mode . lsp-deferred)
-         (go-mode . lsp-deferred)
-         (ruby-mode . lsp-deferred)
-         (csharp-mode . lsp-deferred)
-         (powershell-mode . lsp-deferred)
-         ;; if you want which-key integration
-         (lsp-mode . lsp-enable-which-key-integration)
-	     (lsp-mode . lsp-lens-mode)
-	     (lsp-after-open . 'lsp-enable-imenu)
-	     )
-  :commands (lsp lsp-deferred))
+  :hook
+  ((go-mode . eglot-ensure)
+   (python-mode . eglot-ensure)
+   (shell-mode . eglot-ensure)
+   (powershell-mode . eglot-ensure)
+   (yaml-mode . eglot-ensure)
+   )
+  )
+
+(use-package eldoc-box
+  :straight t
+  :hook
+  (eglot-managed-mode . eldoc-box-hover-mode)
+  )
 
 (use-package powershell
   :straight t
   :delight "🐚")
-
-(use-package lsp-java
-  :straight t
-  :delight "☕️"
-  )
 
 (use-package csharp-mode
   :straight t
@@ -442,61 +426,6 @@ There are two things you can do about this warning:
 (use-package prog-mode
   :delight typescript-mode ""
   :delight js-mode ""
-  )
-
-;; optionally
-(use-package lsp-ui
-  :after lsp-mode
-  :straight t
-  :commands lsp-ui-mode
-  :hook
-  (lsp-mode . lsp-ui-mode)
-  :config
-  ;; (setq lsp-ui-doc-use-webkit t) 	;very buggy webkit doc windows
-  )
-
-(use-package lsp-treemacs
-  :after lsp-mode treemacs
-  :straight t
-  :commands lsp-treemacs-errors-list
-  )
-
-;; Use the Debug Adapter Protocol for running tests and debugging
-(use-package posframe
-  :straight t
-  ;; Posframe is a pop-up tool that must be manually installed for dap-mode
-  )
-
-
-;; optionally if you want to use debugger
-(use-package dap-mode
-  :after lsp-mode
-  :straight t
-  :defer 2
-  :hook
-  (lsp-mode . dap-mode)
-  (lsp-mode . dap-ui-mode)
-  )
-;; (use-package dap-LANGUAGE) to load the dap adapter for your language
-
-;; Python configs
-;; lsp Python
-(use-package lsp-pyright
-  :delight python-mode "🐍"
-  :straight t
-  :config
-  (put 'lsp-pyright-python-executable-cmd 'safe-local-variable #'stringp)
-  :hook
-  (
-   (python-mode . (lambda ()
-                    (require 'lsp-pyright)
-                    (lsp-deferred)
-		    ))
-   ;; if .dir-locals exists, read it first, then activate mspyls
-   (hack-local-variables . (lambda ()
-			     (setq indent-tabs-mode nil)  ; disable tabs
-			     ))
-   )
   )
 
 ;; python-black
@@ -536,18 +465,15 @@ There are two things you can do about this warning:
   :straight t
   :delight ""
   :hook
-  (before-save . lsp-format-buffer)
-  (before-save . lsp-organize-imports)
+  (before-save . eglot-format)
   )
 
 (use-package ruby-mode
   :delight " "
   :ensure-system-package (solargraph . "gem install solargraph")
-  :config
-  (setq lsp-solargraph-autoformat t)
   :hook
   (ruby-mode . (lambda ()
-                 (add-hook 'before-save-hook #'lsp-format-buffer nil t)))
+                 (add-hook 'before-save-hook #'eglot-format nil t)))
 )
 
 ;; json-mode
