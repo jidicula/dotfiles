@@ -115,9 +115,6 @@ if [[ $OSTYPE == darwin* ]]; then
 	script/macos-setup "$HOSTNAME" || exit
 fi
 
-# Install bash-language-server
-npm install --global bash-language-server
-
 # Install Poetry
 curl -sSL https://install.python-poetry.org | python3 -
 script/poetry_setup.sh
@@ -131,12 +128,9 @@ ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
 # Install go tools
 mkdir "$HOME/go"
 go install golang.org/x/tools/...@latest
-go install golang.org/x/tools/gopls@latest
 
-# Install C# tools
-if [[ $OSTYPE == darwin* ]]; then
-	"$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
-fi
+# Install language servers
+script/language-server-setup.sh
 
 if [[ $OSTYPE == darwin* ]]; then
 	# Make user-specific Applications directory
