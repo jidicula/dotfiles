@@ -78,9 +78,6 @@ else
 	export EDITOR="/usr/bin/env emacs"
 fi
 
-# Compilation flags
-# export ARCHFLAGS="-arch x86_64"
-
 function dir() {
 	mkdir -p -- "$1" &&
 		cd -P -- "$1"
