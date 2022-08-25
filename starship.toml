@@ -1,5 +1,5 @@
 # format = "$all"
-format = """$directory$git_branch$git_status$git_state$cmd_duration
+format = """$directory$git_branch$git_status$git_state$cmd_duration$time
 $package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
 $hostname$character"""
 
@@ -25,6 +25,11 @@ format = "[$hostname]($style)"
 style = "yellow"
 format = "[$duration]($style) "
 show_notifications = true
+
+[time]
+style = "purple"
+disabled = false
+format = "[$time]($style)"
 
 # Git
 
