@@ -43,6 +43,9 @@ style = "cyan"
 
 # Languages
 
+[dotnet]
+format = "[$symbol($version )(🎯 $tfm )]($style)"
+
 [golang]
 style = "cyan"
 format = "[$symbol($version )]($style) "
