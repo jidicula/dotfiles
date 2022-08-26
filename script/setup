@@ -141,5 +141,5 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 if [[ $CODESPACES ]]; then
-	curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"Codespace $CODESPACE_NAME ready\"}" "$NOTIFICATION_URL"
+	notify "Codespace $CODESPACE_NAME ready"
 fi
