@@ -170,7 +170,9 @@ source "$HOME/.zprofile"
 
 # Starship configs
 export STARSHIP_CONFIG="$HOME/.starship.toml"
-eval "$(starship init zsh)"
+if [[ $TERM != "dumb" ]]; then
+	eval "$(starship init zsh)"
+fi
 
 if command -v pyenv 1>/dev/null 2>&1; then
 	export PYENV_ROOT="$HOME/.pyenv"
