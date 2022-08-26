@@ -105,7 +105,6 @@ There are two things you can do about this warning:
 (setq backup-directory-alist `((".*" . ,temporary-file-directory))
       auto-save-file-name-transforms `((".*" ,temporary-file-directory t)))
 
-
 (use-package straight
   ;; Freeze after installing new packages.
   :hook (straight-vc-git-post-clone-hook . straight-freeze-versions)
@@ -985,8 +984,4 @@ then enter the text in that file's own buffer.")
 
 ;; Make gc pauses faster by decreasing the threshold.
 (setq gc-cons-threshold (* 2 1000 1000))
-
-;; Freeze versions at end of startup to clean unused packages.
-(straight-freeze-versions)
-
 ;;; init.el ends here
