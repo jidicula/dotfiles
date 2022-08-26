@@ -182,7 +182,7 @@ There are two things you can do about this warning:
   :straight t
   :bind (("C-x g" . magit-status)
          ("C-x G" . magit-status-with-prefix)
-	 ("C-c g" . magit-file-dispatch))
+		 ("C-c g" . magit-file-dispatch))
   :config
   (put 'magit-revision-mode 'magit-diff-default-arguments
        `("--show-signature" ,@(get 'magit-diff-mode 'magit-diff-default-arguments)))
