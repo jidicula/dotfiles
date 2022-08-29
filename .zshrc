@@ -252,3 +252,10 @@ if [[ $OSTYPE == darwin* ]]; then
 	export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 	source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
 fi
+
+# Prepend brew-installed libraries to LIBRARY_PATH
+if [[ $ARCH == "arm64" ]]; then
+	export LIBRARY_PATH="/opt/homebrew/lib:$LIBRARY_PATH"
+else
+	export LIBRARY_PATH="/usr/local/lib:$LIBRARY_PATH"
+fi
