@@ -117,7 +117,7 @@ fi
 source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 
 # Extend PATH
-export PATH="$PATH:/usr/local/sbin:"
+export PATH="$PATH:/usr/local/sbin"
 
 export DOTFILESDIR="$HOME/dotfiles"
 if [[ $CODESPACES ]]; then
