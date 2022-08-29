@@ -255,7 +255,7 @@ fi
 
 # Prepend brew-installed libraries to LIBRARY_PATH
 if [[ $ARCH == "arm64" ]]; then
-	export LIBRARY_PATH="$LIBRARY_PATH:/opt/homebrew/lib"
+	export LIBRARY_PATH="/opt/homebrew/lib"
 else
-	export LIBRARY_PATH="$LIBRARY_PATH:/usr/local/lib"
+	export LIBRARY_PATH="/usr/local/lib"
 fi
