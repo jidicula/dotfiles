@@ -17,6 +17,7 @@ brew "gcc"
 brew "open-mpi", link: false
 brew "xz"
 brew "openblas"
+brew "adr-tools"
 brew "arpack"
 brew "awk"
 brew "readline"
