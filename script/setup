@@ -11,9 +11,7 @@ if [[ $CODESPACES ]]; then
 	# Always want to use ZSH as my default shell (e.g. for SSH)
 	if ! grep -q "root.*/bin/zsh" /etc/passwd; then
 		sudo chsh -s /bin/zsh root
-		if [[ $(id -u vscode) ]]; then
-			sudo chsh -s /bin/zsh vscode
-		else
+		if ! sudo chsh -s /bin/zsh vscode; then
 			sudo chsh -s /bin/zsh codespace
 		fi
 	fi
@@ -59,7 +57,9 @@ ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 
 # Install Homebrew packages
 if [[ $CODESPACES ]]; then
-	eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+	if ! eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; then
+		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+	fi
 	brew bundle install --no-lock --file codespaces-Brewfile
 	BREW_STATUS="$?"
 else
