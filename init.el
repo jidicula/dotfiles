@@ -653,7 +653,7 @@ There are two things you can do about this warning:
 (use-package rg
   :straight t
   :init
-  (rg-enable-default-bindings)
+  (rg-enable-menu)
   :config
   (setq rg-default-alias-fallback "everything")
   )

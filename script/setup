@@ -84,6 +84,8 @@ if ! [[ $CODESPACES ]]; then
 	mkdir -p "$HOME/.emacs.d/straight"
 	ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
 	ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
+	mkdir -p "$HOME/.emacs.d/transient"
+	ln -sfv "$DOTFILESDIR/transient/values.el" "$HOME/.emacs.d/transient/values.el"
 	emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
 fi
 
