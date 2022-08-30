@@ -57,7 +57,7 @@ ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 
 # Install Homebrew packages
 if [[ $CODESPACES ]]; then
-	if ! eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; then
+	if ! [[ $(eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)") ]]; then
 		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 	fi
 	brew bundle install --no-lock --file codespaces-Brewfile
