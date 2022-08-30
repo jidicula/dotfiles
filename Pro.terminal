@@ -99,6 +99,8 @@
 	</data>
 	<key>UseBrightBold</key>
 	<false/>
+	<key>VisualBellOnlyWhenMuted</key>
+	<false/>
 	<key>name</key>
 	<string>Pro</string>
 	<key>rowCount</key>
