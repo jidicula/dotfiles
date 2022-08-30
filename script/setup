@@ -11,7 +11,11 @@ if [[ $CODESPACES ]]; then
 	# Always want to use ZSH as my default shell (e.g. for SSH)
 	if ! grep -q "root.*/bin/zsh" /etc/passwd; then
 		sudo chsh -s /bin/zsh root
-		sudo chsh -s /bin/zsh vscode
+		if [[ $(id -u vscode) ]]; then
+			sudo chsh -s /bin/zsh vscode
+		else
+			sudo chsh -s /bin/zsh codespace
+		fi
 	fi
 fi
 
