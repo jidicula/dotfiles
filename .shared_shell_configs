@@ -95,7 +95,6 @@ function notify {
 
 # go
 export GOPATH="$HOME/go"
-export GOROOT="$HOMEBREW_PREFIX/bin/go"
 export PATH="$PATH:$GOPATH/bin"
 export PATH="$PATH:$GOROOT/bin"
 gt() {
