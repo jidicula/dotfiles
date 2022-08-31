@@ -2,7 +2,3 @@
         helper = /.codespaces/bin/gitcredential_github.sh
 [gpg]
         program = /.codespaces/bin/gh-gpgsign
-[user]
-		# needs to match GitHub name for signing to work in Codespaces.
-		# GitHub doesn't have a web-flow signing SSH key yet.
-		name = "Johanan Idicula"
