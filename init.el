@@ -181,15 +181,10 @@ There are two things you can do about this warning:
          ("C-x G" . magit-status-with-prefix)
 		 ("C-c g" . magit-file-dispatch))
   :config
+  ;; Show commit signature information when visiting a commit
+  ;; See https://emacs.stackexchange.com/a/72887/17419
   (put 'magit-revision-mode 'magit-diff-default-arguments
        `("--show-signature" ,@(get 'magit-diff-mode 'magit-diff-default-arguments)))
-  ;; (if (string= (shell-command-to-string "arch") "arm64")
-  ;;     (setq magit-git-executable "/opt/homebrew/bin/git")
-  ;;   (if (string= (shell-command-to-string "uname") "Darwin")
-  ;;       (setq magit-git-executable "/usr/local/bin/git")
-  ;;       (setq magit-git-executable "/usr/bin/git")
-  ;;       )
-  ;;   )
   
   (setq auth-sources '("~/.authinfo"))
   (setq magit-display-buffer-function
