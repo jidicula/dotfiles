@@ -1,4 +1,11 @@
 set -o pipefail
+
+if [[ $TERM == "dumb" ]]; then
+	unsetopt zle
+	PS1='$ '
+	return
+fi
+
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
@@ -119,9 +126,3 @@ if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]
 fi
 
 alias ls="ls --color=always"
-
-if [[ $TERM == "dumb" ]]; then
-	unsetopt zle
-	PS1='$ '
-	return
-fi
