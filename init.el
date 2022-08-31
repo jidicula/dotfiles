@@ -399,7 +399,7 @@ There are two things you can do about this warning:
 
 (use-package powershell
   :straight t
-  :delight "🐚")
+  :delight " ")
 
 (use-package csharp-mode
   :straight t
@@ -410,6 +410,9 @@ There are two things you can do about this warning:
   :delight scss-mode ""
   :delight ""
   )
+
+(use-package shell-mode
+  :delight "🐚")
 
 (use-package mhtml-mode
   :delight ""
