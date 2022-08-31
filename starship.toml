@@ -1,6 +1,6 @@
 # format = "$all"
 format = """$directory$git_branch$git_status$git_state$cmd_duration$time
-$shell$package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
+$shell$shlvl$package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
 $hostname$character"""
 
 # Utilities
@@ -8,6 +8,12 @@ $hostname$character"""
 [shell]
 disabled = false
 style = "bright-red"
+bash_indicator = "bash"
+powershell_indicator = "pwsh"
+
+[shlvl]
+disabled = false
+style = "yellow"
 
 [directory]
 truncate_to_repo = true
