@@ -137,7 +137,7 @@ mkdir -p "$POETRY_CONFIG_PATH"
 ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
 
 # Install go tools
-mkdir "$HOME/go"
+mkdir -p "$HOME/go"
 go install golang.org/x/tools/...@latest
 
 # Install language servers
@@ -145,7 +145,7 @@ script/language-server-setup.sh
 
 if [[ $OSTYPE == darwin* ]]; then
 	# Make user-specific Applications directory
-	mkdir "$HOME/Applications"
+	mkdir -p "$HOME/Applications"
 	if [[ "$BREW_STATUS" -ne 0 ]]; then
 		echo "Homebrew Bundle failed, check logs" && exit "$BREW_STATUS"
 	fi
