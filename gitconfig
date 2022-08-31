@@ -36,5 +36,5 @@
     path = ~/.gitconfig-personal
 [includeIf "gitdir:**/work/**/.git"]
     path = ~/.gitconfig-work
-[includeIf "gitdir:**/workpaces/**/.git"]
+[includeIf "gitdir:**/workspaces/**/.git"]
     path = ~/.gitconfig-codespaces
