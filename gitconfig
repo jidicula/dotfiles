@@ -34,5 +34,7 @@
 	clean = git-lfs clean -- %f
 [include]
     path = ~/.gitconfig-personal
-[includeIf "gitdir:**/work*/**/.git"]
+[includeIf "gitdir:**/work/**/.git"]
     path = ~/.gitconfig-work
+[includeIf "gitdir:**/workpaces/**/.git"]
+    path = ~/.gitconfig-codespaces

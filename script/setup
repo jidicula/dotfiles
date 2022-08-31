@@ -54,6 +54,7 @@ ln -sfv "$DOTFILESDIR/git-templates" "$HOME/.git-templates"
 ln -sfv "$DOTFILESDIR/git-commit-message" "$HOME/.git-commit-message"
 ln -sfv "$DOTFILESDIR/gitconfig-personal" "$HOME/.gitconfig-personal"
 ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
+ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
 
 # Install Homebrew packages
 if [[ $CODESPACES ]]; then
