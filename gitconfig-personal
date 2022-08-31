@@ -6,7 +6,4 @@
 	name = jidicula
 	email = "git@johanan.dev"
 	signingkey = "EE67025B"
-[commit]
-	gpgSign = true
-[tag]
-    gpgSign = true
+
