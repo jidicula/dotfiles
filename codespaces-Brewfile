@@ -19,6 +19,7 @@ brew "ccache" # Object-file caching compiler wrapper
 brew "cheat"
 brew "coreutils"
 brew "croc"
+brew "emacs"
 brew "kubernetes-cli"
 brew "devspace"
 brew "docker-compose"
