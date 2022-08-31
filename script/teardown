@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
 # Emacs Plus must be removed before reinstalling
-brew uninstall emacs-plus
+if [[ $ARCH == darwin* ]]; then
+	brew uninstall emacs-plus
+fi
 
 # Clean up hardlinked dirs
-rm "$HOME/.git-templates" \
+rm -rf "$HOME/.git-templates" \
 	'~'
