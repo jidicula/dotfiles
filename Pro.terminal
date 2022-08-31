@@ -55,17 +55,25 @@
 	</data>
 	<key>ShouldRestoreContent</key>
 	<false/>
+	<key>ShowActiveProcessArgumentsInTabTitle</key>
+	<true/>
 	<key>ShowActiveProcessArgumentsInTitle</key>
+	<true/>
+	<key>ShowActiveProcessInTabTitle</key>
 	<true/>
 	<key>ShowActiveProcessInTitle</key>
 	<true/>
 	<key>ShowCommandKeyInTitle</key>
 	<false/>
 	<key>ShowComponentsWhenTabHasCustomTitle</key>
-	<false/>
+	<true/>
 	<key>ShowDimensionsInTitle</key>
 	<true/>
+	<key>ShowRepresentedURLInTabTitle</key>
+	<false/>
 	<key>ShowRepresentedURLInTitle</key>
+	<true/>
+	<key>ShowRepresentedURLPathInTabTitle</key>
 	<true/>
 	<key>ShowRepresentedURLPathInTitle</key>
 	<true/>
