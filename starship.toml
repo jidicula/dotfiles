@@ -1,9 +1,13 @@
 # format = "$all"
 format = """$directory$git_branch$git_status$git_state$cmd_duration$time
-$package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
+$shell$package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
 $hostname$character"""
 
 # Utilities
+
+[shell]
+disabled = false
+style = "bright-red"
 
 [directory]
 truncate_to_repo = true

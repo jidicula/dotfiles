@@ -1,4 +1,8 @@
 set -o pipefail
+if [[ $TERM == "dumb" ]]; then
+	echo "halting source"
+	return
+fi
 # If you come from bash you might have to change your $PATH.
 # export PATH=$HOME/bin:/usr/local/bin:$PATH
 
@@ -71,144 +75,19 @@ DISABLE_UNTRACKED_FILES_DIRTY="true"
 # You may need to manually set your language environment
 # export LANG=en_US.UTF-8
 
-# Preferred editor for local and remote sessions
-if [[ -z $SSH_CONNECTION ]]; then
-	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
-else
-	export EDITOR="/usr/bin/env emacs"
-fi
-
-function dir() {
-	mkdir -p -- "$1" &&
-		cd -P -- "$1"
-}
-
 if [[ $OSTYPE == darwin* || $CODESPACES ]]; then
-	function notify {
-		local msg="$*"
-		local result=$(curl --show-error --silent -o /dev/null -w '%{http_code}' \
-			--form-string "token=$PUSHOVER_API_TOKEN" \
-			--form-string "user=$PUSHOVER_USER_KEY" \
-			--form-string "message=$msg" \
-			"$NOTIFICATION_URL")
-
-		if [[ "$?" -ne 0 || "$result" != 200 ]]; then
-			echo -e "\aNotify curl failed with $result." >&2
-			return 10
-		fi
-	}
-fi
-
-# Homebrew shellenv
-if [[ $(arch) == "arm64" ]]; then
-	ARCH="arm64"
-fi
-if [[ $ARCH == "arm64" ]]; then
-	eval "$(/opt/homebrew/bin/brew shellenv)"
-else
-	if [[ $CODESPACES ]]; then
-		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-	else
-		eval "$(/usr/local/bin/brew shellenv)"
-	fi
+	source "$HOME/.shared_shell_configs"
 fi
 
 # Set up ZSH syntax highlighting
 source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-
-# Extend PATH
-export PATH="$PATH:/usr/local/sbin"
-
-export DOTFILESDIR="$HOME/dotfiles"
-if [[ $CODESPACES ]]; then
-	export DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
-fi
-# pipenv should be created in the project dir
-export PIPENV_VENV_IN_PROJECT=1
-
-# Poetry
-export PATH="$HOME/.local/bin:$PATH"
-
-# Python Tcl-Tk options for pyenv
-export PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I/usr/local/opt/tcl-tk/include' --with-tcltk-libs='-L/usr/local/opt/tcl-tk/lib -ltcl8.6 -ltk8.6'"
-export TK_SILENCE_DEPRECATION=1
-
-# go
-export GOPATH="$HOME/go"
-export PATH="$PATH:$GOPATH/bin"
-export PATH="$PATH:$GOROOT/bin"
-gt() {
-	go test "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
-}
-gtv() {
-	go test -v "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
-}
-gtb() {
-	go test -bench=. "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
-}
-gtbv() {
-	go test -v -bench=. "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
-}
-gtc() {
-	local t=$(mktemp -t cover)
-	go test $COVERFLAGS -coverprofile="$t" "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' &&
-		go tool cover -html="$t" &&
-		unlink "$t"
-}
-gtch() {
-	local t=$(mktemp -t cover)
-	go test $COVERFLAGS -covermode=count -coverprofile="$t" "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' &&
-		go tool cover -html="$t" &&
-		unlink "$t"
-}
-alias gl="golangci-lint run"
 
 # source zprofile in case any programs have added configs in there (e.g. FSL)
 touch "$HOME/.zprofile"
 # shellcheck source=/dev/null
 source "$HOME/.zprofile"
 
-# Starship configs
-export STARSHIP_CONFIG="$HOME/.starship.toml"
-if [[ $TERM != "dumb" ]]; then
-	eval "$(starship init zsh)"
-fi
-
-if command -v pyenv 1>/dev/null 2>&1; then
-	export PYENV_ROOT="$HOME/.pyenv"
-	export PATH="$PYENV_ROOT/bin:$PATH"
-	eval "$(pyenv init --path)"
-	export ZSH_PYENV_VIRTUALENV=true
-fi
-
-if [[ $OSTYPE == darwin* ]]; then
-	if command -v nodenv 1>/dev/null 2>&1; then
-		export NODENV_ROOT="$HOME/.nodenv"
-		export PATH="$NODENV_ROOT/bin:$PATH"
-		eval "$(nodenv init -)"
-	fi
-fi
-
-if command -v rbenv 1>/dev/null 2>&1; then
-	export RBENV_ROOT="$HOME/.rbenv"
-	export PATH="$RBENV_ROOT/bin:$PATH"
-	eval "$(rbenv init -)"
-fi
-
-PLAN9=/usr/local/plan9
-export PLAN9
-export PATH="$PATH:$PLAN9/bin"
-
-# dotnet
-export DOTNET_CLI_TELEMETRY_OPTOUT=1
-export PATH="$HOME/.dotnet/tools:$PATH"
-
-# GNU dependencies for building some Homebrew formulae, like Emacs
-export PATH="$HOMEBREW_PREFIX/opt/gnu-tar/libexec/gnubin:$PATH"
-export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
-
-# Brew curl first in path
-export PATH="/opt/homebrew/opt/curl/bin:$PATH"
+eval "$(starship init zsh)"
 
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
@@ -226,7 +105,6 @@ plugins=(
 	golang
 	dotnet
 )
-
 # shellcheck source=/dev/null
 source "$ZSH/oh-my-zsh.sh"
 
@@ -239,23 +117,9 @@ source "$ZSH/oh-my-zsh.sh"
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 # shellcheck source=/dev/null
-alias cdr='cd $(git rev-parse --show-toplevel)'
-alias gcce="gcc -Wextra -Wpedantic"
-alias ls="ls --color=auto"
-alias cs="gh codespace ssh"
+
 if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]]; then
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
 
-if [[ $OSTYPE == darwin* ]]; then
-	# GCloud
-	export USE_GKE_GCLOUD_AUTH_PLUGIN=True
-	source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
-fi
-
-# Prepend brew-installed libraries to LIBRARY_PATH
-if [[ $ARCH == "arm64" ]]; then
-	export LIBRARY_PATH="/opt/homebrew/lib"
-else
-	export LIBRARY_PATH="/usr/local/lib"
-fi
+alias ls="ls --color=always"

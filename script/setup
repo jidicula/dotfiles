@@ -59,6 +59,7 @@ ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 if [[ $CODESPACES ]]; then
 	if ! [[ $(eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)") ]]; then
 		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 	fi
 	brew bundle install --no-lock --file codespaces-Brewfile
 	BREW_STATUS="$?"
@@ -102,12 +103,16 @@ if [[ $OSTYPE == darwin* ]]; then
 	brew services start d12frosted/emacs-plus/emacs-plus@28
 fi
 
-# Set up ZSH config
+# Set up shell configs
 ln -sfv "$DOTFILESDIR/.zshrc" "$HOME/.zshrc"
+ln -sfv "$DOTFILESDIR/.bashrc" "$HOME/.bashrc"
+ln -sfv "$DOTFILESDIR/.shared_shell_configs" "$HOME/.shared_shell_configs"
 ln -sfv "$DOTFILESDIR/starship.toml" "$HOME/.starship.toml"
+mkdir -p "$HOME/.config/powershell"
+ln -sfv "$DOTFILESDIR/profile.ps1" "$HOME/.config/powershell/profile.ps1"
 
-if [[ -e "$HOME/.zshrc" ]]; then
-	source "$HOME/.zshrc"
+if [[ -e "$HOME/.shared_shell_configs" ]]; then
+	source "$HOME/.shared_shell_configs"
 fi
 
 if [[ $OSTYPE == darwin* ]]; then

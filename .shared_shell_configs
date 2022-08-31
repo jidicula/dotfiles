@@ -1,0 +1,148 @@
+# Preferred editor for local and remote sessions
+if [[ -z $SSH_CONNECTION ]]; then
+	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
+else
+	export EDITOR="/usr/bin/env emacs"
+fi
+
+if [[ $(arch) == "arm64" ]]; then
+	export ARCH="arm64"
+fi
+
+function dir() {
+	mkdir -p -- "$1" &&
+		cd -P -- "$1"
+}
+
+# Homebrew shellenv
+
+if [[ $ARCH == "arm64" ]]; then
+	eval "$(/opt/homebrew/bin/brew shellenv)"
+else
+	if [[ $CODESPACES ]]; then
+		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+	else
+		eval "$(/usr/local/bin/brew shellenv)"
+	fi
+fi
+
+# Extend PATH
+export PATH="$PATH:/usr/local/sbin"
+
+export DOTFILESDIR="$HOME/dotfiles"
+if [[ $CODESPACES ]]; then
+	export DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
+fi
+# pipenv should be created in the project dir
+export PIPENV_VENV_IN_PROJECT=1
+
+# Poetry
+export PATH="$HOME/.local/bin:$PATH"
+
+# Python Tcl-Tk options for pyenv
+export PYTHON_CONFIGURE_OPTS="--with-tcltk-includes='-I/usr/local/opt/tcl-tk/include' --with-tcltk-libs='-L/usr/local/opt/tcl-tk/lib -ltcl8.6 -ltk8.6'"
+export TK_SILENCE_DEPRECATION=1
+
+if command -v pyenv 1>/dev/null 2>&1; then
+	export PYENV_ROOT="$HOME/.pyenv"
+	export PATH="$PYENV_ROOT/bin:$PATH"
+	eval "$(pyenv init --path)"
+	export ZSH_PYENV_VIRTUALENV=true
+fi
+
+if [[ $OSTYPE == darwin* ]]; then
+	if command -v nodenv 1>/dev/null 2>&1; then
+		export NODENV_ROOT="$HOME/.nodenv"
+		export PATH="$NODENV_ROOT/bin:$PATH"
+		eval "$(nodenv init -)"
+	fi
+fi
+
+if command -v rbenv 1>/dev/null 2>&1; then
+	export RBENV_ROOT="$HOME/.rbenv"
+	export PATH="$RBENV_ROOT/bin:$PATH"
+	eval "$(rbenv init -)"
+fi
+
+PLAN9=/usr/local/plan9
+export PLAN9
+export PATH="$PATH:$PLAN9/bin"
+
+# dotnet
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export PATH="$HOME/.dotnet/tools:$PATH"
+
+# GNU dependencies for building some Homebrew formulae, like Emacs
+export PATH="$HOMEBREW_PREFIX/opt/gnu-tar/libexec/gnubin:$PATH"
+export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
+
+# Brew curl first in path
+export PATH="/opt/homebrew/opt/curl/bin:$PATH"
+
+function notify {
+	local msg="$*"
+	local result=$(curl --show-error --silent -o /dev/null -w '%{http_code}' \
+		--form-string "token=$PUSHOVER_API_TOKEN" \
+		--form-string "user=$PUSHOVER_USER_KEY" \
+		--form-string "message=$msg" \
+		"$NOTIFICATION_URL")
+
+	if [[ "$?" -ne 0 || "$result" != 200 ]]; then
+		echo -e "\aNotify curl failed with $result." >&2
+		return 10
+	fi
+}
+
+# go
+export GOPATH="$HOME/go"
+export PATH="$PATH:$GOPATH/bin"
+export PATH="$PATH:$GOROOT/bin"
+gt() {
+	go test "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
+gtv() {
+	go test -v "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
+gtb() {
+	go test -bench=. "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
+gtbv() {
+	go test -v -bench=. "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/''
+}
+gtc() {
+	local t=$(mktemp -t cover)
+	go test $COVERFLAGS -coverprofile="$t" "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' &&
+		go tool cover -html="$t" &&
+		unlink "$t"
+}
+gtch() {
+	local t=$(mktemp -t cover)
+	go test $COVERFLAGS -covermode=count -coverprofile="$t" "$@" ./... | sed ''/PASS/s//$(printf "\033[32mPASS\033[0m")/'' | sed ''/FAIL/s//$(printf "\033[31mFAIL\033[0m")/'' &&
+		go tool cover -html="$t" &&
+		unlink "$t"
+}
+alias gl="golangci-lint run"
+
+# Starship configs
+export STARSHIP_CONFIG="$HOME/.starship.toml"
+
+# Aliases
+alias cdr='cd $(git rev-parse --show-toplevel)'
+alias gcce="gcc -Wextra -Wpedantic"
+alias cs="gh codespace ssh"
+
+if [[ $OSTYPE == darwin* ]]; then
+	# GCloud
+	export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+	source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
+fi
+
+# Prepend brew-installed libraries to LIBRARY_PATH
+if [[ $ARCH == "arm64" ]]; then
+	export LIBRARY_PATH="/opt/homebrew/lib"
+else
+	export LIBRARY_PATH="/usr/local/lib"
+fi
+
+export PSES_BUNDLE_PATH="$HOME/.pses"
+export SESSION_TEMP_PATH="$HOME/.pses/session"
