@@ -88,7 +88,7 @@ function notify {
 		"$NOTIFICATION_URL")
 
 	if [[ "$?" -ne 0 || "$result" != 200 ]]; then
-		echo -e "\aNotify curl failed with $result." >&2
+		echo -e "\aNotify curl failed with $? and HTTP $result." >&2
 		return 10
 	fi
 }
