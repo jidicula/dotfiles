@@ -12,4 +12,12 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 # Install python LSP
-sudo npm install -g pyright
+npm install --global pyright
+
+# Powershell LS
+PSES_BUNDLE_PATH="$HOME/.pses"
+mkdir -p "$PSES_BUNDLE_PATH/session"
+(
+	cd "$PSES_BUNDLE_PATH" || exit
+	curl https://raw.githubusercontent.com/coc-extensions/coc-powershell/master/downloadPSES.ps1 | pwsh
+)
