@@ -8,7 +8,6 @@
  ("clang-format" . "e48ff8ae18dc7ab6118c1f6752deb48cb1fc83ac")
  ("closql" . "87d2edae8bc3d390bcfc5e909e9c13ff9fce994a")
  ("codespaces.el" . "c9a42e87dc38aedba6646bf2f4b1b4a6571b3b22")
- ("column-enforce-mode" . "14a7622f2268890e33536ccd29510024d51ee96f")
  ("company-box" . "f9cbbc7df8efbb56a8d31a5b422d158660d9109e")
  ("company-mode" . "537d13b7b62e3d7289b28de9dc6360f240d1c3a0")
  ("company-quickhelp" . "3ca2708b4e5190205aca01d65fe1b391963a53f9")

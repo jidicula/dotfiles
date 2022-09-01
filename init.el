@@ -32,6 +32,9 @@
 ;; highlight trailing whitespace
 (whitespace-mode 1)
 
+;; 80-col ruler
+(setq-default fill-column 80)
+
 ;; Don't switch frames when changing buffers
 (setq ido-default-buffer-method 'selected-window)
 
@@ -239,17 +242,6 @@ There are two things you can do about this warning:
   (sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-brace-mode))
   )
 
-;; column-enforce-mode
-;; highlights text extending beyond a certain column
-(use-package column-enforce-mode
-  :delight "80"
-  :straight t
-  :init
-  ;; activate mode in all prog-mode
-  :hook
-  (prog-mode . column-enforce-mode)
-  )
-
 ;; treemacs
 (use-package treemacs
   :straight t
@@ -429,6 +421,8 @@ There are two things you can do about this warning:
 (use-package prog-mode
   :delight typescript-mode ""
   :delight js-mode ""
+  :hook
+  (prog-mode . display-fill-column-indicator-mode)
   )
 
 ;; python-black
