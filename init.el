@@ -399,7 +399,10 @@ There are two things you can do about this warning:
 
 (use-package powershell
   :straight t
-  :delight " ")
+  :delight " "
+  :hook
+  (powershell-mode . (lambda () (indent-tabs-mode -1)))
+  )
 
 (use-package csharp-mode
   :straight t
