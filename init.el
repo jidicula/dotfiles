@@ -414,8 +414,13 @@ There are two things you can do about this warning:
   :delight ""
   )
 
-(use-package shell-mode
-  :delight "🐚")
+(use-package sh-script
+  :delight "🐚"
+  )
+
+(use-package shell
+  :delight "🐚"
+  )
 
 (use-package mhtml-mode
   :delight ""
