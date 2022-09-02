@@ -7,4 +7,5 @@ fi
 
 # Clean up hardlinked dirs
 rm -rf "$HOME/.git-templates" \
-	'~'
+	'~' \
+	"$HOME/.emacs.d/straight/versions"
