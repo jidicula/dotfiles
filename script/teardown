@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Emacs Plus must be removed before reinstalling
-if [[ $ARCH == darwin* ]]; then
+if [[ $OSTYPE == darwin* ]]; then
 	brew uninstall emacs-plus
 fi
 
