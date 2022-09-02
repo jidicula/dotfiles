@@ -1,3 +1,3 @@
-if ($Env:TERM != "dumb") {
+if ($Env:TERM -ne "dumb") {
     Invoke-Expression (&starship init powershell)
 }
