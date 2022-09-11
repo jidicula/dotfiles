@@ -21,3 +21,6 @@ mkdir -p "$PSES_BUNDLE_PATH/session"
 	cd "$PSES_BUNDLE_PATH" || exit
 	curl https://raw.githubusercontent.com/coc-extensions/coc-powershell/master/downloadPSES.ps1 | pwsh
 )
+
+# Docker LS
+npm install -g dockerfile-language-server-nodejs

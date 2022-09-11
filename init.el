@@ -380,6 +380,7 @@ There are two things you can do about this warning:
    (shell-mode . eglot-ensure)
    (powershell-mode . eglot-ensure)
    (yaml-mode . eglot-ensure)
+   (dockerfile-mode . eglot-ensure)
    )
   )
 
