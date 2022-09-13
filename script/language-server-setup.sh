@@ -24,3 +24,6 @@ mkdir -p "$PSES_BUNDLE_PATH/session"
 
 # Docker LS
 npm install -g dockerfile-language-server-nodejs
+
+# YAML
+npm install -g yaml-language-server
