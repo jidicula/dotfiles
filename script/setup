@@ -58,18 +58,21 @@ ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
 
 # Install Homebrew packages
 if [[ $CODESPACES ]]; then
+	# If Brew isn't installed in Codespace, install it
 	if ! [[ $(eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)") ]]; then
 		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 	fi
-	brew bundle install --no-lock --file codespaces-Brewfile
+	brew bundle install --no-lock --file codespaces_Brewfile
 	BREW_STATUS="$?"
 else
+	# Install Brew on macOS
 	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-	brew bundle install --no-lock
-	brew bundle check --verbose
+	brew bundle install --no-lock --file macos_Brewfile
 	BREW_STATUS="$?"
 fi
+brew bundle install --no-lock
+BREW_STATUS=$(($? + BREW_STATUS))
 
 if [[ $OSTYPE == darwin* ]]; then
 	# Set up launchdns
