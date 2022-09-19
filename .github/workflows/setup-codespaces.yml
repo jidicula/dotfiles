@@ -1,4 +1,4 @@
-name: Setup
+name: Setup Codespace
 
 on:
   push:
@@ -7,23 +7,17 @@ on:
       - 'script/**'
       - '*-Brewfile'
       - '.github/workflows/*.yml'
-      - '*.el'
   # Run every Saturday at midnight
   schedule:
     - cron: '0 0 * * 6'
   workflow_dispatch:
 
+env:
+  CODESPACES: true
+
 jobs:
   bootstrap:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os:
-          - 'macos-12'
-          - 'ubuntu-latest'
-        amend-scratch:
-          - 'amend'
-          - 'scratch'
+    runs-on: 'ubuntu-18.04'
 
     steps:
       - uses: actions/checkout@v2
@@ -42,25 +36,6 @@ jobs:
             fi
           done
           exit "$FAILURE"
-
-      - name: Remove pre-installed tools from GitHub Actions runner
-        run: |
-          script/actions-runner-preclean.sh
-
-      # Cache Homebrew directories for amend matrix option
-      - uses: actions/cache@v3
-        if: ${{ matrix.amend-scratch == 'amend' }}
-        with:
-          path: |
-            /opt/homebrew/bin
-            /opt/homebrew/Cellar
-            /usr/local/Cellar
-            /usr/local/bin
-            /usr/local/opt
-            /Applications
-          key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
-          restore-keys: |
-            ${{ runner.os }}-
 
       - name: Run setup script
         run: script/setup "TEST_HOSTNAME"
