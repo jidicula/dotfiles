@@ -80,15 +80,20 @@ export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 export PATH="/opt/homebrew/opt/curl/bin:$PATH"
 
 function notify {
-	local msg="$*"
-	local result=$(curl --show-error --silent -o /dev/null -w '%{http_code}' \
+	local msg
+	local result
+	local curl_exit
+
+	msg="$*"
+	result=$(curl --show-error --silent -o /dev/null -w '%{http_code}' \
 		--form-string "token=$PUSHOVER_API_TOKEN" \
 		--form-string "user=$PUSHOVER_USER_KEY" \
 		--form-string "message=$msg" \
 		"$NOTIFICATION_URL")
+	curl_exit="$?"
 
-	if [[ "$?" -ne 0 || "$result" != 200 ]]; then
-		echo -e "\aNotify curl failed with $? and HTTP $result." >&2
+	if [[ $curl_exit -ne 0 || $result != 200 ]]; then
+		echo -e "\aNotify curl failed with $curl_exit and HTTP $result." >&2
 		return 10
 	fi
 }
