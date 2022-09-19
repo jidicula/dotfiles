@@ -387,7 +387,7 @@ There are two things you can do about this warning:
 (use-package eldoc-box
   :straight t
   :hook
-  (eglot-managed-mode . eldoc-box-hover-mode)
+  (eglot-managed-mode . eldoc-box-hover-at-point-mode)
   )
 
 (use-package powershell
