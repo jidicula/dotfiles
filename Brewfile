@@ -8,7 +8,6 @@ tap "jakehilborn/jakehilborn"
 brew "age"
 brew "webp"
 brew "gcc"
-brew "gcc@5"
 brew "open-mpi", link: false
 brew "xz"
 brew "openblas"

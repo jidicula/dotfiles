@@ -1,1 +1,2 @@
 brew "emacs"
+brew "gcc@5"
