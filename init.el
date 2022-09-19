@@ -469,6 +469,8 @@ There are two things you can do about this warning:
 (use-package ruby-mode
   :delight " "
   :ensure-system-package (solargraph . "gem install solargraph")
+  :mode ("\\Brewfile\\'")
+  :interpreter "ruby"
   :hook
   (ruby-mode . (lambda ()
                  (add-hook 'before-save-hook #'eglot-format nil t)))
