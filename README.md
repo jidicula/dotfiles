@@ -1,4 +1,5 @@
 [![Build](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml/badge.svg)](https://github.com/jidicula/dotfiles/actions/workflows/setup.yml)
+[![Codespace Setup](https://github.com/jidicula/dotfiles/actions/workflows/setup-codespaces.yml/badge.svg)](https://github.com/jidicula/dotfiles/actions/workflows/setup-codespaces.yml)
 
 # dotfiles
 
