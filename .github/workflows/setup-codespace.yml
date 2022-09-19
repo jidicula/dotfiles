@@ -15,6 +15,9 @@ on:
 env:
   CODESPACES: true
   CODESPACE_NAME: ${{ github.workflow }}-${{ github.job }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+  NOTIFICATION_URL: ${{ secrets.NOTIFICATION_URL }}
+  PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+  PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
 
 jobs:
   bootstrap:
