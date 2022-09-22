@@ -55,6 +55,7 @@ brew "hadolint"
 brew "hdf5"	# File format designed to store large data
 brew "helm"
 brew "highlight"
+brew "hey"
 brew "ncurses"
 brew "htop"
 brew "ispell"
