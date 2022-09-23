@@ -32,6 +32,7 @@ export PATH="$PATH:/usr/local/sbin"
 export DOTFILESDIR="$HOME/dotfiles"
 if [[ $CODESPACES ]]; then
 	export DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
+	eval "$ENV_VARS"
 fi
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1
