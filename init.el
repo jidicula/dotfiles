@@ -424,6 +424,7 @@ There are two things you can do about this warning:
   :delight js-mode ""
   :hook
   (prog-mode . display-fill-column-indicator-mode)
+  (prog-mode . company-mode)
   )
 
 ;; python-black
