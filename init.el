@@ -381,6 +381,7 @@ There are two things you can do about this warning:
    (powershell-mode . eglot-ensure)
    (yaml-mode . eglot-ensure)
    (dockerfile-mode . eglot-ensure)
+   (ruby-mode . eglot-ensure)
    )
   )
 
