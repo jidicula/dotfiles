@@ -47,6 +47,14 @@ mkdir -p "$HOME/.local/bin"
 ln -sfv "$DOTFILESDIR/gpg.conf" "$HOME/.gnupg/gpg.conf"
 ln -sfv "$DOTFILESDIR/gpg-agent.conf" "$HOME/.gnupg/gpg-agent.conf"
 
+# Copy GitHub webflow GPG key
+curl https://github.com/web-flow.gpg | gpg --import
+
+# Correct permissions on .gnupg dir
+chown -R "$(whoami)" "$HOME/.gnupg/"
+chmod 600 "$HOME/.gnupg/*"
+chmod 700 "$HOME/.gnupg"
+
 # copy Git configs and templates
 ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
 ln -sfv "$DOTFILESDIR/gitignore" "$HOME/.gitignore"
