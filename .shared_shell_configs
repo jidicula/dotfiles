@@ -153,3 +153,5 @@ fi
 
 export PSES_BUNDLE_PATH="$HOME/.pses"
 export SESSION_TEMP_PATH="$HOME/.pses/session"
+
+export PATH="$PATH:bin"
