@@ -242,6 +242,16 @@ There are two things you can do about this warning:
   (sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-brace-mode))
   )
 
+;; browse-at-remote
+(use-package browse-at-remote
+  :straight t
+  :defer 2
+  :bind
+  (:map global-map
+		("C-c g g" browse-at-remote)
+		)
+  )
+
 ;; treemacs
 (use-package treemacs
   :straight t
