@@ -840,6 +840,9 @@ There are two things you can do about this warning:
 ;; Use SSH as default tramp method
 (setq tramp-default-method "ssh")
 
+;; Disable tramp's default ControlMaster settings
+(setq tramp-ssh-controlmaster-options "")
+
 ;; set option key as Meta
 (setq mac-option-modifier 'meta)
 
