@@ -938,6 +938,7 @@ then enter the text in that file's own buffer.")
 (global-set-key (kbd "M-<kp-delete>") 'kill-word)
 (global-set-key (kbd "C-x C-b") 'ibuffer)
 
+;; Incremental file-opening
 (ido-mode 1)
 
 ;; Word count
