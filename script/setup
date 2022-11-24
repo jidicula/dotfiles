@@ -27,6 +27,10 @@ if [[ $OSTYPE == darwin* ]]; then
 	script/touchid-sudo.sh || exit
 fi
 
+# SSH settings
+mkdir -p ~/.ssh/sockets
+ln -sfv "$DOTFILESDIR/ssh_config" "$HOME/.ssh/config"
+
 HOSTNAME="$1"
 DOTFILESDIR="$(pwd -P)"
 
