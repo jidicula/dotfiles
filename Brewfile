@@ -67,6 +67,7 @@ brew "make"
 brew "markdown"
 brew "mermaid-cli"
 brew "mitmproxy"
+brew "moreutils"
 brew "zlib"
 brew "nethogs"
 brew "nghttp2" # HTTP/2 C Library
