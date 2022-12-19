@@ -120,6 +120,7 @@ if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]
 fi
 
 alias ls="ls --color=always"
+alias ec="emacsclient -c"
 
 if [[ $TERM == "dumb" ]]; then
 	unsetopt zle
