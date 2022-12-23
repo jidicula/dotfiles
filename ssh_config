@@ -3,3 +3,4 @@ Host *
 	ControlMaster auto
 	ControlPath ~/.ssh/sockets/%r@%h-%p
 	ControlPersist 600
+	ForwardAgent yes
