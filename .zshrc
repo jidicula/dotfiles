@@ -127,3 +127,6 @@ if [[ $TERM == "dumb" ]]; then
 	PS1='$ '
 	return
 fi
+
+test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh" || true
+
