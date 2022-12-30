@@ -843,6 +843,9 @@ There are two things you can do about this warning:
 ;; Disable tramp's default ControlMaster settings
 (setq tramp-ssh-controlmaster-options "")
 
+;; Use remote host's local path
+(add-to-list 'tramp-remote-path 'tramp-own-remote-path)
+
 ;; set option key as Meta
 (setq mac-option-modifier 'meta)
 
