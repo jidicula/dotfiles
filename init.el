@@ -380,6 +380,7 @@ There are two things you can do about this warning:
   :ensure-system-package gh
   :config
   (codespaces-setup)
+  (setq codespaces-default-directory "/workspaces")
   )
 
 (use-package eglot
