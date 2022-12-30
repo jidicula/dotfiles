@@ -9,7 +9,7 @@ if [[ $(arch) == "arm64" ]]; then
 	export ARCH="arm64"
 fi
 
-function dir() {
+function mkcd() {
 	mkdir -p -- "$1" &&
 		cd -P -- "$1"
 }
