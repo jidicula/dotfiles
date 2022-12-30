@@ -4,6 +4,7 @@ tap "homebrew/cask"
 tap "homebrew/cask-versions"
 tap "homebrew/cask-drivers"
 tap "homebrew/cask-fonts"
+tap "jakehilborn/jakehilborn"
 brew "cmake"
 brew "ghostscript"
 brew "unbound", restart_service: true
