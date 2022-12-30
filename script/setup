@@ -107,6 +107,7 @@ if ! [[ $CODESPACES ]]; then
 	ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
 	mkdir -p "$HOME/.emacs.d/transient"
 	ln -sfv "$DOTFILESDIR/transient/values.el" "$HOME/.emacs.d/transient/values.el"
+	echo "(load \"$HOME/.emacs.d/init.el\")" >>"$HOME/.emacs"
 	emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
 else
 	# Fix locale issue on Codespaces
