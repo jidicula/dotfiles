@@ -170,7 +170,6 @@ There are two things you can do about this warning:
 
 ;; set PATH using exec-path-from-shell package
 (use-package exec-path-from-shell
-  :if (memq window-system '(mac ns))
   :straight t
   :config
   (setq exec-path-from-shell-check-startup-files nil)
