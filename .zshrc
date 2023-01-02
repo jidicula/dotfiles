@@ -120,7 +120,11 @@ if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]
 fi
 
 alias ls="ls --color=always"
-alias ec="emacsclient -c"
+
+if [[ $OSTYPE == darwin* ]]; then
+	alias ec="emacsclient -c"
+	alias rsemacs="brew services restart emacs-plus@28"
+fi
 
 if [[ $TERM == "dumb" ]]; then
 	unsetopt zle
@@ -129,4 +133,3 @@ if [[ $TERM == "dumb" ]]; then
 fi
 
 test -e "${HOME}/.iterm2_shell_integration.zsh" && source "${HOME}/.iterm2_shell_integration.zsh" || true
-
