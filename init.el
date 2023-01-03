@@ -23,6 +23,20 @@
 ;; confirm before quitting
 (setq confirm-kill-emacs 'y-or-n-p)
 
+;; Confirm before closing frame in daemon mode.
+(defun ask-before-closing (&optional arg)
+  "Close frame ARG or buffer only if \`y\` was pressed."
+  (interactive)
+  (if (y-or-n-p (format "Are you sure you want to close this frame?"))
+		(save-buffers-kill-terminal)
+    (message "Canceled frame close")))
+
+(when (daemonp)
+  (global-set-key (kbd "C-x C-c") 'ask-before-closing)
+  (add-hook 'close-display-connection 'ask-before-closing)
+  (add-to-list 'delete-frame-functions 'ask-before-closing)
+  )
+
 ;; no welcome screen
 (setq inhibit-startup-screen t)
 
