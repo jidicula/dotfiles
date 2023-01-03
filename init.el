@@ -646,13 +646,13 @@ There are two things you can do about this warning:
 (add-hook 'c-mode-hook 'company-mode)
 ;; Mode-specific configs
 (add-hook 'c-mode-hook
-	  '(lambda ()
-	     ;; Bind format command to a key
-	     (local-set-key "\C-cf" 'clang-format-region)
-	     ;; C indentation style
-	     (c-set-style "linux")
-	     ;; newline in {} braces
-	     )
+	  (lambda ()
+	    ;; Bind format command to a key
+	    (local-set-key "\C-cf" 'clang-format-region)
+	    ;; C indentation style
+	    (c-set-style "linux")
+	    ;; newline in {} braces
+	    )
 	  )
 
 (defun my-open-block-brace-mode (id action context)
@@ -960,9 +960,9 @@ then enter the text in that file's own buffer.")
 (setq ess-use-company t)
 (setq ess-eldoc-show-on-symbol t)
 (add-hook 'ess-mode-hook
-	  '(lambda ()
-	     (setq company-mode t)
-	     )
+	  (lambda ()
+	    (setq company-mode t)
+	    )
 	  )
 
 ;; gdb settings
