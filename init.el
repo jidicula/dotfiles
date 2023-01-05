@@ -40,9 +40,6 @@
 ;; no welcome screen
 (setq inhibit-startup-screen t)
 
-;; Save state between sessions
-(desktop-save-mode 1)
-
 ;; no large file warning
 (setq large-file-warning-threshold nil)
 
@@ -410,6 +407,12 @@ There are two things you can do about this warning:
    (dockerfile-mode . eglot-ensure)
    (ruby-mode . eglot-ensure)
    )
+  :config
+  ;; (let* ((pses-bundle (getenv "PSES_BUNDLE_PATH"))
+  ;; 		 ))
+  ;; (add-to-list 'eglot-server-programs
+  ;; 			   `(powershell-mode
+  ;; 				 . ("pwsh" "-NoLogo" "-NoProfile" "-Command" "$PSES_BUNDLE_PATH/PowerShellEditorServices/Start-EditorServices.ps1 -BundledModulesPath $PSES_BUNDLE_PATH -LogPath $SESSION_TEMP_PATH/logs.log -SessionDetailsPath $SESSION_TEMP_PATH/session.json -FeatureFlags @() -AdditionalModules @() -HostName 'My Client' -HostProfileId 'myclient' -HostVersion 1.0.0 -Stdio -LogLevel Normal")))
   )
 
 (use-package eldoc-box
