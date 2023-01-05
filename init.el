@@ -40,6 +40,9 @@
 ;; no welcome screen
 (setq inhibit-startup-screen t)
 
+;; Save state between sessions
+(desktop-save-mode 1)
+
 ;; no large file warning
 (setq large-file-warning-threshold nil)
 
