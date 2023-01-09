@@ -11,3 +11,5 @@ if [[ $TERM == "dumb" ]]; then
 	echo "halting source"
 	return
 fi
+
+source ~/.iterm2_shell_integration.bash
