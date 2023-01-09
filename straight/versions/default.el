@@ -12,7 +12,7 @@
  ("company-mode" . "6884e3ad717419b4a64a5fab08c8cb9bd20a0b27")
  ("company-quickhelp" . "9505fb09d064581da142d75c139d48b5cf695bd5")
  ("compat" . "7ca7d300d1d256f674f83932d2918d8e70cd28f6")
- ("copilot.el" . "264a7fefa6436f02ad5fe5d54b4c790050f317c4")
+ ("copilot.el" . "05ffaddc5025d0d4e2424213f4989fc1a636ee31")
  ("csharp-mode" . "02c61c219b2c22491eff9b7315fed661fab423d4")
  ("dash.el" . "3df46d7d9fe74f52a661565888e4d31fd760f0df")
  ("datetime" . "2951fc53ebf9a2037c5479519585a1afd3286269")
@@ -57,6 +57,7 @@
  ("markdown-mode" . "d95107f5b77d6c010e89259e05adfcd79a21f26a")
  ("melpa" . "5d8c2c6662dc3cd0140bc039a1dca9c3e38673f4")
  ("multiple-cursors.el" . "fe0d5167459b792a699af782685582a195852cb9")
+ ("nongnu-elpa" . "385623dca63f5070bedde954bc4511497cfcaee0")
  ("persp-mode.el" . "67be9feeb02613ea97f0de9eb5b792b193f073bc")
  ("pfuture" . "19b53aebbc0f2da31de6326c495038901bffb73c")
  ("pkg-info" . "76ba7415480687d05a4353b27fea2ae02b8d9d61")
@@ -86,4 +87,4 @@
  ("yaml.el" . "73fde9d8fbbaf2596449285df9eb412ae9dd74d9")
  ("yasnippet" . "5cbdbf0d2015540c59ed8ee0fcf4788effdf75b6")
  ("yasnippet-snippets" . "cd665c9cba4bab646f6d50ac098bee63573a4ca5"))
-:beta
+:gamma
