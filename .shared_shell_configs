@@ -33,6 +33,8 @@ export DOTFILESDIR="$HOME/dotfiles"
 if [[ $CODESPACES ]]; then
 	export DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
 	eval "$ENV_VARS"
+	# Prepend codespaces devcontainer PATH to PATH.
+	PATH="$(jq -r '.remoteEnv.PATH' /workspaces/.codespaces/.persistedshare/repo_devcontainer_valid.json):$PATH"
 fi
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1

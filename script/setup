@@ -77,6 +77,8 @@ if [[ $CODESPACES ]]; then
 	fi
 	brew bundle install --no-lock --file codespaces_Brewfile
 	BREW_STATUS="$?"
+
+	json5 /workspaces/.codespaces/.persistedshare/repo_devcontainer.json -o /workspaces/.codespaces/.persistedshare/repo_devcontainer_valid.json
 else
 	# Install Brew on macOS
 	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
