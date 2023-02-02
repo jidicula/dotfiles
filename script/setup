@@ -56,7 +56,6 @@ curl https://github.com/web-flow.gpg | gpg --import
 
 # Correct permissions on .gnupg dir
 chown -R "$(whoami)" "$HOME/.gnupg/"
-chmod 600 "$HOME/.gnupg/*"
 chmod 700 "$HOME/.gnupg"
 
 # copy Git configs and templates
@@ -78,7 +77,7 @@ if [[ $CODESPACES ]]; then
 	brew bundle install --no-lock --file codespaces_Brewfile
 	BREW_STATUS="$?"
 
-	json5 /workspaces/.codespaces/.persistedshare/repo_devcontainer.json -o /workspaces/.codespaces/.persistedshare/repo_devcontainer_valid.json
+	/home/linuxbrew/.linuxbrew/bin/json5 /workspaces/.codespaces/.persistedshare/repo_devcontainer.json -o /workspaces/.codespaces/.persistedshare/repo_devcontainer_valid.json
 else
 	# Install Brew on macOS
 	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
