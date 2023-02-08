@@ -74,16 +74,18 @@ if [[ $CODESPACES ]]; then
 		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 	fi
+	# Install Codespace Homebrew packages
 	brew bundle install --no-lock --file codespaces_Brewfile
 	BREW_STATUS="$?"
 
-	/home/linuxbrew/.linuxbrew/bin/json5 /workspaces/.codespaces/.persistedshare/repo_devcontainer.json -o /workspaces/.codespaces/.persistedshare/repo_devcontainer_valid.json
 else
-	# Install Brew on macOS
+	# Install Brew if not in Codespace
 	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 	brew bundle install --no-lock --file macos_Brewfile
 	BREW_STATUS="$?"
 fi
+
+# Install common Homebrew packages
 brew bundle install --no-lock
 BREW_STATUS=$(($? + BREW_STATUS))
 
@@ -113,6 +115,8 @@ if ! [[ $CODESPACES ]]; then
 else
 	# Fix locale issue on Codespaces
 	sudo find /etc -type f -exec sed -i 's/C.UTF-8/en_US.UTF-8/g' {} \;
+	# Convert Codespace devcontainer.json into valid JSON
+	/home/linuxbrew/.linuxbrew/bin/json5 /workspaces/.codespaces/.persistedshare/repo_devcontainer.json -o /workspaces/.codespaces/.persistedshare/repo_devcontainer_valid.json
 fi
 
 if [[ $OSTYPE == darwin* ]]; then
