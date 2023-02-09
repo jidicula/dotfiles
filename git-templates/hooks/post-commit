@@ -2,9 +2,9 @@
 
 # Copy last commit hash to clipboard on commit
 if [[ "$OSTYPE" == darwin* ]]; then
-	git log -1 --format=format:%h | pbcopy
+	git log -1 --format=format:%H | pbcopy
 elif [[ -n "$WSL_DISTRO_NAME" ]]; then
-	git log -1 --format=format:%h
+	git log -1 --format=format:%H
 fi
 
 # Add other post-commit hooks
