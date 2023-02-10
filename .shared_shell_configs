@@ -138,6 +138,7 @@ export STARSHIP_CONFIG="$HOME/.starship.toml"
 alias cdr='cd $(git rev-parse --show-toplevel)'
 alias gcce="gcc -Wextra -Wpedantic"
 alias cs="gh codespace ssh"
+alias csc="gh codespace code"
 alias old='cd $OLDPWD'
 
 if [[ $OSTYPE == darwin* ]]; then
