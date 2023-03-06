@@ -147,12 +147,9 @@ if [[ $OSTYPE == darwin* ]]; then
 	source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
 fi
 
-# Prepend brew-installed libraries to LIBRARY_PATH
-if [[ $ARCH == "arm64" ]]; then
-	export LIBRARY_PATH="/opt/homebrew/lib"
-else
-	export LIBRARY_PATH="/usr/local/lib"
-fi
+# Prepend brew-installed libraries and includes
+export LIBRARY_PATH="$HOMEBREW_PREFIX/lib"
+CPATH="$CPATH:$HOMEBREW_PREFIX/include"
 
 export PSES_BUNDLE_PATH="$HOME/.pses"
 export SESSION_TEMP_PATH="$HOME/.pses/session"
