@@ -80,7 +80,7 @@ export PATH="$HOMEBREW_PREFIX/opt/gnu-tar/libexec/gnubin:$PATH"
 export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 
 # Brew curl first in path
-export PATH="/opt/homebrew/opt/curl/bin:$PATH"
+export PATH="$HOMEBREW_PREFIX/opt/curl/bin:$PATH"
 
 function notify {
 	local msg
