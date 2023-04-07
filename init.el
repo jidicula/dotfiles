@@ -396,10 +396,17 @@ There are two things you can do about this warning:
   (setq codespaces-default-directory "/workspaces")
   )
 
+(defun my-eglot-organize-imports ()
+  "Add an organizeImports code action to eglot."
+  (interactive)
+  (eglot-code-actions nil nil "source.organizeImports" t))
+
 (use-package eglot
   :straight t
   :hook
-  ((go-mode . eglot-ensure)
+  ((before-save . my-eglot-organize-imports)
+   (before-save . eglot-format-buffer)
+   (go-mode . eglot-ensure)
    (python-mode . eglot-ensure)
    (shell-mode . eglot-ensure)
    (powershell-mode . eglot-ensure)
