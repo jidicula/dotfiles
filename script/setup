@@ -116,6 +116,7 @@ else
 	# Fix locale issue on Codespaces
 	sudo find /etc -type f -exec sed -i 's/C.UTF-8/en_US.UTF-8/g' {} \;
 	# Convert Codespace devcontainer.json into valid JSON
+	touch /workspaces/.codespaces/.persistedshare/repo_devcontainer.json
 	/home/linuxbrew/.linuxbrew/bin/json5 /workspaces/.codespaces/.persistedshare/repo_devcontainer.json -o /workspaces/.codespaces/.persistedshare/repo_devcontainer_valid.json
 fi
 
