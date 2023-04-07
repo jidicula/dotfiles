@@ -666,6 +666,7 @@ There are two things you can do about this warning:
   :straight t
   )
 (defun clang-format-on-save ()
+  "Format buffer with clang-format on save."
   (add-hook 'before-save-hook #'clang-format-buffer nil 'local))
 (add-hook 'c++-mode-hook 'clang-format-on-save)
 (add-hook 'c-mode-hook 'clang-format-on-save)
@@ -683,7 +684,7 @@ There are two things you can do about this warning:
 	  )
 
 (defun my-open-block-brace-mode (id action context)
-;; newline after a brace and position point
+  "Add newline after a brace and position point.  ARG ID, ARG ACTION, and ARG CONTEXT are needed for this function to be used by smartparens."
   (when (eq action 'insert)
     (newline)
     (newline)
@@ -972,7 +973,7 @@ then enter the text in that file's own buffer.")
 (ido-mode 1)
 
 ;; Word count
-(defun wc () (interactive) (shell-command (concat "wc " buffer-file-name)))
+(defun wc () "Return a word count of the current buffer." (interactive) (shell-command (concat "wc " buffer-file-name)))
 (global-set-key "\C-cw" 'wc)
 
 
