@@ -154,7 +154,7 @@ fi
 
 # Install Poetry
 curl -sSL https://install.python-poetry.org | python3 -
-script/poetry_setup.sh
+script/poetry-setup
 POETRY_CONFIG_PATH="$HOME/.config/pypoetry"
 if [[ $OSTYPE == darwin* ]]; then
 	POETRY_CONFIG_PATH="$HOME/Library/Preferences/pypoetry"

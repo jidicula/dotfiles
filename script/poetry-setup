@@ -1,5 +1,8 @@
 #!/usr/bin/env zsh
 
+ZSH="$HOME/.oh-my-zsh"
+ZSH_CUSTOM="$ZSH/custom"
+
 source "$ZSH/oh-my-zsh.sh"
 mkdir -p "$ZSH_CUSTOM/plugins/poetry"
 poetry completions zsh >"$ZSH_CUSTOM/plugins/poetry/_poetry"
