@@ -34,7 +34,6 @@ format = "[$hostname]($style)"
 [cmd_duration]
 style = "yellow"
 format = "[$duration]($style) "
-show_notifications = true
 
 [time]
 style = "purple"
