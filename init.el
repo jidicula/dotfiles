@@ -135,6 +135,13 @@ There are two things you can do about this warning:
   (save-place-mode)
   )
 
+(desktop-save-mode 1)
+;; desktop+ for enhancing desktop-save-mode
+(use-package desktop+
+  :straight (:host github :repo "ffevotte/desktop-plus" :files ("*.el"))
+  )
+
+
 ;; auto-revert buffer if changed outside
 (use-package autorevert
   :defer 1
