@@ -904,12 +904,12 @@ then enter the text in that file's own buffer.")
 ;; set window size
 (setq initial-frame-alist
       '(
-	(width . 84) (height . 500)
+	(width . 84) (height . 60)
 	)
       )
 (setq default-frame-alist
       '(
-	(width . 84) (height . 500)
+	(width . 84) (height . 60)
 	)
       )
 
