@@ -136,6 +136,7 @@ There are two things you can do about this warning:
   )
 
 (desktop-save-mode 1)
+(setq desktop-path '("." "~/.emacs.d/" "~"))
 ;; desktop+ for enhancing desktop-save-mode
 (use-package desktop+
   :straight (:host github :repo "ffevotte/desktop-plus" :files ("*.el"))
@@ -887,9 +888,6 @@ There are two things you can do about this warning:
 
 ;; No scrollbars!
 (scroll-bar-mode -1)
-
-;; set init default directory
-(setq default-directory "~/")
 
 ;; set scratch buffer mode to Markdown mode
 (setq initial-major-mode 'markdown-mode)

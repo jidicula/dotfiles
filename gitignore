@@ -1,6 +1,11 @@
-*~
+# System
 .DS_Store
+
+# Emacs
+*~
 .dir-locals.el
+.emacs.desktop*
+.emacs-buffers
 
 # Python
 .python-version
