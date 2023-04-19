@@ -136,7 +136,7 @@ There are two things you can do about this warning:
   )
 
 (desktop-save-mode 1)
-(setq desktop-path '("." "~/.emacs.d/" "~"))
+(setq desktop-path '("."))
 ;; desktop+ for enhancing desktop-save-mode
 (use-package desktop+
   :straight (:host github :repo "ffevotte/desktop-plus" :files ("*.el"))
