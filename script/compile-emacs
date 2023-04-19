@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+emacs --batch --eval '(byte-recompile-directory "~/.emacs.d/elpa")'
+
+# No need to compile straight repos because straight already takes care of compilation
