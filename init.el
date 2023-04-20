@@ -501,9 +501,15 @@ There are two things you can do about this warning:
 (setq pyvenv-mode nil)
 ;; end Python configs
 
+(use-package docker
+  :ensure t
+  :delight ""
+  :bind ("C-c d" . docker))
+
 ;; dockerfile-mode
 (use-package dockerfile-mode
   :straight t
+  :delight ""
   :mode "Dockerfile")
 
 ;; go-mode
