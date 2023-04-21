@@ -81,11 +81,7 @@ There are two things you can do about this warning:
 2. Remove this warning from your init file so you won't see it again."))
 
   ;; Use MELPA archive
-  (add-to-list 'package-archives (cons
-				  "melpa"
-				  (concat proto "://melpa.org/packages/")
-				  )
-	       t)
+  (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 
   (when (< emacs-major-version 24)
     ;; For important compatibility libraries like cl-lib
