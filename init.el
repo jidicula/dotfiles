@@ -904,16 +904,14 @@ then enter the text in that file's own buffer.")
 	  )
 
 ;; set window size
+;; 25 is the height of the menu bar in pixels.
+(defvar frame-height (/ (- (x-display-pixel-height) 25)
+						(frame-char-height)))
+
 (setq initial-frame-alist
-      '(
-	(width . 84) (height . 60)
-	)
-      )
+      `((width . 84) (height . ,frame-height)))
 (setq default-frame-alist
-      '(
-	(width . 84) (height . 60)
-	)
-      )
+      `((width . 84) (height . ,frame-height)))
 
 ;; converting region to lowercase
 (put 'downcase-region 'disabled nil)
