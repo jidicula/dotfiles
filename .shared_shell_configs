@@ -138,6 +138,7 @@ alias gcce="gcc -Wextra -Wpedantic"
 alias cs="gh codespace ssh"
 alias csc="gh codespace code"
 alias old='cd $OLDPWD'
+alias edp='rm .emacs-buffers & rm .emacs.desktop'
 
 if [[ $OSTYPE == darwin* ]]; then
 	# GCloud
