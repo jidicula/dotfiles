@@ -498,6 +498,7 @@ There are two things you can do about this warning:
 ;; end Python configs
 
 (use-package docker
+  :straight t
   :ensure t
   :delight ""
   :bind ("C-c d" . docker))
@@ -517,6 +518,7 @@ There are two things you can do about this warning:
   )
 
 (use-package ruby-mode
+  :straight t
   :delight " "
   :ensure-system-package (solargraph . "gem install solargraph")
   :mode ("\\Brewfile\\'")
