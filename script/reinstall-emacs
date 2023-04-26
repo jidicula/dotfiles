@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+brew uninstall emacs-plus
+rg "emacs-plus/emacs-plus" macos_Brewfile | brew bundle install --no-lock --file -
