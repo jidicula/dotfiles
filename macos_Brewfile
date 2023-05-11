@@ -51,7 +51,6 @@ brew "d12frosted/emacs-plus/emacs-plus@28", args: ["verbose", "with-elrumo2-icon
 cask "adobe-acrobat-reader"
 cask "balenaetcher"
 cask "beekeeper-studio"
-cask "cloudflare-warp"
 cask "discord-canary"
 cask "docker"
 cask "dotnet-sdk"
