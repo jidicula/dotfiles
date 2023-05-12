@@ -388,13 +388,19 @@ There are two things you can do about this warning:
               )
   )
 
+(use-package kusto-mode
+  :after company
+  :straight (:host github :repo "ration/kusto-mode.el" :files ("*.el"))
+  :mode ("\\.csl\\'" "\\.kql\\'")
+  )
+
 (use-package logview
   :straight t
   :delight "🪵"
   )
 
 (use-package codespaces
-  :straight (:host github :repo "patrickt/codespaces.el" :files ("dist" "*.el"))
+  :straight (:host github :repo "patrickt/codespaces.el" :files ("*.el"))
   :ensure-system-package gh
   :config
   (codespaces-setup)
