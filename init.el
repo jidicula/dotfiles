@@ -468,6 +468,11 @@ There are two things you can do about this warning:
   :delight ""
   )
 
+(use-package elsa
+  :straight (:host github :repo "emacs-elsa/elsa" :files ("*.el"))
+  :delight "❄"
+)
+
 (use-package prog-mode
   :delight typescript-mode ""
   :delight js-mode ""
