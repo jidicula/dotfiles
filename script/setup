@@ -153,14 +153,16 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 # Install Poetry
-curl -sSL https://install.python-poetry.org | python3 -
-script/poetry-setup
-POETRY_CONFIG_PATH="$HOME/.config/pypoetry"
 if [[ $OSTYPE == darwin* ]]; then
-	POETRY_CONFIG_PATH="$HOME/Library/Preferences/pypoetry"
+	curl -sSL https://install.python-poetry.org | python3 -
+	script/poetry-setup
+	POETRY_CONFIG_PATH="$HOME/.config/pypoetry"
+	if [[ $OSTYPE == darwin* ]]; then
+		POETRY_CONFIG_PATH="$HOME/Library/Preferences/pypoetry"
+	fi
+	mkdir -p "$POETRY_CONFIG_PATH"
+	ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
 fi
-mkdir -p "$POETRY_CONFIG_PATH"
-ln -sfv "$DOTFILESDIR/config.toml" "$POETRY_CONFIG_PATH/config.toml"
 
 # Install go tools
 mkdir -p "$HOME/go"
