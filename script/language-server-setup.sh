@@ -10,6 +10,8 @@ go install golang.org/x/tools/gopls@latest
 if [[ $OSTYPE == darwin* ]]; then
 	"$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
 fi
+mkdir "$HOME/.omnisharp"
+ln -sfv "$DOTFILESDIR/omnisharp.json" "$HOME/.omnisharp/omnisharp.json"
 
 # Install python LSP
 npm install --global pyright

@@ -1,0 +1,10 @@
+{
+  "RoslynExtensionsOptions": {
+    "enableDecompilationSupport": true,
+    "enableAnalyzersSupport": true,
+    "enableImportCompletion": true,
+    "enableAsyncCompletion": true,
+    "documentAnalysisTimeoutMs": 200000
+  }
+}
+
