@@ -388,6 +388,12 @@ There are two things you can do about this warning:
               )
   )
 
+(use-package breadcrumb-mode
+  :straight (:host github :repo "joaotavora/breadcrumb" :files ("*.el"))
+  :hook
+  (prog-mode . breadcrumb-mode)
+  )
+
 (use-package kusto-mode
   :after company
   :straight (:host github :repo "ration/kusto-mode.el" :files ("*.el"))
