@@ -132,6 +132,9 @@ alias gl="golangci-lint run"
 # Starship configs
 export STARSHIP_CONFIG="$HOME/.starship.toml"
 
+# ripgrep configs
+RIPGREP_CONFIG_PATH="$HOME/.ripgreprc"
+
 # Aliases
 alias cdr='cd $(git rev-parse --show-toplevel)'
 alias gcce="gcc -Wextra -Wpedantic"

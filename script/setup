@@ -136,6 +136,7 @@ ln -sfv "$DOTFILESDIR/.shared_shell_configs" "$HOME/.shared_shell_configs"
 ln -sfv "$DOTFILESDIR/starship.toml" "$HOME/.starship.toml"
 mkdir -p "$HOME/.config/powershell"
 ln -sfv "$DOTFILESDIR/profile.ps1" "$HOME/.config/powershell/profile.ps1"
+ln -sfv "$DOTFILESDIR/ripgreprc" "$HOME/.ripgreprc"
 
 if [[ -e "$HOME/.shared_shell_configs" ]]; then
 	source "$HOME/.shared_shell_configs"

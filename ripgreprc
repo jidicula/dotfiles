@@ -1,0 +1,8 @@
+# search hidden files
+--hidden
+
+# don't search .git
+--glob=!.git/*
+
+# Use PCRE2
+--pcre2
