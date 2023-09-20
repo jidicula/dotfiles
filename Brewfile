@@ -72,6 +72,7 @@ brew "nmap"
 brew "node-build"
 brew "nodenv", args: ["HEAD"]
 brew "pandoc"
+brew "pidof"
 brew "pigz"
 brew "pre-commit"
 brew "pv" # pipe viewer
