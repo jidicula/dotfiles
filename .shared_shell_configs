@@ -133,7 +133,7 @@ alias gl="golangci-lint run"
 export STARSHIP_CONFIG="$HOME/.starship.toml"
 
 # ripgrep configs
-RIPGREP_CONFIG_PATH="$HOME/.ripgreprc"
+export RIPGREP_CONFIG_PATH="$HOME/.ripgreprc"
 
 # Aliases
 alias cdr='cd $(git rev-parse --show-toplevel)'
