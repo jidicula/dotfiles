@@ -724,6 +724,7 @@ There are two things you can do about this warning:
   (rg-enable-menu)
   :config
   (setq rg-default-alias-fallback "everything")
+  (setq rg-ignore-ripgreprc nil)
   )
 
 ;; dumb-jump
