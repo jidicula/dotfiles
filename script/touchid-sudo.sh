@@ -4,18 +4,16 @@
 
 if ls /usr/lib/pam/pam_tid.so*; then
 	echo "Configuring sudo authentication using TouchID:"
-	PAM_FILE="/etc/pam.d/sudo"
-	FIRST_LINE="# sudo: auth account password session"
-	if grep -q pam_tid.so "$PAM_FILE"; then
-		echo "Already configured! No-op exiting."
-	elif ! head -n1 "$PAM_FILE" | grep -q "$FIRST_LINE"; then
-		echo "$PAM_FILE is not in the expected format!"
+	PAM_LOCAL_FILE="/etc/pam.d/sudo_local"
+	TOUCHID_LINE="auth       sufficient     pam_tid.so"
+	sudo cp "$PAM_LOCAL_FILE.template" "$PAM_LOCAL_FILE"
+	if ! sed -n '3p' "$PAM_LOCAL_FILE" | grep -q "${TOUCHID_LINE}"; then
+		echo "$PAM_LOCAL_FILE is not in the expected format!"
 	else
-		TOUCHID_LINE="auth       sufficient     pam_tid.so"
 		sudo sed -i .bak -e \
-			"s/$FIRST_LINE/$FIRST_LINE\n$TOUCHID_LINE/" \
-			"$PAM_FILE"
-		sudo rm "$PAM_FILE.bak"
+			"s/# $TOUCHID_LINE/$TOUCHID_LINE/" \
+			"$PAM_LOCAL_FILE"
+		sudo rm "$PAM_LOCAL_FILE.bak"
 		echo "TouchID sudo configuration complete."
 	fi
 fi
