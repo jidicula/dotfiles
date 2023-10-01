@@ -119,7 +119,8 @@ if [[ $OSTYPE == darwin* && -e "$HOME/Documents/dev_env/dotfiles/.zsh_aliases" ]
 	source "$HOME/Documents/dev_env/dotfiles/.zsh_aliases"
 fi
 
-alias ls="ls --color=always"
+# Not in shared_shell_configs because it's getting overridden by oh-my-zsh
+alias ls="ls --color=always -N"
 
 if [[ $OSTYPE == darwin* ]]; then
 	alias ec="emacsclient -c"

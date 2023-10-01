@@ -5,7 +5,9 @@ if [[ $OSTYPE == darwin* || $CODESPACES ]]; then
 fi
 
 eval "$(starship init bash)"
-alias ls="ls --color=always"
+
+# Not in shared_shell_configs because it's getting overridden by oh-my-zsh
+alias ls="ls --color=always -N"
 
 if [[ $TERM == "dumb" ]]; then
 	echo "halting source"
