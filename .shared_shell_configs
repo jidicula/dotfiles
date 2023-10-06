@@ -1,9 +1,5 @@
 # Preferred editor for local and remote sessions
-if [[ -z $SSH_CONNECTION ]]; then
-	export EDITOR="$HOME/Applications/Emacs.app/Contents/MacOS/Emacs"
-else
-	export EDITOR="/usr/bin/env emacs"
-fi
+export EDITOR="/usr/bin/env emacs"
 
 if [[ $(arch) == "arm64" ]]; then
 	export ARCH="arm64"
