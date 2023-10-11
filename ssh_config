@@ -1,6 +1,6 @@
 Host *
 	IdentityAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
 	ControlMaster auto
-	ControlPath ~/.ssh/sockets/%r@%h-%p
+	ControlPath ~/.ssh/sockets/%C
 	ControlPersist 600
 	ForwardAgent yes
