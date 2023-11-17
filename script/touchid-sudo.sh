@@ -27,7 +27,7 @@ if ls /usr/lib/pam/pam_tid.so*; then
 			echo "$PAM_LOCAL_FILE is not in the expected format!"
 		else
 			sudo sed -i .bak -e \
-				"s/# $TOUCHID_LINE/$TOUCHID_LINE/" \
+				"s/#$TOUCHID_LINE/$TOUCHID_LINE/" \
 				"$PAM_LOCAL_FILE"
 			sudo rm "$PAM_LOCAL_FILE.bak"
 			echo "TouchID sudo configuration complete."
