@@ -1,5 +1,6 @@
 Host *
 	IdentityAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
+	AddKeysToAgent yes
 	ControlMaster auto
 	ControlPath ~/.ssh/sockets/%C
 	ControlPersist 600
