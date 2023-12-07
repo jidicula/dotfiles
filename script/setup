@@ -17,10 +17,6 @@ if [[ $CODESPACES ]]; then
 	fi
 fi
 
-if [[ $(arch) == "arm64" ]]; then
-	ARCH="arm64"
-fi
-
 # Enable touchID sudo authentication
 if [[ $OSTYPE == darwin* ]]; then
 	chmod +x script/touchid-sudo.sh
