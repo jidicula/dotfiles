@@ -46,6 +46,9 @@
 ;; highlight trailing whitespace
 (whitespace-mode 1)
 
+;; spaces, not tabs by default
+(indent-tabs-mode -1)
+
 ;; 80-col ruler
 (setq-default fill-column 80)
 
@@ -448,8 +451,6 @@ There are two things you can do about this warning:
 (use-package powershell
   :straight t
   :delight " "
-  :hook
-  (powershell-mode . (lambda () (indent-tabs-mode -1)))
   )
 
 (use-package csharp-mode
@@ -527,6 +528,7 @@ There are two things you can do about this warning:
   :delight ""
   :hook
   (before-save . eglot-format)
+  (go-mode . (lambda () (indent-tabs-mode 1)))
   )
 
 (use-package ruby-mode
@@ -949,7 +951,11 @@ then enter the text in that file's own buffer.")
 ;; makefile-mode
 ;; always use GNU make mode in makefile mode
 (add-hook 'makefile-mode-hook
-	  'makefile-gmake-mode)
+		  'makefile-gmake-mode)
+(use-package makefile-mode
+  :hook
+  (makefile-mode . (lambda () (indent-tabs-mode 1)))
+  )
 
 ;; standard selection-highlighting behaviour
 (setq transient-mark-mode t)
