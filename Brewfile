@@ -43,8 +43,6 @@ brew "gnu-tar"
 brew "libgpg-error"
 brew "libgcrypt"
 brew "gnupg"
-brew "go"
-brew "golangci-lint"
 brew "node"
 brew "gsasl" # GNU Simple Authentication and Security Layer
 brew "gzip"
