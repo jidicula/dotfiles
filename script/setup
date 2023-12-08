@@ -8,17 +8,16 @@ while true; do
 done 2>/dev/null &
 
 if [[ $CODESPACES ]]; then
-	if [[ $CODESPACE_NAME == *no-dotfiles* ]]; then
-		echo "setup without dotfiles"
-		exit 0
-	fi
-
 	# Always want to use ZSH as my default shell (e.g. for SSH)
 	if ! grep -q "root.*/bin/zsh" /etc/passwd; then
 		sudo chsh -s /bin/zsh root
 		if ! sudo chsh -s /bin/zsh vscode; then
 			sudo chsh -s /bin/zsh codespace
 		fi
+	fi
+	if [[ $CODESPACE_NAME == *no-dotfiles* ]]; then
+		echo "setup without dotfiles"
+		exit 0
 	fi
 fi
 
