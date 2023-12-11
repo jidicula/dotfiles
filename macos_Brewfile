@@ -49,7 +49,7 @@ brew "smartmontools"
 brew "telnet"
 brew "vips"
 brew "webp"
-brew "youtube-dl"
+brew "yt-dlp"
 brew "jakehilborn/jakehilborn/displayplacer"
 brew "d12frosted/emacs-plus/emacs-plus@28", args: ["verbose", "with-elrumo2-icon", "with-imagemagick", "with-mailutils", "with-native-comp", "with-no-frame-refocus", "with-xwidgets"]
 cask "adobe-acrobat-reader"
