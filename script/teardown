@@ -2,7 +2,7 @@
 
 # Emacs Plus must be removed before reinstalling
 if [[ $OSTYPE == darwin* ]]; then
-	brew uninstall emacs-plus
+	brew uninstall emacs-plus@29
 fi
 
 # Clean up hardlinked dirs

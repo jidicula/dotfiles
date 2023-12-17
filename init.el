@@ -269,7 +269,7 @@ There are two things you can do about this warning:
   :defer 2
   :bind
   (:map global-map
-		("C-c g g" browse-at-remote)
+		("C-c r" . browse-at-remote)
 		)
   )
 
@@ -453,11 +453,6 @@ There are two things you can do about this warning:
   :delight " "
   )
 
-(use-package csharp-mode
-  :straight t
-  :delight ""
-  )
-
 (use-package css-mode
   :delight scss-mode ""
   :delight ""
@@ -480,7 +475,6 @@ There are two things you can do about this warning:
   :delight js-mode ""
   :hook
   (prog-mode . display-fill-column-indicator-mode)
-  (prog-mode . company-mode)
   )
 
 ;; python-black
@@ -770,6 +764,8 @@ There are two things you can do about this warning:
 (use-package company
   :straight t
   :delight "⏭"
+  :hook
+  (prog-mode . company-mode)
   :config
   ;; company-mode global settings
   ;; Show suggestions after entering one character.
@@ -964,10 +960,6 @@ then enter the text in that file's own buffer.")
 ;; always use GNU make mode in makefile mode
 (add-hook 'makefile-mode-hook
 		  'makefile-gmake-mode)
-(use-package makefile-mode
-  :hook
-  (makefile-mode . (lambda () (indent-tabs-mode 1)))
-  )
 
 ;; standard selection-highlighting behaviour
 (setq transient-mark-mode t)
@@ -1047,12 +1039,11 @@ then enter the text in that file's own buffer.")
 ;; mark custom theme as safe
 (setq custom-enabled-themes '(jidiculous-dark))
 (setq custom-safe-themes
-      '("7011ad67608e4ff9aa40db2c1ab063999cf68db507466d7d5cdbac6e8cd2c1ae"
-	"884b27b0905eb742baf6fdd013dfb28d01c59701e3ceaaa727a380c86309e206"
-	"8ab0d715ae6fbfc75c924a239697f91243fe487d96c8e3645453c43291b10364"
-	default
-	)
-      )
+      '("8cf6734a4a5dcad6837bd60773337af788686b167caf2465de01a1e231275388"
+		"7011ad67608e4ff9aa40db2c1ab063999cf68db507466d7d5cdbac6e8cd2c1ae"
+		"884b27b0905eb742baf6fdd013dfb28d01c59701e3ceaaa727a380c86309e206"
+		"8ab0d715ae6fbfc75c924a239697f91243fe487d96c8e3645453c43291b10364"
+		default))
 
 ;; set ansi color faces
 (setq ansi-color-faces-vector
