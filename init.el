@@ -893,14 +893,26 @@ There are two things you can do about this warning:
 ;; end of 3rd-party packages
 (put 'upcase-region 'disabled nil)
 
-;; Use SSH as default tramp method
+;; Use SSH as default Tramp method
 (setq tramp-default-method "ssh")
 
-;; Disable tramp's default ControlMaster settings
-(setq tramp-ssh-controlmaster-options "")
+;; Force Tramp to use ~/.ssh/config ControlMaster settings
+(setq tramp-use-ssh-controlmaster-options nil)
 
 ;; Use remote host's local path
 (add-to-list 'tramp-remote-path 'tramp-own-remote-path)
+
+;; Reduce verbosity to just errors
+(setq tramp-verbose 1)
+
+;; Disable remote file locks
+(setq remote-file-name-inhibit-locks t)
+
+;; Disable Tramp version control
+(setq vc-ignore-dir-regexp
+	  (format "\\(%s\\)\\|\\(%s\\)"
+			  vc-ignore-dir-regexp
+			  tramp-file-name-regexp))
 
 ;; set option key as Meta
 (setq mac-option-modifier 'meta)
