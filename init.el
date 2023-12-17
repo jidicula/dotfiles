@@ -199,7 +199,7 @@ There are two things you can do about this warning:
 
 ;; magit
 (use-package magit
-  :straight t
+  :straight (:host github :repo "magit/magit")
   :bind (("C-x g" . magit-status)
          ("C-x G" . magit-status-with-prefix)
 		 ("C-c g" . magit-file-dispatch))
@@ -227,7 +227,7 @@ There are two things you can do about this warning:
 
 ;; Interact with forges directly
 (use-package forge
-  :straight t
+  :straight t (:host github :repo "magit/forge")
   :after magit
   :defer 2
   )
@@ -240,7 +240,7 @@ There are two things you can do about this warning:
 
 ;; git-modes
 (use-package git-modes
-  :straight t
+  :straight (:host github :repo "magit/git-modes")
   )
 
 ;; which-key shows all available keybindings
