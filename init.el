@@ -999,6 +999,8 @@ then enter the text in that file's own buffer.")
 ;; other keybinds
 (global-set-key (kbd "M-<kp-delete>") 'kill-word)
 (global-set-key (kbd "C-x C-b") 'ibuffer)
+(global-set-key (kbd "M-?") 'dabbrev-expand)
+(global-set-key (kbd "M-/") 'xref-find-references)
 
 ;; Incremental file-opening
 (ido-mode 1)
