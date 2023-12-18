@@ -7,7 +7,7 @@ if [[ $OSTYPE == darwin* ]]; then
 	rm /usr/local/bin/aws* \
 		/usr/local/bin/go* \
 		/usr/local/bin/dotnet \
-		/usr/local/bin/docker-compose \
-		/usr/local/bin/kubectl \
-		/usr/local/bin/2to3
+		\
+		/usr/local/bin/2to3 # /usr/local/bin/docker-compose \
+	# /usr/local/bin/kubectl \
 fi
