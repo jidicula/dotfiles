@@ -124,7 +124,7 @@ alias ls="ls --color=always -N"
 
 if [[ $OSTYPE == darwin* ]]; then
 	alias ec="emacsclient -c"
-	alias rse="brew services restart emacs-plus@28"
+	alias rse="brew services restart emacs-plus@29"
 fi
 
 if [[ $TERM == "dumb" ]]; then
