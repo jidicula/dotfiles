@@ -6,6 +6,9 @@ npm install --global bash-language-server
 # Install gopls
 go install golang.org/x/tools/gopls@latest
 
+# Install Solargraph (Ruby)
+gem install solargraph
+
 # Install C# tools
 if [[ $OSTYPE == darwin* ]]; then
 	"$(brew --prefix)/bin/dotnet" tool install -g csharp-ls
