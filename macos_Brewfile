@@ -36,7 +36,7 @@ brew "pstoedit"
 brew "qscintilla2"
 brew "sundials"
 brew "octave", link: false
-brew "openjdk@11"
+brew "openjdk@17"
 brew "oras"
 brew "poppler"
 brew "pdf2svg"
