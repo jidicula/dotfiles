@@ -67,27 +67,25 @@ ln -sfv "$DOTFILESDIR/gitconfig-personal" "$HOME/.gitconfig-personal"
 ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
 
-# Install Homebrew packages
+# Install Homebrew
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 if [[ $CODESPACES ]]; then
-	# If Brew isn't installed in Codespace, install it
-	if ! [[ $(eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)") ]]; then
-		/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-	fi
-	# Install Codespace Homebrew packages
-	brew bundle install --no-lock --file codespaces_Brewfile
-	BREW_STATUS="$?"
-
-else
-	# Install Brew if not in Codespace
-	/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-	brew bundle install --no-lock --file macos_Brewfile
-	BREW_STATUS="$?"
+	eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 fi
 
 # Install common Homebrew packages
-brew bundle install --no-lock
-BREW_STATUS=$(($? + BREW_STATUS))
+brew bundle install --no-lock # TODO: maybe this needs to go before macOS deps
+BREW_STATUS="$?"
+
+if [[ $CODESPACES ]]; then
+	# Install Codespace Homebrew packages
+	brew bundle install --no-lock --file codespaces_Brewfile
+	BREW_STATUS="$(($? + BREW_STATUS))"
+else
+	# Install macOS Homebrew packages
+	brew bundle install --no-lock --file macos_Brewfile
+	BREW_STATUS="$(($? + BREW_STATUS))"
+fi
 
 if ! [[ $CODESPACES ]]; then
 	sudo apt-get update
