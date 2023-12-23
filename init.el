@@ -136,11 +136,11 @@ There are two things you can do about this warning:
 
 (desktop-save-mode 1)
 (setq desktop-path '("."))
+(setq desktop-files-not-to-save "^$")
 ;; desktop+ for enhancing desktop-save-mode
 (use-package desktop+
   :straight (:host github :repo "ffevotte/desktop-plus" :files ("*.el"))
   )
-
 
 ;; auto-revert buffer if changed outside
 (use-package autorevert
