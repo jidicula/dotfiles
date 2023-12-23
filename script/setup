@@ -89,14 +89,9 @@ fi
 brew bundle install --no-lock
 BREW_STATUS=$(($? + BREW_STATUS))
 
-if [[ $OSTYPE == darwin* ]]; then
-	# Set up launchdns
-	script/dns.sh || exit
-else
-	if ! [[ $CODESPACES ]]; then
-		sudo apt-get update
-		sudo apt-get install -y emacs
-	fi
+if ! [[ $CODESPACES ]]; then
+	sudo apt-get update
+	sudo apt-get install -y emacs
 fi
 
 if ! [[ $CODESPACES ]]; then
@@ -143,6 +138,11 @@ if [[ -e "$HOME/.shared_shell_configs" ]]; then
 fi
 
 if [[ $OSTYPE == darwin* ]]; then
+	# Set up launchdns
+	script/dns.sh || exit
+
+	# VS Code Insiders setup
+	ln -sfv "$HOMEBREW_PREFIX/bin/code" "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"
 	# Open Karabiner for the first time
 	open "/Applications/Karabiner-Elements.app" && sleep 60
 	killall "Karabiner-Elements"
