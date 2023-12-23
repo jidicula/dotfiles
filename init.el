@@ -428,7 +428,7 @@ There are two things you can do about this warning:
    (before-save . eglot-format-buffer)
    (go-mode . eglot-ensure)
    (python-mode . eglot-ensure)
-   (shell-mode . eglot-ensure)
+   (sh-mode . eglot-ensure)
    (powershell-mode . eglot-ensure)
    (yaml-mode . eglot-ensure)
    (dockerfile-mode . eglot-ensure)
