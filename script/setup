@@ -127,12 +127,12 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 # Set up shell configs
-ln -sfv "$DOTFILESDIR/.zshrc" "$HOME/.zshrc"
+ln -sfv "$DOTFILESDIR/zshrc" "$HOME/.zshrc"
 if [[ $CODESPACES ]]; then
-	ln -sfv "$DOTFILESDIR/.zlogin" "$HOME/.zlogin"
+	ln -sfv "$DOTFILESDIR/zlogin" "$HOME/.zlogin"
 fi
-ln -sfv "$DOTFILESDIR/.bashrc" "$HOME/.bashrc"
-ln -sfv "$DOTFILESDIR/.shared_shell_configs" "$HOME/.shared_shell_configs"
+ln -sfv "$DOTFILESDIR/bashrc" "$HOME/.bashrc"
+ln -sfv "$DOTFILESDIR/shared_shell_configs" "$HOME/.shared_shell_configs"
 ln -sfv "$DOTFILESDIR/starship.toml" "$HOME/.starship.toml"
 mkdir -p "$HOME/.config/powershell"
 ln -sfv "$DOTFILESDIR/profile.ps1" "$HOME/.config/powershell/profile.ps1"
