@@ -134,8 +134,6 @@ There are two things you can do about this warning:
   (save-place-mode)
   )
 
-(desktop-save-mode 1)
-(setq desktop-path '("."))
 (setq desktop-files-not-to-save "^$")
 ;; desktop+ for enhancing desktop-save-mode
 (use-package desktop+
