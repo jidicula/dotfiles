@@ -283,7 +283,7 @@ defaults -currentHost write com.apple.ImageCapture disableHotPlug -bool true
 #                                   Text input                                #
 ###############################################################################
 
-# Disable smart quotes as it's annoying for text that contain code
+# Disable smart quotes globally
 for d in $(defaults domains | tr -d ,); do
 	osascript -e "app id \"$d\"" &>/dev/null || continue
 	defaults write "$d" SmartQuotes -bool false
