@@ -887,6 +887,10 @@ There are two things you can do about this warning:
 ;; end of 3rd-party packages
 (put 'upcase-region 'disabled nil)
 
+(add-to-list 'tramp-connection-properties
+             (list (regexp-quote "/ghcs:")
+                   "direct-async-process" t))
+
 ;; Use SSH as default Tramp method
 (setq tramp-default-method "ssh")
 
