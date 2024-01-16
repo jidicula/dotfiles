@@ -1,6 +1,5 @@
 tap "derailed/k9s"
 tap "github/bootstrap"
-tap "github/gh"
 tap "homebrew/bundle"
 tap "homebrew/core"
 tap "homebrew/services"
