@@ -3,4 +3,5 @@
  (magit-log:magit-log-mode "-n256" "--graph" "--decorate" "--show-signature")
  (magit-pull "--rebase")
  (magit-push "--no-verify")
+ (magit-rebase "--update-refs" "--autostash")
  (magit-tag "--annotate"))
