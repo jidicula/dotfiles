@@ -12,10 +12,10 @@
                      gcs-done)))
 
 ;; increase gc-cons-threshold to 100 MB
-(setq gc-cons-threshold (* 100 1048576))
+(setq gc-cons-threshold (* 1000 1048576))
 
 ;; increase amount of data Emacs reads from process to 1 MB
-(setq read-process-output-max (* 1024 1024))
+(setq read-process-output-max (* 10 1048576))
 
 (message (format "%s" file-name-handler-alist))
 (setq file-name-handler-alist nil)
