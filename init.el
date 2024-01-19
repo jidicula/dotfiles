@@ -930,22 +930,25 @@ then enter the text in that file's own buffer.")
 	  'company-mode
 	  )
 
-;; set window size
-;; 25 is the height of the menu bar in pixels.
-(defvar frame-height (/ (- (x-display-pixel-height) 25)
-						(frame-char-height)))
-
-(setq initial-frame-alist
-      `((width . 84) (height . ,frame-height)))
-(setq default-frame-alist
-      `((width . 84) (height . ,frame-height)))
-
-;; converting region to lowercase
-(put 'downcase-region 'disabled nil)
-
 ;; use Common Lisp
 (require 'cl-lib)
 (eval-when-compile (require 'cl-lib))
+
+;; Window settings
+(when window-system
+  ;; set window size
+  ;; 25 is the height of the menu bar in pixels.
+  (defvar frame-height (/ (- (x-display-pixel-height) 25)
+						  (frame-char-height)))
+
+  (setq initial-frame-alist
+		`((width . 84) (height . ,frame-height)))
+  (setq default-frame-alist
+		`((width . 84) (height . ,frame-height)))
+  )
+
+;; converting region to lowercase
+(put 'downcase-region 'disabled nil)
 
 ;; Fancy titlebar for macOS
 (add-to-list 'default-frame-alist '(ns-transparent-titlebar . t))
