@@ -125,6 +125,11 @@ gtch() {
 }
 alias gl="golangci-lint run"
 
+# Emacs config
+edl() {
+	emacs --eval '(desktop+-load "'"$1"'")'
+}
+
 # Starship configs
 export STARSHIP_CONFIG="$HOME/.starship.toml"
 
