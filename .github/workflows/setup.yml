@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         os:
-          - 'macos-13'
+          - 'macos-14'
           - 'ubuntu-latest'
         amend-scratch:
           - 'amend'
