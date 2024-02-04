@@ -11,6 +11,7 @@
 [core]
 	excludesfile = ~/.gitignore
 	autocrlf = input
+	untrackedcache = true
 [github]
 	user = jidicula
 [merge]
