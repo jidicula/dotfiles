@@ -4,6 +4,7 @@ tap "homebrew/cask"
 tap "homebrew/cask-versions"
 tap "homebrew/cask-fonts"
 tap "jakehilborn/jakehilborn"
+brew "cask"
 brew "cowsay"
 brew "ghostscript"
 brew "unbound", restart_service: true
