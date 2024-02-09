@@ -92,19 +92,20 @@ if ! [[ $CODESPACES ]]; then
 	sudo apt-get install -y emacs
 fi
 
+# Set up Emacs config
+mkdir -p "$HOME/.emacs.d/straight"
+ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
+ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
+mkdir -p "$HOME/.emacs.d/transient"
+ln -sfv "$DOTFILESDIR/transient/values.el" "$HOME/.emacs.d/transient/values.el"
+echo "(load \"$HOME/.emacs.d/init.el\")" >>"$HOME/.emacs"
+emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
+
 if ! [[ $CODESPACES ]]; then
 
 	# Install Oh My Zsh
 	(sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
 
-	# Set up Emacs config
-	mkdir -p "$HOME/.emacs.d/straight"
-	ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
-	ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
-	mkdir -p "$HOME/.emacs.d/transient"
-	ln -sfv "$DOTFILESDIR/transient/values.el" "$HOME/.emacs.d/transient/values.el"
-	echo "(load \"$HOME/.emacs.d/init.el\")" >>"$HOME/.emacs"
-	emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
 else
 	# Fix locale issue on Codespaces
 	sudo find /etc -type f -exec sed -i 's/C.UTF-8/en_US.UTF-8/g' {} \;
