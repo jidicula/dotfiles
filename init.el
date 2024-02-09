@@ -60,14 +60,25 @@
 
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
+;; Wrapper function for terminal detection - wrap around a conditional for
+;; display-graphic-p.
+(defun terminal-detection-wrapper (func)
+  (add-hook 'after-make-frame-functions
+			(lambda (frame)
+			  (with-selected-frame frame
+				(func)))))
+
 ;; Useful for https://github.com/dunn/company-emoji
 ;; https://www.reddit.com/r/emacs/comments/8ph0hq/i_have_converted_from_the_mac_port_to_the_ns_port/
 ;; not tested with emacs26 (requires a patched Emacs version for multi-color font support)
-(if (version< "27.0" emacs-version)
-    (set-fontset-font
-     "fontset-default" 'unicode "Apple Color Emoji" nil 'prepend)
-  (set-fontset-font
-   t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend))
+(terminal-detection-wrapper
+			  (when (display-graphic-p)
+				(if (version< "27.0" emacs-version)
+					(set-fontset-font
+					 "fontset-default" 'unicode "Apple Color Emoji" nil 'prepend)
+				  (set-fontset-font
+				   t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend))))
+
 
 ;;; Code:
 ;; Adding MELPA to package archives
@@ -919,6 +930,11 @@ There are two things you can do about this warning:
 ;; No scrollbars!
 (scroll-bar-mode -1)
 
+;; No menubar with no GUI
+(terminal-detection-wrapper
+ (unless (display-graphic-p)
+				(menu-bar-mode -1)))
+
 ;; set scratch buffer mode to Markdown mode
 (setq initial-major-mode 'markdown-mode)
 (setq initial-scratch-message "\
@@ -936,7 +952,7 @@ then enter the text in that file's own buffer.")
 (eval-when-compile (require 'cl-lib))
 
 ;; Window settings
-(when window-system
+(when (display-graphic-p)
   ;; set window size
   ;; 25 is the height of the menu bar in pixels.
   (defvar frame-height (/ (- (x-display-pixel-height) 25)
