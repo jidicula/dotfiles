@@ -1,3 +1,5 @@
+[core]
+        untrackedcache = false
 [credential]
         helper = /.codespaces/bin/gitcredential_github.sh
 [gpg]
