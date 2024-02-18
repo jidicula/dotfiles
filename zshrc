@@ -79,10 +79,11 @@ fi
 # Set up ZSH syntax highlighting
 source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 
-# source zprofile in case any programs have added configs in there (e.g. FSL)
-touch "$HOME/.zprofile"
-# shellcheck source=/dev/null
-source "$HOME/.zprofile"
+if [[ -d "$HOME/.zprofile" ]]; then
+	# source zprofile in case any programs have added configs in there (e.g. FSL)
+	# shellcheck source=/dev/null
+	source "$HOME/.zprofile"
+fi
 
 eval "$(starship init zsh)"
 

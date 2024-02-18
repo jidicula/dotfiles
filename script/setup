@@ -122,9 +122,6 @@ fi
 
 # Set up shell configs
 ln -sfv "$DOTFILESDIR/zshrc" "$HOME/.zshrc"
-if [[ $CODESPACES ]]; then
-	ln -sfv "$DOTFILESDIR/zlogin" "$HOME/.zlogin"
-fi
 ln -sfv "$DOTFILESDIR/bashrc" "$HOME/.bashrc"
 ln -sfv "$DOTFILESDIR/shared_shell_configs" "$HOME/.shared_shell_configs"
 ln -sfv "$DOTFILESDIR/starship.toml" "$HOME/.starship.toml"
