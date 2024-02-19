@@ -99,6 +99,7 @@ plugins=(
 	poetry
 	golang
 	dotnet
+	nodenv
 )
 # shellcheck source=/dev/null
 source "$ZSH/oh-my-zsh.sh"
