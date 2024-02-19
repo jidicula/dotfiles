@@ -128,8 +128,16 @@ ln -sfv "$DOTFILESDIR/starship.toml" "$HOME/.starship.toml"
 mkdir -p "$HOME/.config/powershell"
 ln -sfv "$DOTFILESDIR/profile.ps1" "$HOME/.config/powershell/profile.ps1"
 ln -sfv "$DOTFILESDIR/ripgreprc" "$HOME/.ripgreprc"
+# shellcheck disable=SC2016
+echo '
+if { [ -z "$ZSH_VERSION" ] && [ -z "$BASH_VERSION" ]; } || [ -n "$INSIDE_EMACS" ]; then
+	. "$HOME/.shared_shell_configs"
+fi
+' >>"$HOME/.profile"
 
-source "$DOTFILESDIR/shared_shell_configs"
+if [[ -z $SHARED_SHELL_CONFIGS ]]; then
+	source "$DOTFILESDIR/shared_shell_configs"
+fi
 
 if [[ $OSTYPE == darwin* ]]; then
 	# Set up launchdns

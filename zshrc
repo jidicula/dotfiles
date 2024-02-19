@@ -73,17 +73,14 @@ DISABLE_UNTRACKED_FILES_DIRTY="true"
 # export LANG=en_US.UTF-8
 
 if [[ $OSTYPE == darwin* || $CODESPACES ]]; then
-	source "$HOME/.shared_shell_configs"
+	if [[ -z $SHARED_SHELL_CONFIGS ]]; then
+		source "$HOME/.shared_shell_configs"
+	fi
+
 fi
 
 # Set up ZSH syntax highlighting
 source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-
-if [[ -d "$HOME/.zprofile" ]]; then
-	# source zprofile in case any programs have added configs in there (e.g. FSL)
-	# shellcheck source=/dev/null
-	source "$HOME/.zprofile"
-fi
 
 eval "$(starship init zsh)"
 
@@ -129,6 +126,7 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 if [[ $TERM == "dumb" ]]; then
+	# Don't use the zsh line editor.
 	unsetopt zle
 	PS1='$ '
 	return

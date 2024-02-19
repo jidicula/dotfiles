@@ -1,21 +1,21 @@
 # Preferred editor for local and remote sessions
 export EDITOR="/usr/bin/env emacs"
 
-if [[ $(arch) == "arm64" ]]; then
+if [ "$(arch)" = "arm64" ]; then
 	export ARCH="arm64"
 fi
 
-function mkcd() {
+mkcd() {
 	mkdir -p -- "$1" &&
 		cd -P -- "$1"
 }
 
 # Homebrew shellenv
 
-if [[ $ARCH == "arm64" ]]; then
+if [ "$ARCH" = "arm64" ]; then
 	eval "$(/opt/homebrew/bin/brew shellenv)"
 else
-	if [[ $CODESPACES ]]; then
+	if [ "$CODESPACES" ]; then
 		eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 	else
 		eval "$(/usr/local/bin/brew shellenv)"
@@ -26,7 +26,7 @@ fi
 export PATH="$PATH:/usr/local/sbin"
 
 export DOTFILESDIR="$HOME/dotfiles"
-if [[ $CODESPACES ]]; then
+if [ "$CODESPACES" ]; then
 	export DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
 	eval "$ENV_VARS"
 fi
@@ -47,7 +47,7 @@ if command -v pyenv 1>/dev/null 2>&1; then
 	export ZSH_PYENV_VIRTUALENV=true
 fi
 
-if [[ $OSTYPE == darwin* ]]; then
+if [ "$(uname)" = "Darwin" ]; then
 	if command -v nodenv 1>/dev/null 2>&1; then
 		export NODENV_ROOT="$HOME/.nodenv"
 		export PATH="$NODENV_ROOT/bin:$PATH"
@@ -76,7 +76,7 @@ export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 # Brew curl first in path
 export PATH="$HOMEBREW_PREFIX/opt/curl/bin:$PATH"
 
-function notify {
+notify() {
 	local msg
 	local result
 	local curl_exit
@@ -89,7 +89,7 @@ function notify {
 		"$NOTIFICATION_URL")
 	curl_exit="$?"
 
-	if [[ $curl_exit -ne 0 || $result != 200 ]]; then
+	if [ "$curl_exit" -ne 0 ] || [ "$result" -ne 200 ]; then
 		echo -e "\aNotify curl failed with $curl_exit and HTTP $result." >&2
 		return 10
 	fi
@@ -144,7 +144,7 @@ alias csc="gh codespace code"
 alias old='cd $OLDPWD'
 alias edp='rm .emacs-buffers & rm .emacs.desktop'
 
-if [[ $OSTYPE == darwin* ]]; then
+if [ "$(uname)" = "Darwin" ]; then
 	# GCloud
 	export USE_GKE_GCLOUD_AUTH_PLUGIN=True
 	source "$HOMEBREW_PREFIX/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/path.zsh.inc"
@@ -158,3 +158,6 @@ export PSES_BUNDLE_PATH="$HOME/.pses"
 export SESSION_TEMP_PATH="$HOME/.pses/session"
 
 export PATH="$PATH:bin"
+
+SHARED_SHELL_CONFIGS="true"
+export SHARED_SHELL_CONFIGS

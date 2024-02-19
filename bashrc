@@ -1,7 +1,9 @@
 set -o pipefail
 
 if [[ $OSTYPE == darwin* || $CODESPACES ]]; then
-	source "$HOME/.shared_shell_configs"
+	if [[ -z $SHARED_SHELL_CONFIGS ]]; then
+		source "$HOME/.shared_shell_configs"
+	fi
 fi
 
 eval "$(starship init bash)"
