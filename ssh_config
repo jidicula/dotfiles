@@ -3,6 +3,6 @@ Host *
 	AddKeysToAgent yes
 	ControlMaster auto
 	ControlPath ~/.ssh/sockets/%C
-	ControlPersist 600
+	ControlPersist 10m
 	ForwardAgent yes
 	Compression yes
