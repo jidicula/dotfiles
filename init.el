@@ -119,6 +119,7 @@ There are two things you can do about this warning:
   (require 'use-package))
 
 ;; Keep auto-save/backup files separate from source code:  https://github.com/scalameta/metals/issues/1027
+;; Also applies for TRAMP backups
 (setq backup-directory-alist `((".*" . ,temporary-file-directory))
       auto-save-file-name-transforms `((".*" ,temporary-file-directory t)))
 
@@ -127,18 +128,44 @@ There are two things you can do about this warning:
   :hook (straight-vc-git-post-clone-hook . straight-freeze-versions)
   )
 
+(use-package tramp
+  :straight t
+  :config
+  (add-to-list 'tramp-connection-properties
+               (list (regexp-quote "/ghcs:")
+					 "direct-async-process" t))
+
+  (add-to-list 'tramp-connection-properties
+               (list (regexp-quote "/ghcs:")
+					 "copy-size-limit" (* 50 (* 1024))))
+
+  ;; Force to use ~/.ssh/config ControlMaster settings
+  (setq tramp-use-ssh-controlmaster-options nil)
+
+  ;; Use remote host's local path
+  (add-to-list 'tramp-remote-path 'tramp-own-remote-path)
+
+  ;; Inline transfer compression minimum
+  (setq tramp-inline-compress-start-size 128)
+
+  ;; Silence verbosity
+  (setq tramp-verbose 0)
+
+  ;; Disable remote file locks
+  (setq remote-file-name-inhibit-locks t)
+
+  ;; Disable version control
+  (setq vc-ignore-dir-regexp
+		(format "\\(%s\\)\\|\\(%s\\)"
+				vc-ignore-dir-regexp
+				tramp-file-name-regexp)))
+
 ;; return to last place in file
 (use-package saveplace
   :straight t
   :defer 1
   :config
   (save-place-mode)
-  )
-
-(setq desktop-files-not-to-save "^$")
-;; desktop+ for enhancing desktop-save-mode
-(use-package desktop+
-  :straight (:host github :repo "ffevotte/desktop-plus" :files ("*.el"))
   )
 
 ;; auto-revert buffer if changed outside
@@ -151,6 +178,12 @@ There are two things you can do about this warning:
   )
 
 ;; 3rd-party packages
+
+(setq desktop-files-not-to-save "^$")
+;; desktop+ for enhancing desktop-save-mode
+(use-package desktop+
+  :straight (:host github :repo "ffevotte/desktop-plus" :files ("*.el"))
+  )
 
 ;; Emacs startup profiler
 (use-package esup
@@ -888,31 +921,6 @@ There are two things you can do about this warning:
 
 ;; end of 3rd-party packages
 (put 'upcase-region 'disabled nil)
-
-(add-to-list 'tramp-connection-properties
-             (list (regexp-quote "/ghcs:")
-                   "direct-async-process" t))
-
-;; Use SSH as default Tramp method
-(setq tramp-default-method "ssh")
-
-;; Force Tramp to use ~/.ssh/config ControlMaster settings
-(setq tramp-use-ssh-controlmaster-options nil)
-
-;; Use remote host's local path
-(add-to-list 'tramp-remote-path 'tramp-own-remote-path)
-
-;; Reduce verbosity to just errors
-(setq tramp-verbose 1)
-
-;; Disable remote file locks
-(setq remote-file-name-inhibit-locks t)
-
-;; Disable Tramp version control
-(setq vc-ignore-dir-regexp
-	  (format "\\(%s\\)\\|\\(%s\\)"
-			  vc-ignore-dir-regexp
-			  tramp-file-name-regexp))
 
 ;; set option key as Meta
 (setq mac-option-modifier 'meta)
