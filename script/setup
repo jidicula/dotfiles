@@ -7,39 +7,8 @@ while true; do
 	kill -0 "$$" || exit
 done 2>/dev/null &
 
-if [[ $CODESPACES ]]; then
-	if [[ $CODESPACE_NAME == *no-dotfiles* ]]; then
-		echo "setup without dotfiles"
-		exit 0
-	fi
-	# Always want to use ZSH as my default shell (e.g. for SSH)
-	if ! grep -q "root.*/bin/zsh" /etc/passwd; then
-		sudo chsh -s /bin/zsh root
-		if ! sudo chsh -s /bin/zsh vscode; then
-			sudo chsh -s /bin/zsh codespace
-		fi
-	fi
-fi
-
-# Enable touchID sudo authentication
-if [[ $OSTYPE == darwin* ]]; then
-	chmod +x script/touchid-sudo.sh
-	script/touchid-sudo.sh || exit
-fi
-
-# SSH settings
-mkdir -p ~/.ssh/sockets
-ln -sfv "$DOTFILESDIR/ssh_config" "$HOME/.ssh/config"
-
 HOSTNAME="$1"
 DOTFILESDIR="$(pwd -P)"
-
-if [[ $OSTYPE == darwin* ]]; then
-	sudo xcodebuild -license accept
-fi
-
-# Make folder for code
-mkdir -p "$HOME/Developer/work"
 
 # Make folder for GnuPG
 mkdir -p "$HOME/.gnupg"
@@ -66,6 +35,37 @@ ln -sfv "$DOTFILESDIR/git-commit-message" "$HOME/.git-commit-message"
 ln -sfv "$DOTFILESDIR/gitconfig-personal" "$HOME/.gitconfig-personal"
 ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
+
+if [[ $CODESPACES ]]; then
+	if [[ $CODESPACE_NAME == *no-dotfiles* ]]; then
+		echo "setup without dotfiles"
+		exit 0
+	fi
+	# Always want to use ZSH as my default shell (e.g. for SSH)
+	if ! grep -q "root.*/bin/zsh" /etc/passwd; then
+		sudo chsh -s /bin/zsh root
+		if ! sudo chsh -s /bin/zsh vscode; then
+			sudo chsh -s /bin/zsh codespace
+		fi
+	fi
+fi
+
+# Enable touchID sudo authentication
+if [[ $OSTYPE == darwin* ]]; then
+	chmod +x script/touchid-sudo.sh
+	script/touchid-sudo.sh || exit
+fi
+
+# SSH settings
+mkdir -p ~/.ssh/sockets
+ln -sfv "$DOTFILESDIR/ssh_config" "$HOME/.ssh/config"
+
+if [[ $OSTYPE == darwin* ]]; then
+	sudo xcodebuild -license accept
+fi
+
+# Make folder for code
+mkdir -p "$HOME/Developer/work"
 
 # Install Homebrew
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
