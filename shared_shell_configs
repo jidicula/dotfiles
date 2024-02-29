@@ -150,6 +150,7 @@ CPATH="$CPATH:$HOMEBREW_PREFIX/include"
 
 export PSES_BUNDLE_PATH="$HOME/.pses"
 export SESSION_TEMP_PATH="$HOME/.pses/session"
+export LC_ALL="en_US.UTF-8"
 
 export PATH="$PATH:bin"
 
