@@ -242,6 +242,8 @@ There are two things you can do about this warning:
        `("--show-signature" ,@(get 'magit-diff-mode 'magit-diff-default-arguments)))
   
   (setq auth-sources '("~/.authinfo"))
+  ;; get `git` from PATH for local invocation
+  (setq magit-git-executable "git")
   (setq magit-diff-refine-hunk (quote all))
   (setq magit-display-buffer-function
 	#'magit-display-buffer-fullframe-status-v1)
