@@ -2,6 +2,6 @@
 	# needs to match GitHub name for signing to work in Codespaces.
 	# GitHub doesn't have a web-flow signing SSH key yet, so GPG is necessary
 	# in Codespaces.
-    name = "Johanan Idicula"
+    name = "Johanan"
     email = "jidicula@github.com"
     signingkey = "D97377F4"
