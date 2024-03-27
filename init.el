@@ -769,7 +769,7 @@ There are two things you can do about this warning:
 
 ;; yasnippet
 (use-package yasnippet
-  :delight yas-minor-mode "🆈"
+  :delight yas-minor-mode "📋"
   :straight t
   :defer 2
   )
