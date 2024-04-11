@@ -250,10 +250,6 @@ There are two things you can do about this warning:
   ;; magit transient levels, allows GPG option to be visible
   (setq transient-default-level 5)
   (setq git-commit-post-finish-hook-timeout 2)
-  ;; Refresh magit buffer on save. This must only be evaluated when in
-  ;; magit-mode. DO NOT refactor with use-package `:hook` directive.
-  (with-eval-after-load 'magit-mode
-    (add-hook 'after-save-hook 'magit-after-save-refresh-status t))
   (put 'magit-todos-exclude-globs 'safe-local-variable #'seqp)
   )
 
