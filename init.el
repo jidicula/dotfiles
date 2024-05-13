@@ -412,7 +412,7 @@ There are two things you can do about this warning:
     (async-shell-command copilot-node-command)
     )
   (setq copilot-indent-offset-warning-disable t)
-  :straight (:host github :repo "zerolfx/copilot.el" :files ("dist" "*.el"))
+  :straight (:host github :repo "copilot-emacs/copilot.el" :files ("*.el"))
   :bind (("C-c e" . copilot-mode)
          :map copilot-completion-map
               ("C-S-<tab>" . #'copilot-accept-completion-by-line)
