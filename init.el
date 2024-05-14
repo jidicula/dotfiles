@@ -311,6 +311,7 @@ There are two things you can do about this warning:
   :init
   (with-eval-after-load 'winum
     (define-key winum-keymap (kbd "M-0") #'treemacs-select-window))
+  (treemacs)
   :config
   (progn
     (setq treemacs-collapse-dirs                 (if treemacs-python-executable 3 0)
@@ -355,7 +356,7 @@ There are two things you can do about this warning:
 
     ;; The default width and height of the icons is 22 pixels. If you are
     ;; using a Hi-DPI display, uncomment this to double the icon size.
-    ;;(treemacs-resize-icons 44)
+    (treemacs-resize-icons 14)
     (treemacs-follow-mode t)
     (treemacs-filewatch-mode t)
     (treemacs-fringe-indicator-mode t)
@@ -389,12 +390,6 @@ There are two things you can do about this warning:
   :after treemacs magit
   :straight t
   :defer 2)
-
-(use-package treemacs-persp
-  :after treemacs persp-mode
-  :straight t
-  :defer 2
-  :config (treemacs-set-scope-type 'Perspectives))
 
 (use-package copilot
   :after company
@@ -789,8 +784,9 @@ There are two things you can do about this warning:
   )
 
 (use-package all-the-icons
-  :straight t
-  :defer 2)
+  :straight (all-the-icons :type git :host github :repo "domtronn/all-the-icons.el" :branch "svg" :files (:defaults "svg"))
+  :defer 2
+  :if (display-graphic-p))
 
 ;; company
 (use-package company
