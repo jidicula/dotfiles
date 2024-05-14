@@ -160,7 +160,7 @@ There are two things you can do about this warning:
 				vc-ignore-dir-regexp
 				tramp-file-name-regexp)))
 
-;; return to last place in file
+;; return to last place in file on revisit
 (use-package saveplace
   :straight t
   :defer 1
@@ -272,6 +272,11 @@ There are two things you can do about this warning:
 ;; git-modes
 (use-package git-modes
   :straight (:host github :repo "magit/git-modes")
+  )
+
+;; git-link
+(use-package git-link
+  :straight (:host github :repo "sshaw/git-link")
   )
 
 ;; which-key shows all available keybindings
