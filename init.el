@@ -788,7 +788,7 @@ There are two things you can do about this warning:
   )
 
 (use-package all-the-icons
-  :straight (all-the-icons :type git :host github :repo "domtronn/all-the-icons.el" :branch "svg" :files (:defaults "svg"))
+  :straight (all-the-icons :type git :host github :repo "domtronn/all-the-icons.el")
   :defer 2
   :if (display-graphic-p))
 
