@@ -460,28 +460,16 @@ There are two things you can do about this warning:
    (go-mode . eglot-ensure)
    (python-mode . eglot-ensure)
    (sh-mode . eglot-ensure)
-   (powershell-mode . eglot-ensure)
    (yaml-mode . eglot-ensure)
    (dockerfile-mode . eglot-ensure)
    (ruby-mode . eglot-ensure)
    )
-  :config
-  ;; (let* ((pses-bundle (getenv "PSES_BUNDLE_PATH"))
-  ;; 		 ))
-  ;; (add-to-list 'eglot-server-programs
-  ;; 			   `(powershell-mode
-  ;; 				 . ("pwsh" "-NoLogo" "-NoProfile" "-Command" "$PSES_BUNDLE_PATH/PowerShellEditorServices/Start-EditorServices.ps1 -BundledModulesPath $PSES_BUNDLE_PATH -LogPath $SESSION_TEMP_PATH/logs.log -SessionDetailsPath $SESSION_TEMP_PATH/session.json -FeatureFlags @() -AdditionalModules @() -HostName 'My Client' -HostProfileId 'myclient' -HostVersion 1.0.0 -Stdio -LogLevel Normal")))
   )
 
 (use-package eldoc-box
   :straight t
   :hook
   (eglot-managed-mode . eldoc-box-hover-at-point-mode)
-  )
-
-(use-package powershell
-  :straight t
-  :delight " "
   )
 
 (use-package css-mode

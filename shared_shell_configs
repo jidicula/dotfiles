@@ -59,10 +59,6 @@ if command -v rbenv 1>/dev/null 2>&1; then
 	eval "$(rbenv init -)"
 fi
 
-# dotnet
-export DOTNET_CLI_TELEMETRY_OPTOUT=1
-export PATH="$HOME/.dotnet/tools:$PATH"
-
 # GNU dependencies for building some Homebrew formulae, like Emacs
 export PATH="$HOMEBREW_PREFIX/opt/gnu-tar/libexec/gnubin:$PATH"
 export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
@@ -148,8 +144,6 @@ fi
 export LIBRARY_PATH="$HOMEBREW_PREFIX/lib"
 CPATH="$CPATH:$HOMEBREW_PREFIX/include"
 
-export PSES_BUNDLE_PATH="$HOME/.pses"
-export SESSION_TEMP_PATH="$HOME/.pses/session"
 export LC_ALL="en_US.UTF-8"
 
 export PATH="$PATH:bin"

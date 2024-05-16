@@ -1,6 +1,6 @@
 # format = "$all"
 format = """$directory$git_branch$git_status$git_state$cmd_duration$time
-$shell$shlvl$package$dotnet$golang$nodejs$python$ruby$swift$kubernetes$helm
+$shell$shlvl$package$golang$nodejs$python$ruby$swift$kubernetes$helm
 $hostname$character"""
 
 # Utilities
@@ -9,7 +9,6 @@ $hostname$character"""
 disabled = false
 style = "bright-red"
 bash_indicator = "bash"
-powershell_indicator = "pwsh"
 
 [shlvl]
 disabled = false
@@ -51,9 +50,6 @@ format = "([$all_status$ahead_behind]($style) )"
 style = "cyan"
 
 # Languages
-
-[dotnet]
-format = "[$symbol($version )(🎯 $tfm )]($style)"
 
 [golang]
 style = "cyan"

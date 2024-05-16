@@ -98,7 +98,6 @@ plugins=(
 	gpg-agent
 	poetry
 	golang
-	dotnet
 	nodenv
 )
 # shellcheck source=/dev/null

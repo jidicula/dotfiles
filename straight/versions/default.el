@@ -70,7 +70,6 @@
  ("popup-el" . "545e258024f6e4a8b2a066a5442d9e0147a7ee03")
  ("pos-tip" . "4889e08cf9077c8589ea6fea4e2ce558614dfcde")
  ("posframe" . "f4e9e509ba96ceb3c2b2b054957291607fb52651")
- ("powershell.el" . "f2da15857e430206e215a3c65289b4058ae3c976")
  ("project" . "aab132ae7455f5f131ca63814e2d31836fe2b39a")
  ("projectile" . "0163b335a18af0f077a474d4dc6b36e22b5e3274")
  ("pyvenv" . "31ea715f2164dd611e7fc77b26390ef3ca93509b")
