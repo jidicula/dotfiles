@@ -77,6 +77,7 @@ brew "pyenv", args: ["HEAD"]
 brew "pyenv-ccache"
 brew "pyenv-virtualenv"
 brew "python@3.8"
+brew "qrencode"
 brew "ripgrep"
 brew "rsync"
 brew "shellcheck"
