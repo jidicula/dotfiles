@@ -60,15 +60,41 @@
 
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
-;; Useful for https://github.com/dunn/company-emoji
-;; https://www.reddit.com/r/emacs/comments/8ph0hq/i_have_converted_from_the_mac_port_to_the_ns_port/
-;; not tested with emacs26 (requires a patched Emacs version for multi-color font support)
+
 (when (display-graphic-p)
+  ;; Set menu bar if there is a GUI
+  (menu-bar-mode t)
+  ;; Useful for https://github.com/dunn/company-emoji
+  ;; https://www.reddit.com/r/emacs/comments/8ph0hq/i_have_converted_from_the_mac_port_to_the_ns_port/
+;; not tested with emacs26 (requires a patched Emacs version for multi-color font support)
   (if (version< "27.0" emacs-version)
 	  (set-fontset-font
 	   "fontset-default" 'unicode "Apple Color Emoji" nil 'prepend)
 	(set-fontset-font
-	 t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend)))
+	 t 'symbol (font-spec :family "Apple Color Emoji") nil 'prepend))
+  ;; Window/frame settings
+  ;; set window size
+  ;; 25 is the height of the menu bar in pixels.
+  (defvar frame-height (/ (- (x-display-pixel-height) 25)
+						  (frame-char-height)))
+
+  (setq initial-frame-alist
+		`((width . 84) (height . ,frame-height)))
+  (setq default-frame-alist
+		`((width . 84)
+		  (height . ,frame-height)
+		  (vertical-scroll-bars . nil)))
+  ;; macOS display customizations
+  (when (eq system-type 'darwin)
+	;; Fancy titlebar for macOS
+	(add-to-list 'default-frame-alist '(ns-transparent-titlebar . t))
+	(add-to-list 'default-frame-alist '(ns-appearance . dark))
+	(setq ns-use-proxy-icon nil))
+  )
+
+(when (not (display-graphic-p))
+  ;; No menubar with no GUI
+  (menu-bar-mode -1))
 
 ;;; Code:
 ;; Adding MELPA to package archives
@@ -909,15 +935,19 @@ There are two things you can do about this warning:
 ;; end of 3rd-party packages
 (put 'upcase-region 'disabled nil)
 
-;; set option key as Meta
-(setq mac-option-modifier 'meta)
-
-;; No scrollbars!
-(scroll-bar-mode -1)
-
-;; No menubar with no GUI
-(unless (display-graphic-p)
-  (menu-bar-mode -1))
+;; macOS customizations
+(when (eq system-type 'darwin)
+  ;; set option key as Meta
+  (setq mac-option-modifier 'meta)
+  ;; macOS command key (s for super) keybinds
+  (global-set-key (kbd "s-<left>") 'beginning-of-line)
+  (global-set-key (kbd "s-<right>") 'end-of-line)
+  (global-set-key (kbd "s-<up>") 'beginning-of-buffer)
+  (global-set-key (kbd "s-<down>") 'end-of-buffer)
+  (global-set-key (kbd "s-<kp-delete>") 'kill-word)
+  (global-set-key (kbd "s-<backspace>") 'kill-word)
+  (global-set-key (kbd "s-/") 'comment-line)
+  )
 
 ;; set scratch buffer mode to Markdown mode
 (setq initial-major-mode 'markdown-mode)
@@ -935,26 +965,8 @@ then enter the text in that file's own buffer.")
 (require 'cl-lib)
 (eval-when-compile (require 'cl-lib))
 
-;; Window settings
-(when (display-graphic-p)
-  ;; set window size
-  ;; 25 is the height of the menu bar in pixels.
-  (defvar frame-height (/ (- (x-display-pixel-height) 25)
-						  (frame-char-height)))
-
-  (setq initial-frame-alist
-		`((width . 84) (height . ,frame-height)))
-  (setq default-frame-alist
-		`((width . 84) (height . ,frame-height)))
-  )
-
 ;; converting region to lowercase
 (put 'downcase-region 'disabled nil)
-
-;; Fancy titlebar for macOS
-(add-to-list 'default-frame-alist '(ns-transparent-titlebar . t))
-(add-to-list 'default-frame-alist '(ns-appearance . dark))
-(setq ns-use-proxy-icon nil)
 
 ;; sgml
 (setq sgml-quick-keys 'indent)
@@ -992,15 +1004,6 @@ then enter the text in that file's own buffer.")
 ;; Show parens instantly
 (setq show-paren-delay 0)
 (show-paren-mode 1)
-
-;; macOS command key (s for super) keybinds
-(global-set-key (kbd "s-<left>") 'beginning-of-line)
-(global-set-key (kbd "s-<right>") 'end-of-line)
-(global-set-key (kbd "s-<up>") 'beginning-of-buffer)
-(global-set-key (kbd "s-<down>") 'end-of-buffer)
-(global-set-key (kbd "s-<kp-delete>") 'kill-word)
-(global-set-key (kbd "s-<backspace>") 'kill-word)
-(global-set-key (kbd "s-/") 'comment-line)
 
 ;; other keybinds
 (global-set-key (kbd "M-<kp-delete>") 'kill-word)
