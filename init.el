@@ -62,6 +62,7 @@
 
 
 (when (display-graphic-p)
+  (fringe-mode 0)
   ;; Set menu bar if there is a GUI
   (menu-bar-mode t)
   ;; Useful for https://github.com/dunn/company-emoji
