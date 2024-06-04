@@ -185,7 +185,8 @@ There are two things you can do about this warning:
   (setq vc-ignore-dir-regexp
 		(format "\\(%s\\)\\|\\(%s\\)"
 				vc-ignore-dir-regexp
-				tramp-file-name-regexp)))
+				tramp-file-name-regexp))
+  (setq tramp-allow-unsafe-temporary-files t))
 
 ;; return to last place in file on revisit
 (use-package saveplace
