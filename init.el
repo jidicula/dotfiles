@@ -428,7 +428,7 @@ There are two things you can do about this warning:
   :config
   (delq 'company-preview-if-just-one-frontend company-frontends)
   ;; Kludge - the node version file is a hardlink pointing to the binary
-  (setq copilot-node-executable "21.6.2")
+  (setq copilot-node-executable "21.7.3")
   (unless (executable-find copilot-node-executable)
     nil
     (setq copilot-node-command (format "nodenv install %s && ln -sfv \"$HOME/.nodenv/versions/%s/bin/node\" \"$HOME/.local/bin/%s\""
@@ -439,7 +439,15 @@ There are two things you can do about this warning:
     (async-shell-command copilot-node-command)
     )
   (setq copilot-indent-offset-warning-disable t)
-  :straight (:host github :repo "copilot-emacs/copilot.el" :files ("*.el"))
+  :straight (
+			 :host github
+				   :repo "copilot-emacs/copilot.el"
+				   :fork (
+						  :host github
+								:repo "jidicula/copilot.el"
+								:branch "copilot-1.27.0"
+								)
+				   )
   :bind (("C-c e" . copilot-mode)
          :map copilot-completion-map
               ("C-S-<tab>" . #'copilot-accept-completion-by-line)
