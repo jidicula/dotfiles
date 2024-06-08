@@ -553,7 +553,6 @@ There are two things you can do about this warning:
 
 (use-package docker
   :straight t
-  :ensure t
   :delight ""
   :bind ("C-c d" . docker))
 
@@ -590,8 +589,10 @@ There are two things you can do about this warning:
   :defer t)
 
 ;; LaTeX configs
+(use-package auctex
+  :straight (:host github :repo "emacs-straight/auctex"))
+
 (use-package tex-mode
-  :ensure auctex
   :config
   (require 'font-latex)
   :init

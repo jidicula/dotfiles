@@ -1,7 +1,7 @@
 (("Emacs-wgrep" . "208b9d01cfffa71037527e3a324684b3ce45ddc4")
  ("ace-window" . "77115afc1b0b9f633084cf7479c767988106c196")
  ("all-the-icons.el" . "ee414384938ccf2ce93c77d717b85dc5538a257d")
- ("auctex" . "ad9ee6e704d4d124f2babbae24405b2d696a3f48")
+ ("auctex" . "5b1229745b4d862e07e28fc597d92457688926f2")
  ("auctex-latexmk" . "b00a95e6b34c94987fda5a57c20cfe2f064b1c7a")
  ("avy" . "be612110cb116a38b8603df367942e2bb3d9bdbe")
  ("breadcrumb" . "dcb6e2e82de2432d8eb75be74c8d6215fc97a2d3")
