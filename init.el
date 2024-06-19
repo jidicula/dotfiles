@@ -470,6 +470,11 @@ There are two things you can do about this warning:
   :mode ("\\.csl\\'" "\\.kql\\'")
   )
 
+(use-package protobuf-mode
+  :straight (:host github :repo "protocolbuffers/protobuf" :files ("editors/protobuf-mode.el"))
+  :mode ("\\.proto\\'")
+  )
+
 (use-package logview
   :straight t
   :delight "🪵"

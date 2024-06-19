@@ -72,6 +72,7 @@
  ("posframe" . "f4e9e509ba96ceb3c2b2b054957291607fb52651")
  ("project" . "aab132ae7455f5f131ca63814e2d31836fe2b39a")
  ("projectile" . "0163b335a18af0f077a474d4dc6b36e22b5e3274")
+ ("protobuf" . "8b7d866b09abf948499c0043c47f924767d92fcb")
  ("pyvenv" . "31ea715f2164dd611e7fc77b26390ef3ca93509b")
  ("restart-emacs" . "1607da2bc657fe05ae01f7fdf26f716eafead02c")
  ("rg.el" . "5420dc6ca05c6ab0954113772d784c4c968ca219")
