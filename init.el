@@ -62,7 +62,7 @@
 
 
 (when (display-graphic-p)
-  (fringe-mode 0)
+  (fringe-mode '(7 . 0))
   ;; Set menu bar if there is a GUI
   (menu-bar-mode t)
   ;; Useful for https://github.com/dunn/company-emoji
@@ -997,17 +997,8 @@ then enter the text in that file's own buffer.")
 (delete-selection-mode 1)
 
 ;; always display line numbers
-(when
-    (version<= "26.0.50" emacs-version )
-  (global-display-line-numbers-mode))
+(global-display-line-numbers-mode t)
 (add-hook 'term-mode-hook (lambda () (display-line-numbers-mode -1)))
-(when (not 'term-mode-hook)
-  (if
-      (version<= "26.0.50" emacs-version)
-      (display-line-numbers-mode t)
-    (linum-mode t)
-    )
-  )
 
 ;; disable in-window menu bar
 (tool-bar-mode -1)
