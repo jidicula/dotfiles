@@ -877,6 +877,7 @@ There are two things you can do about this warning:
   )
 
 ;; projectile
+(use-package project)
 (use-package projectile
   :straight t
   :delight
