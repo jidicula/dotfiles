@@ -509,9 +509,13 @@ There are two things you can do about this warning:
 
 (use-package eldoc-box
   :straight t
+  :delight
   :hook
   (eglot-managed-mode . eldoc-box-hover-at-point-mode)
   )
+
+(use-package eldoc
+  :delight)
 
 (use-package css-mode
   :delight scss-mode ""
