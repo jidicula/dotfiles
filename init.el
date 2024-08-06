@@ -445,7 +445,7 @@ There are two things you can do about this warning:
 				   :fork (
 						  :host github
 								:repo "jidicula/copilot.el"
-								:branch "copilot-1.27.0"
+								:branch "main"
 								)
 				   )
   :bind (("C-c e" . copilot-mode)
