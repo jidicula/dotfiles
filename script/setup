@@ -37,7 +37,7 @@ ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
 
 if [[ $CODESPACES ]]; then
-	if [[ $CODESPACE_NAME == *no-dotfiles* ]]; then
+	if [[ $CODESPACE_NAME != *dotfiles* ]]; then
 		echo "setup without dotfiles"
 		exit 0
 	fi
