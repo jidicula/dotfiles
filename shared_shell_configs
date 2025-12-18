@@ -134,6 +134,7 @@ alias csc="gh codespace code"
 alias old='cd $OLDPWD'
 alias edp='rm .emacs-buffers & rm .emacs.desktop'
 alias code=code-insiders
+alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
 if [ "$(uname)" = "Darwin" ]; then
 	# GCloud
