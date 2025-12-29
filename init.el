@@ -327,6 +327,11 @@ There are two things you can do about this warning:
   (sp-local-pair 'c-mode "{" nil :post-handlers '(:add my-open-block-brace-mode))
   )
 
+;; Rainbow delimiters makes nested delimiters easier to understand
+(use-package rainbow-delimiters
+  :straight t
+  :hook ((prog-mode . rainbow-delimiters-mode)))
+
 ;; browse-at-remote
 (use-package browse-at-remote
   :straight t
@@ -504,6 +509,7 @@ There are two things you can do about this warning:
    (yaml-mode . eglot-ensure)
    (dockerfile-mode . eglot-ensure)
    (ruby-mode . eglot-ensure)
+   (swift-mode . eglot-ensure)
    )
   )
 
@@ -597,7 +603,32 @@ There are two things you can do about this warning:
   :hook
   (ruby-mode . (lambda ()
                  (add-hook 'before-save-hook #'eglot-format nil t)))
-)
+  )
+
+;; Swift
+;;; Locate sourcekit-lsp
+(defun find-sourcekit-lsp ()
+  "Find Swift sourcekit."
+  (or (executable-find "sourcekit-lsp")
+      (and (eq system-type 'darwin)
+           (string-trim (shell-command-to-string "xcrun -f sourcekit-lsp")))
+      "/usr/local/swift/usr/bin/sourcekit-lsp"))
+
+(use-package swift-mode
+  :straight t
+  :mode "\\.swift\\'"
+  :interpreter "swift")
+
+;; sourcekit-lsp support
+(use-package lsp-sourcekit
+  :straight t
+  :custom
+  (lsp-sourcekit-executable (find-sourcekit-lsp) "Find sourcekit-lsp"))
+
+;; .editorconfig file support
+(use-package editorconfig
+  :straight t
+  :config (editorconfig-mode +1))
 
 ;; json-mode
 (use-package json-mode
