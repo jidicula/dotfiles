@@ -1,8 +1,6 @@
 tap "derailed/k9s"
 tap "github/bootstrap"
-tap "homebrew/bundle"
 tap "homebrew/core"
-tap "homebrew/services"
 tap "jakehilborn/jakehilborn"
 brew "age"
 brew "gcc"
@@ -49,7 +47,6 @@ brew "hadolint"
 brew "hdf5"	# File format designed to store large data
 brew "helm"
 brew "highlight"
-brew "hey"
 brew "maven"
 brew "ncurses"
 brew "htop"
@@ -67,6 +64,7 @@ brew "nghttp2" # HTTP/2 C Library
 brew "nmap"
 brew "node-build"
 brew "nodenv", args: ["HEAD"]
+brew "oha"
 brew "pandoc"
 brew "pidof"
 brew "pigz"
@@ -75,7 +73,6 @@ brew "pv" # pipe viewer
 brew "pyenv", args: ["HEAD"]
 brew "pyenv-ccache"
 brew "pyenv-virtualenv"
-brew "python@3.8"
 brew "qrencode"
 brew "ripgrep"
 brew "rsync"
