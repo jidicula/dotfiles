@@ -1,0 +1,16 @@
+# Use a community icon (see community/registry.json for available options)
+icon: liquid-glass
+
+# Use an external icon (requires SHA256 verification)
+# icon:
+#   url: https://example.com/my-icon.icns
+#   sha256: abc123...
+
+# Pin to a specific git revision (version-specific)
+# revision:
+#   "30": abc123def456
+#   "31": 789abcdef123
+
+# Apply community patches
+# patches:
+#   - patch-name-from-registry

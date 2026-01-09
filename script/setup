@@ -93,6 +93,7 @@ if ! [[ $CODESPACES ]]; then
 fi
 
 # Set up Emacs config
+ln -sfv "$DOTFILESDIR/emacs-plus" "$HOME/.config/emacs-plus"
 mkdir -p "$HOME/.emacs.d/straight"
 ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
 ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
