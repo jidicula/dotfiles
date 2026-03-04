@@ -71,7 +71,6 @@ brew "pigz"
 brew "pre-commit"
 brew "pv" # pipe viewer
 brew "pyenv", args: ["HEAD"]
-brew "pyenv-ccache"
 brew "pyenv-virtualenv"
 brew "qrencode"
 brew "ripgrep"
