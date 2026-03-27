@@ -121,7 +121,7 @@ fi
 alias ls="ls --color=always -N"
 
 if [[ $OSTYPE == darwin* ]]; then
-	alias ec="emacsclient -c -a ''"
+	alias ec="emacsclient -c -a '' . &"
 fi
 
 if [[ $TERM == "dumb" ]]; then

@@ -17,6 +17,8 @@
 ;; increase amount of data Emacs reads from process to 1 MB
 (setq read-process-output-max (* 10 1048576))
 
+(server-start)
+
 (message (format "%s" file-name-handler-alist))
 (setq file-name-handler-alist nil)
 
@@ -24,10 +26,10 @@
 (setq confirm-kill-emacs 'y-or-n-p)
 
 ;; Confirm before closing frame in daemon mode.
-(defun ask-before-closing (&optional arg)
+(defun ask-before-closing ()
   "Close frame ARG or buffer only if \`y\` was pressed."
   (interactive)
-  (if (y-or-n-p (format "Are you sure you want to close this frame?"))
+  (if (y-or-n-p "Are you sure you want to close this frame?")
 		(save-buffers-kill-terminal)
     (message "Canceled frame close")))
 
@@ -80,7 +82,9 @@
 						  (frame-char-height)))
 
   (setq initial-frame-alist
-		`((width . 84) (height . ,frame-height)))
+		`((width . 84)
+		  (height . ,frame-height)
+		  (vertical-scroll-bars . nil)))
   (setq default-frame-alist
 		`((width . 84)
 		  (height . ,frame-height)
@@ -96,6 +100,8 @@
 (when (not (display-graphic-p))
   ;; No menubar with no GUI
   (menu-bar-mode -1))
+
+(scroll-bar-mode -1)
 
 ;;; Code:
 ;; Adding MELPA to package archives
