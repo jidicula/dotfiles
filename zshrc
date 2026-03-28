@@ -121,7 +121,8 @@ fi
 alias ls="ls --color=always -N"
 
 if [[ $OSTYPE == darwin* ]]; then
-	alias ec="emacsclient -c -a '' . &"
+	# Open files in emacsclient, or current directory if no args given
+	ec() { emacsclient -c -a '' "${@:-.}" & }
 fi
 
 if [[ $TERM == "dumb" ]]; then
