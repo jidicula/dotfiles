@@ -233,12 +233,6 @@ There are two things you can do about this warning:
   :straight t
   :defer 2)
 
-;; use-package-ensure-system-package
-;; provides way to define system package dependencies for Emacs packages
-(use-package use-package-ensure-system-package
-  :straight t
-  :defer 2)
-
 ;; delight
 ;; hides modeline displays
 (use-package delight
