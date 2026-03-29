@@ -1,3 +1,5 @@
+;;; jidiculous-dark-theme.el --- jidiculous dark theme  -*- lexical-binding: t; -*-
+
 (deftheme jidiculous-dark
   "Created 2019-03-17.")
 

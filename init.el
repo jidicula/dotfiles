@@ -1,4 +1,4 @@
-;;; init.el --- Johanan's Emacs config
+;;; init.el --- Johanan's Emacs config  -*- lexical-binding: t; -*-
 ;;; Commentary:
 ;;; Load it from .emacs with `(load "path/to/init.el")`
 
