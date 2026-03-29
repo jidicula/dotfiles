@@ -91,14 +91,11 @@ plugins=(
 	brew
 	kubectl
 	python
-	pyenv
 	pip
-	rbenv
 	ruby
 	gpg-agent
 	poetry
 	golang
-	nodenv
 )
 # shellcheck source=/dev/null
 source "$ZSH/oh-my-zsh.sh"
