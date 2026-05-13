@@ -94,7 +94,6 @@ plugins=(
 	pip
 	ruby
 	gpg-agent
-	poetry
 	golang
 )
 # shellcheck source=/dev/null
