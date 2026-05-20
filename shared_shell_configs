@@ -161,3 +161,6 @@ export PATH="$PATH:bin"
 
 SHARED_SHELL_CONFIGS="true"
 export SHARED_SHELL_CONFIGS
+
+export GPG_TTY=$(tty)
+SSH_AUTH_SOCK=$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
