@@ -22,7 +22,6 @@ brew "hiredis"
 brew "ccache" # Object-file caching compiler wrapper
 brew "cheat"
 brew "clang-format"
-brew "copilot-cli@prerelease"
 brew "coreutils"
 brew "croc"
 brew "curl"
