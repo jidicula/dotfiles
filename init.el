@@ -164,9 +164,15 @@ There are two things you can do about this warning:
 (use-package tramp
   :straight t
   :config
-  (add-to-list 'tramp-connection-properties
-               (list (regexp-quote "/ghcs:")
-					 "direct-async-process" t))
+  ;; Enable direct async processes for ghcs (codespaces) connections.
+  ;; Use the modern connection-local variable mechanism rather than the
+  ;; deprecated `direct-async-process' tramp connection property.
+  (connection-local-set-profile-variables
+   'tramp-ghcs-direct-async-profile
+   '((tramp-direct-async-process . t)))
+  (connection-local-set-profiles
+   '(:application tramp :protocol "ghcs")
+   'tramp-ghcs-direct-async-profile)
 
   (add-to-list 'tramp-connection-properties
                (list (regexp-quote "/ghcs:")
@@ -497,6 +503,14 @@ There are two things you can do about this warning:
   (interactive)
   (eglot-code-actions nil nil "source.organizeImports" t))
 
+(defun my-ruby-eglot-contact (_interactive)
+  "Return Sorbet LSP for projects with sorbet/config, ruby-lsp otherwise."
+  (let* ((root (project-root (project-current)))
+         (sorbet-config (expand-file-name "sorbet/config" root)))
+    (if (file-exists-p sorbet-config)
+        '("bundle" "exec" "srb" "typecheck" "--lsp" "--cache-dir" "tmp/sorbet")
+      '("ruby-lsp"))))
+
 (use-package eglot
   :straight t
   :hook
@@ -513,6 +527,24 @@ There are two things you can do about this warning:
    (json-ts-mode . eglot-ensure)
    (swift-mode . eglot-ensure)
    )
+  :config
+  (add-to-list 'eglot-server-programs '((ruby-mode ruby-ts-mode) . my-ruby-eglot-contact))
+  ;; Longer timeout for remote (Codespace) connections
+  (setq eglot-connect-timeout 60)
+  ;; Sorbet adds a non-standard `requestMethod' field to ResponseMessages
+  ;; (see sorbet/main/lsp/tools/make_lsp_types.cc). Emacs jsonrpc.el
+  ;; destructures incoming messages without `&allow-other-keys', so unknown
+  ;; keys raise: (error "Keyword argument :requestMethod not one of ...").
+  ;; Strip it before jsonrpc sees it.
+  (defun my-jsonrpc-strip-sorbet-keys (args)
+    "Remove Sorbet's non-standard `:requestMethod' from incoming messages."
+    (cl-destructuring-bind (conn foreign-message) args
+      (when (and (listp foreign-message)
+                 (plist-member foreign-message :requestMethod))
+        (cl-remf foreign-message :requestMethod))
+      (list conn foreign-message)))
+  (advice-add 'jsonrpc-connection-receive :filter-args
+              #'my-jsonrpc-strip-sorbet-keys)
   )
 
 (use-package eldoc-box
@@ -661,7 +693,11 @@ There are two things you can do about this warning:
 (use-package ruby-mode
   :straight t
   :delight " "
-  :ensure-system-package (solargraph . "gem install solargraph")
+  ;; NOTE: do NOT use `:ensure-system-package' here. This block is deferred
+  ;; via `:mode', so it fires when a ruby buffer is first opened. Over TRAMP
+  ;; (e.g. /ghcs: into a codespace) the install command would run on the
+  ;; remote -- failing on codespaces whose system ruby uses a sudo-only gem
+  ;; dir. Install the LSP locally via script/language-server-setup.sh.
   :mode ("\\Brewfile\\'")
   :interpreter "ruby"
   :hook
