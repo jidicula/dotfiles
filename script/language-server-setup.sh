@@ -17,3 +17,6 @@ npm install -g dockerfile-language-server-nodejs
 
 # YAML
 npm install -g yaml-language-server
+
+# JSON (also provides HTML, CSS, ESLint language servers)
+npm install -g vscode-langservers-extracted
