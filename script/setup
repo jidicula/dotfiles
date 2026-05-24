@@ -130,9 +130,6 @@ if [[ -z $SHARED_SHELL_CONFIGS ]]; then
 fi
 
 if [[ $OSTYPE == darwin* ]]; then
-	# Set up launchdns
-	script/dns.sh || exit
-
 	# VS Code Insiders setup
 	ln -sfv "$HOMEBREW_PREFIX/bin/code" "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"
 	# Open Karabiner for the first time
