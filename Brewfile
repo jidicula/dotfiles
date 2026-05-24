@@ -84,6 +84,7 @@ brew "step"	# Crypto and x509 Swiss-Army-Knife
 brew "tcptraceroute"
 brew "tmux"
 brew "tree"
+brew "tree-sitter"
 brew "watch"
 brew "watchexec"
 brew "wget"

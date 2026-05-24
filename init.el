@@ -502,12 +502,15 @@ There are two things you can do about this warning:
   :hook
   ((before-save . my-eglot-organize-imports)
    (before-save . eglot-format-buffer)
-   (go-mode . eglot-ensure)
-   (python-mode . eglot-ensure)
-   (sh-mode . eglot-ensure)
-   (yaml-mode . eglot-ensure)
-   (dockerfile-mode . eglot-ensure)
-   (ruby-mode . eglot-ensure)
+   (go-ts-mode . eglot-ensure)
+   (python-ts-mode . eglot-ensure)
+   (bash-ts-mode . eglot-ensure)
+   (yaml-ts-mode . eglot-ensure)
+   (dockerfile-ts-mode . eglot-ensure)
+   (ruby-ts-mode . eglot-ensure)
+   (typescript-ts-mode . eglot-ensure)
+   (tsx-ts-mode . eglot-ensure)
+   (json-ts-mode . eglot-ensure)
    (swift-mode . eglot-ensure)
    )
   )
@@ -521,6 +524,68 @@ There are two things you can do about this warning:
 
 (use-package eldoc
   :delight)
+
+;; ---------------------------------------------------------------------------
+;; tree-sitter (built-in `treesit`, Emacs 29+)
+;; ---------------------------------------------------------------------------
+(when (and (fboundp 'treesit-available-p) (treesit-available-p))
+  (setq treesit-language-source-alist
+        '((bash       "https://github.com/tree-sitter/tree-sitter-bash")
+          (c          "https://github.com/tree-sitter/tree-sitter-c")
+          (css        "https://github.com/tree-sitter/tree-sitter-css")
+          (dockerfile "https://github.com/camdencheek/tree-sitter-dockerfile")
+          (go         "https://github.com/tree-sitter/tree-sitter-go")
+          (gomod      "https://github.com/camdencheek/tree-sitter-go-mod")
+          (html       "https://github.com/tree-sitter/tree-sitter-html")
+          (json       "https://github.com/tree-sitter/tree-sitter-json")
+          (python     "https://github.com/tree-sitter/tree-sitter-python")
+          (ruby       "https://github.com/tree-sitter/tree-sitter-ruby")
+          (toml       "https://github.com/tree-sitter/tree-sitter-toml")
+          (tsx        "https://github.com/tree-sitter/tree-sitter-typescript"
+                      "master" "tsx/src")
+          (typescript "https://github.com/tree-sitter/tree-sitter-typescript"
+                      "master" "typescript/src")
+          (yaml       "https://github.com/ikatyang/tree-sitter-yaml")))
+
+  ;; Auto-install any grammars that aren't already compiled.
+  (dolist (lang-spec treesit-language-source-alist)
+    (let ((lang (car lang-spec)))
+      (unless (treesit-language-available-p lang)
+        (condition-case err
+            (treesit-install-language-grammar lang)
+          (error
+           (message "treesit: failed to install grammar for %s: %s"
+                    lang (error-message-string err)))))))
+
+  ;; Remap classic modes to their tree-sitter variants.
+  (dolist (mapping '((sh-mode          . bash-ts-mode)
+                     (c-mode           . c-ts-mode)
+                     (css-mode         . css-ts-mode)
+                     (dockerfile-mode  . dockerfile-ts-mode)
+                     (go-mode          . go-ts-mode)
+                     (go-dot-mod-mode  . go-mod-ts-mode)
+                     (mhtml-mode       . html-ts-mode)
+                     (js-json-mode     . json-ts-mode)
+                     (json-mode        . json-ts-mode)
+                     (python-mode      . python-ts-mode)
+                     (ruby-mode        . ruby-ts-mode)
+                     (toml-mode        . toml-ts-mode)
+                     (conf-toml-mode   . toml-ts-mode)
+                     (typescript-mode  . typescript-ts-mode)
+                     (yaml-mode        . yaml-ts-mode)))
+    (add-to-list 'major-mode-remap-alist mapping))
+
+  ;; `typescript-mode' registers .tsx -> typescript-mode, which would remap to
+  ;; typescript-ts-mode. We want .tsx files in tsx-ts-mode specifically.
+  (add-to-list 'auto-mode-alist '("\\.tsx\\'" . tsx-ts-mode))
+
+  ;; Indentation for *-ts-mode variants (defaults vary; pin to what we want).
+  (setq c-ts-mode-indent-offset 4
+        json-ts-mode-indent-offset 4
+        python-ts-mode-indent-offset 4
+        ruby-ts-indent-level 2
+        css-ts-mode-indent-offset 2
+        typescript-ts-mode-indent-offset 2))
 
 (use-package css-mode
   :delight scss-mode ""
@@ -551,7 +616,7 @@ There are two things you can do about this warning:
   :delight python-black-on-save-mode "⚫️"
   :straight t
   :hook
-  (python-mode . python-black-on-save-mode)
+  (python-ts-mode . python-black-on-save-mode)
   :init
   (put 'python-black-command 'safe-local-variable #'stringp)
   (put 'python-black-extra-args 'safe-local-variable #'stringp)
@@ -566,7 +631,7 @@ There are two things you can do about this warning:
   ;; (setq poetry-tracking-strategy 'switch-buffer)
   :hook
   ;; activate poetry-tracking-mode when python-mode is active
-  (python-mode . poetry-tracking-mode)
+  (python-ts-mode . poetry-tracking-mode)
   )
 
 ;; disable pyvenv menu
@@ -590,7 +655,7 @@ There are two things you can do about this warning:
   :delight ""
   :hook
   (before-save . eglot-format)
-  (go-mode . (lambda () (indent-tabs-mode 1)))
+  (go-ts-mode . (lambda () (indent-tabs-mode 1)))
   )
 
 (use-package ruby-mode
@@ -600,8 +665,8 @@ There are two things you can do about this warning:
   :mode ("\\Brewfile\\'")
   :interpreter "ruby"
   :hook
-  (ruby-mode . (lambda ()
-                 (add-hook 'before-save-hook #'eglot-format nil t)))
+  (ruby-ts-mode . (lambda ()
+                    (add-hook 'before-save-hook #'eglot-format nil t)))
   )
 
 ;; Swift
@@ -632,7 +697,7 @@ There are two things you can do about this warning:
 ;; json-mode
 (use-package json-mode
   :straight t
-  :ensure-system-package (vscode-json-languageserver . "npm i -g vscode-json-languageserver")
+  :ensure-system-package (vscode-json-language-server . "npm i -g vscode-langservers-extracted")
   :defer t)
 
 ;; LaTeX configs
@@ -944,7 +1009,7 @@ There are two things you can do about this warning:
   (highlight-indent-guides-auto-even-face-perc 15)
   :hook
   (prog-mode . highlight-indent-guides-mode)
-  (yaml-mode . highlight-indent-guides-mode)
+  (yaml-ts-mode . highlight-indent-guides-mode)
   )
 
 ;; emacs-lisp
@@ -979,7 +1044,7 @@ There are two things you can do about this warning:
 (use-package shfmt
   :straight t
   :hook (
-	 (sh-mode . shfmt-on-save-mode)
+	 (bash-ts-mode . shfmt-on-save-mode)
 	 )
   )
 
