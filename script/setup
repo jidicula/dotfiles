@@ -74,16 +74,16 @@ if [[ $CODESPACES ]]; then
 fi
 
 # Install common Homebrew packages
-brew bundle install --no-lock # TODO: maybe this needs to go before macOS deps
+brew bundle install # TODO: maybe this needs to go before macOS deps
 BREW_STATUS="$?"
 
 if [[ $CODESPACES ]]; then
 	# Install Codespace Homebrew packages
-	brew bundle install --no-lock --file codespaces_Brewfile
+	brew bundle install --file codespaces_Brewfile
 	BREW_STATUS="$(($? + BREW_STATUS))"
 else
 	# Install macOS Homebrew packages
-	brew bundle install --no-lock --file macos_Brewfile
+	brew bundle install --file macos_Brewfile
 	BREW_STATUS="$(($? + BREW_STATUS))"
 fi
 
