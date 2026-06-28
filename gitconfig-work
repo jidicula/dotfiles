@@ -4,7 +4,6 @@
 	# in Codespaces.
     name = "Johanan"
     email = "jidicula@github.com"
-    # signingkey = "D97377F4"
 	signingkey = "~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/PublicKeys/14b2f8686247bedac8b118d47b2af32f.pub"
 [gpg]
 	format = "ssh"
