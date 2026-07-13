@@ -322,6 +322,12 @@ There are two things you can do about this warning:
   (which-key-mode)
   )
 
+(use-package mcp-server
+  :straight (:type git :host github :repo "rhblind/emacs-mcp-server"
+             :files ("*.el" "tools/*.el" "mcp-wrapper.py" "mcp-wrapper.sh"))
+  :config
+  (add-hook 'emacs-startup-hook #'mcp-server-start-unix))
+
 ;; smartparens
 (use-package smartparens
   :delight
