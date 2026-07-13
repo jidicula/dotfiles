@@ -117,8 +117,17 @@ fi
 alias ls="ls --color=always -N"
 
 if [[ $OSTYPE == darwin* ]]; then
-	# Open files in emacsclient, or current directory if no args given
-	ec() { emacsclient -c -a '' "${@:-.}" & }
+	# Open files in emacsclient. With no args, open magit-status for the current
+	# directory if it's a Git work tree, otherwise open the directory in dired.
+	ec() {
+		if (( $# )); then
+			emacsclient -c -a '' "$@" &
+		elif [[ $(git rev-parse --is-inside-work-tree 2>/dev/null) == true ]]; then
+			emacsclient -c -a '' -e "(magit-status \"$PWD\")" &
+		else
+			emacsclient -c -a '' . &
+		fi
+	}
 fi
 
 if [[ $TERM == "dumb" ]]; then
