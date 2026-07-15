@@ -80,6 +80,7 @@ export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 export PATH="$HOMEBREW_PREFIX/opt/curl/bin:$PATH"
 
 notify() {
+	echo "\a"
 	local msg
 	local result
 	local curl_exit
