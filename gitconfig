@@ -35,7 +35,10 @@
 	clean = git-lfs clean -- %f
 [include]
     path = ~/.gitconfig-personal
-[includeIf "gitdir:**/work*/**/.git"]
+# Work repos + their worktrees. Anchored to ~/ so it won't match the
+# "worktrees" component in personal-repo worktree gitdirs.
+[includeIf "gitdir:~/work*/**"]
     path = ~/.gitconfig-work
-[includeIf "gitdir:**/workspaces/**/.git"]
+# gitconfig-codespaces [include]s gitconfig-work, then overrides for Codespaces.
+[includeIf "gitdir:**/workspaces/**"]
     path = ~/.gitconfig-codespaces

@@ -1,3 +1,7 @@
+# Inherit the work identity; overrides below are Codespace-specific (no
+# web-flow SSH signing in Codespaces yet, so sign via the GPG helper).
+[include]
+        path = ~/.gitconfig-work
 [core]
         untrackedcache = false
 [credential]
