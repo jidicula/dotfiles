@@ -174,12 +174,19 @@ There are two things you can do about this warning:
    '(:application tramp :protocol "ghcs")
    'tramp-ghcs-direct-async-profile)
 
-  (add-to-list 'tramp-connection-properties
-               (list (regexp-quote "/ghcs:")
-					 "copy-size-limit" (* 50 (* 1024))))
+  ;; Above this size, copy out of band instead of inline.  This must be the
+  ;; variable: TRAMP never reads a "copy-size-limit" connection property, so
+  ;; setting it via `tramp-connection-properties' has no effect.  1MB is the
+  ;; measured crossover for ghcs -- inline costs ~8s/MB, while out of band has
+  ;; a flat ~6.5s setup.  See the ghcs copy method in the `codespaces' block.
+  (with-eval-after-load 'tramp-sh
+    (setq tramp-copy-size-limit (* 1024 1024)))
 
   ;; Force to use ~/.ssh/config ControlMaster settings
   (setq tramp-use-ssh-controlmaster-options nil)
+  (with-eval-after-load 'tramp
+  (with-eval-after-load 'compile
+    (remove-hook 'compilation-mode-hook #'tramp-compile-disable-ssh-controlmaster-options)))
 
   ;; Use remote host's local path
   (add-to-list 'tramp-remote-path 'tramp-own-remote-path)
@@ -198,7 +205,10 @@ There are two things you can do about this warning:
 		(format "\\(%s\\)\\|\\(%s\\)"
 				vc-ignore-dir-regexp
 				tramp-file-name-regexp))
-  (setq tramp-allow-unsafe-temporary-files t))
+  (setq tramp-allow-unsafe-temporary-files t)
+
+  ;; Helps Magit use direct async processes, but fails on DOS line endings
+  (setq magit-tramp-pipe-stty-settings 'pty))
 
 ;; return to last place in file on revisit
 (use-package saveplace
@@ -502,6 +512,43 @@ There are two things you can do about this warning:
   :ensure-system-package gh
   :config
   (codespaces-setup)
+
+  ;; codespaces.el registers ghcs as a login-only method, so TRAMP transfers
+  ;; every file inline -- base64 through the shell connection, at roughly
+  ;; 8s/MB.  Teaching it to copy out of band with `gh codespace cp' adds a
+  ;; route with a flat ~6.5s cost, which wins above `tramp-copy-size-limit'
+  ;; (1MB, set in the tramp block).  A 16MB write goes from minutes to ~5s.
+  ;;
+  ;; `-e' asks gh to evaluate remote names as a shell would, matching the
+  ;; quoting TRAMP applies to them.
+  (with-eval-after-load 'tramp-sh
+    (let ((ghcs (assoc "ghcs" tramp-methods)))
+      (when (and ghcs (null (assq 'tramp-copy-program (cdr ghcs))))
+        (setcdr ghcs
+                (append (cdr ghcs)
+                        '((tramp-copy-program "gh")
+                          (tramp-copy-args (("codespace") ("cp") ("-c" "%h")
+                                            ("-e") ("-r")))
+                          (tramp-copy-file-name (("remote:") ("%f")))
+                          (tramp-copy-recursive t)))))))
+
+  ;; `gh codespace cp' cannot express remote paths containing spaces or shell
+  ;; metacharacters: it either fails or silently writes to a literally
+  ;; backslashed name.  Keep those on the inline route, which handles them
+  ;; correctly -- slower for big files, but never wrong.
+  (defconst my-ghcs-oob-safe-path-regexp
+    (rx bos (* (any "A-Za-z0-9" "_./+-@,=:")) eos)
+    "Remote paths `gh codespace cp' handles without mangling them.")
+
+  (defun my-ghcs-oob-safe-p (orig vec size)
+    "Allow out-of-band copying only where ORIG agrees and gh can express VEC."
+    (and (funcall orig vec size)
+         (or (not (equal (tramp-file-name-method vec) "ghcs"))
+             (string-match-p my-ghcs-oob-safe-path-regexp
+                             (tramp-file-name-unquote-localname vec)))))
+
+  (with-eval-after-load 'tramp-sh
+    (advice-add 'tramp-method-out-of-band-p :around #'my-ghcs-oob-safe-p))
   )
 
 (defun my-eglot-organize-imports ()

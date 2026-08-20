@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# copilot-emacs-mcp - stdio bridge to a per-Copilot-session Emacs MCP daemon.
+#
+# Copilot CLI spawns one of these per session and speaks MCP to it over stdio.
+# Each session gets its own throwaway Emacs daemon, so a synchronous TRAMP
+# operation in one session can never block another (Emacs is single-threaded),
+# and the interactive Emacs daemon stays out of the blast radius entirely.
+#
+# The daemon boots from copilot-mcp-init.el in ~2s. It outlives this process by
+# a long grace window (see copilot-mcp-init.el) rather than exiting with it,
+# because Copilot CLI also kills this wrapper when a tool call overruns its
+# budget. Surviving that lets a replacement wrapper reattach to the same daemon
+# and keep its in-flight jobs, instead of the session having to be restarted.
+#
+# Wire it up in ~/.copilot/mcp-config.json:
+#
+#   "emacs-codespace": {
+#     "type": "stdio",
+#     "command": "/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
+#     "args": [],
+#     "tools": ["eval-elisp"]
+#   }
+
+set -euo pipefail
+
+# Resolve the daemon init file next to this script so the pair stays portable.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+INIT_FILE="${COPILOT_MCP_INIT_FILE:-$SCRIPT_DIR/copilot-mcp-init.el}"
+SOCKET_DIR="${COPILOT_MCP_SOCKET_DIR:-$HOME/.emacs.d}"
+BOOT_TIMEOUT="${COPILOT_MCP_BOOT_TIMEOUT:-60}"
+PROBE_TIMEOUT="${COPILOT_MCP_PROBE_TIMEOUT:-10}"
+REAP_PROBE_TIMEOUT="${COPILOT_MCP_REAP_PROBE_TIMEOUT:-2}"
+
+# One daemon per Copilot session. The pid fallback keeps the script usable
+# outside Copilot CLI, for manual testing or other MCP clients.
+SESSION="${COPILOT_AGENT_SESSION_ID:-pid-$PPID}"
+ID="copilot-${SESSION:0:8}"
+SOCKET="$SOCKET_DIR/emacs-mcp-server-$ID.sock"
+PIDFILE="$SOCKET_DIR/emacs-mcp-server-$ID.pid"
+
+log() { printf '[copilot-emacs-mcp] %s\n' "$*" >&2; }
+die() { log "$*"; exit 1; }
+
+# Liveness of daemon $1: 0 responding, 1 not running, 2 running but wedged.
+# $2 optionally overrides how long to wait for a reply.
+#
+# The timeout matters. A daemon stuck inside a synchronous remote operation
+# accepts the connection and then never replies, so an unbounded probe would
+# hang this wrapper forever and the session would never start.
+probe_daemon() {
+	local id="$1" limit="${2:-$PROBE_TIMEOUT}" ticks=0 max_ticks probe_pid
+	max_ticks=$((limit * 5)) # 200ms per tick
+	emacsclient -s "$id" -e t >/dev/null 2>&1 &
+	probe_pid=$!
+	while kill -0 "$probe_pid" 2>/dev/null; do
+		if [[ $ticks -ge $max_ticks ]]; then
+			kill -TERM "$probe_pid" 2>/dev/null || true
+			wait "$probe_pid" 2>/dev/null || true
+			return 2
+		fi
+		sleep 0.2
+		ticks=$((ticks + 1))
+	done
+	if wait "$probe_pid"; then return 0; else return 1; fi
+}
+
+# Last resort for a daemon that no longer answers emacsclient. Its own init
+# writes the pid file for exactly this purpose; `ps' is no help because Emacs
+# mangles the daemon name there.
+force_stop_daemon() {
+	local id="$1"
+	local pidfile="$SOCKET_DIR/emacs-mcp-server-$id.pid"
+	local pid=""
+	if [[ -r $pidfile ]]; then
+		pid="$(tr -dc '0-9' <"$pidfile")"
+	fi
+	if [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null; then
+		log "force-stopping wedged daemon $id (pid $pid)"
+		kill -KILL "$pid" 2>/dev/null || true
+	fi
+	rm -f "$SOCKET_DIR/emacs-mcp-server-$id.sock" "$pidfile"
+}
+
+# Sockets outlive daemons that died hard; clear them so a stale file never
+# masks a dead daemon. Only ever touches this script's own namespace, and
+# leaves other sessions' live-but-busy daemons alone.
+#
+# These probes only need to tell "nothing is listening" from "something is",
+# and both answers come back immediately, so they get a short deadline. That
+# keeps a few wedged daemons from other sessions off this session's startup path.
+reap_stale_sockets() {
+	local sock id rc
+	shopt -s nullglob
+	for sock in "$SOCKET_DIR"/emacs-mcp-server-copilot-*.sock; do
+		id="${sock##*/emacs-mcp-server-}"
+		id="${id%.sock}"
+		[[ $id == "$ID" ]] && continue
+		rc=0
+		probe_daemon "$id" "$REAP_PROBE_TIMEOUT" || rc=$?
+		# Only rc=1 means "nothing is listening". rc=2 is a live daemon that
+		# happens to be busy, and belongs to another session; leave it be.
+		if [[ $rc -eq 1 ]]; then
+			rm -f "$sock" "$SOCKET_DIR/emacs-mcp-server-$id.pid"
+		fi
+	done
+	shopt -u nullglob
+}
+
+start_daemon() {
+	log "starting Emacs daemon $ID"
+	rm -f "$SOCKET" "$PIDFILE"
+	EMACS_MCP_SOCKET_NAME="$ID" COPILOT_MCP_PARENT_PID="$$" \
+		emacs -Q --bg-daemon="$ID" -l "$INIT_FILE" >&2 ||
+		die "failed to start Emacs daemon $ID"
+}
+
+wait_for_socket() {
+	local waited=0
+	while [[ ! -S $SOCKET ]]; do
+		if [[ $waited -ge $BOOT_TIMEOUT ]]; then
+			die "timed out after ${BOOT_TIMEOUT}s waiting for $SOCKET"
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+}
+
+main() {
+	local tool status
+	for tool in socat emacs emacsclient; do
+		command -v "$tool" >/dev/null || die "$tool is required but not installed"
+	done
+	[[ -r $INIT_FILE ]] || die "daemon init file not found: $INIT_FILE"
+
+	reap_stale_sockets
+
+	status=0
+	probe_daemon "$ID" || status=$?
+	# The probe talks to the Emacs server, which is a different socket from the
+	# MCP one socat connects to. Both have to be there for a reuse to work.
+	if [[ $status -eq 0 && ! -S $SOCKET ]]; then
+		log "daemon $ID is alive but its MCP socket is missing"
+		status=2
+	fi
+	case $status in
+	0)
+		# Same session reconnecting, e.g. after Copilot CLI killed the previous
+		# wrapper on a slow tool call. Hand the daemon our pid so its liveness
+		# watch follows the new owner, and keep every job it is still running.
+		log "reusing Emacs daemon $ID"
+		emacsclient -s "$ID" -e "(setq copilot-mcp-parent-pid $$)" >/dev/null 2>&1 ||
+			log "warning: could not refresh parent pid on daemon $ID"
+		;;
+	2)
+		# Wedged, or listening on the wrong sockets: either way it will never
+		# serve a request. Replacing it turns what used to need a full session
+		# restart into a few seconds of startup.
+		log "daemon $ID cannot serve requests; replacing it"
+		force_stop_daemon "$ID"
+		start_daemon
+		;;
+	*)
+		start_daemon
+		;;
+	esac
+
+	wait_for_socket
+	exec socat STDIO "UNIX-CONNECT:$SOCKET"
+}
+
+main "$@"

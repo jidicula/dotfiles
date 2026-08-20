@@ -6,6 +6,12 @@
         untrackedcache = false
 [credential]
         helper = /.codespaces/bin/gitcredential_github.sh
+[user]
+        # gitconfig-work sets an SSH signingkey (a macOS Secretive path) that
+        # doesn't exist in Codespaces. Reset to the GPG key ID so the signing
+        # identity is consistent with the openpgp format and gh-gpgsign helper
+        # below (gh-gpgsign signs via GitHub's API using $GITHUB_TOKEN).
+        signingkey = "EE67025B"
 [gpg]
         program = /.codespaces/bin/gh-gpgsign
 		format = "openpgp"

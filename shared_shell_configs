@@ -30,6 +30,10 @@ if [ "$CODESPACES" ]; then
 	export DOTFILESDIR="/workspaces/.codespaces/.persistedshare/dotfiles"
 	eval "$ENV_VARS"
 fi
+
+# Copilot CLI: register the dotfiles skills root (dir containing <name>/SKILL.md)
+export COPILOT_SKILLS_DIRS="$DOTFILESDIR/skills"
+
 # pipenv should be created in the project dir
 export PIPENV_VENV_IN_PROJECT=1
 
@@ -149,6 +153,7 @@ alias old='cd $OLDPWD'
 alias edp='rm .emacs-buffers & rm .emacs.desktop'
 alias code=code-insiders
 alias tailscale="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+alias caa="copilot --allow-all"
 
 
 

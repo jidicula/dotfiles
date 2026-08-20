@@ -1,0 +1,309 @@
+# Codespace execution patterns (cookbook)
+
+How to run commands and edit files inside a GitHub Codespace from the local
+Emacs daemon behind the `emacs-codespace` MCP server. Referenced by the
+`codespace-tramp` skill. Substitute:
+
+- `<CS_ID>` — the immutable Codespace `name` (id) from
+  `gh codespace list --json name`.
+- `<dir>` — the repo's working directory under `/workspaces/` inside the
+  Codespace (discover it; do not assume).
+
+Everything runs through the **`emacs-codespace-eval-elisp`** tool.
+
+## Golden rules
+
+1. **Run every Codespace command with `copilot-cs-sh`.** Never with
+   `process-file`, `start-file-process`, or `gh codespace ssh -c <id> -- <cmd>`.
+   The reason is in "Why not TRAMP" below, and it is not a style preference —
+   getting this wrong can cost the whole session.
+2. **Point the runner at the Codespace once, with `copilot-cs-use`**, before
+   doing anything else. Every later call inherits that target.
+3. **Never assume a command is fast.** On a large repository even `git status`,
+   `git fetch`, or a repo-wide `grep` can take minutes. `copilot-cs-sh` already
+   handles this; just poll when it tells you to.
+4. **Stay inside the security blocklist** (below); use the allowed primitives.
+5. **Leave the tree clean** — revert throwaway changes when done.
+
+## Why not TRAMP for commands
+
+TRAMP's `process-file` blocks single-threaded Emacs until the remote command
+returns, and `start-file-process` blocks too whenever the SSH connection has to
+be established first — so "launch it asynchronously" is not by itself a
+defence. The launch call is exactly where this bites, because it looks
+instantaneous right up until the connection needs re-establishing.
+
+A blocked daemon triggers a cascade wildly out of proportion to the command
+that caused it:
+
+1. The call outruns Copilot CLI's per-tool-call budget.
+2. Copilot CLI kills the stdio bridge.
+3. Every later tool call fails with `Transport closed`.
+4. Recovering costs a `/restart`, and with it the conversation context.
+
+`copilot-cs-sh` avoids all of this. It launches work through a *local* child
+process, so a slow or stalled connection can never block Emacs; runs the work
+in its own session (`setsid`) in the Codespace, so it survives disconnects and
+cannot be caught by a signal aimed at the connection; and streams output back
+into a local buffer, so polling is instant.
+
+## Setting the target
+
+```elisp
+(copilot-cs-use "<CS_ID>" "/workspaces/<dir>")
+```
+
+Returns immediately and starts warming the SSH connection in the background, so
+the first real command does not pay for the handshake. Call it again to switch
+Codespaces or directories.
+
+## Running commands
+
+```elisp
+(copilot-cs-sh "git status --porcelain")
+```
+
+`copilot-cs-sh` waits up to 20 seconds and then reports. Short commands come
+back with their output directly:
+
+```
+job=job-124113-002 state=done rc=0 elapsed=1.2s
+----
+ M app/models/user.rb
+```
+
+Longer ones come back with a job id to follow:
+
+```
+job=job-124114-003 state=running elapsed=20.2s -- still going; poll with (copilot-cs-poll "job-124114-003")
+----
+Running 412 tests...
+```
+
+The command is a shell string run by a **non-login, non-interactive `sh`** from
+the directory given to `copilot-cs-use`. Prefer `sh` syntax over `bash -lc`:
+some Codespaces' login-shell setup fails silently, returning rc=1 with no output
+at all, and a login shell costs an extra process on every call.
+
+The one exception is git operations that need credentials or signing, below.
+
+### Git operations that need credentials or signing
+
+`git push`, HTTPS `git fetch`, `gh` API calls, and signed `git commit` are the
+one place where the non-login shell is the wrong default. Codespaces injects
+`GITHUB_SERVER_URL`, `GITHUB_API_URL`, and `CODESPACE_NAME` into **login shells
+only**, and three separate things depend on them:
+
+- `/.codespaces/bin/gitcredential_github.sh` exits without emitting credentials
+  unless **both** `GITHUB_TOKEN` and `GITHUB_SERVER_URL` are set, so git falls
+  through to prompting and fails with
+  `could not read Username for 'https://github.com'`.
+- `gpg.program` points at `/.codespaces/bin/gh-gpgsign`, a shim that holds no
+  key and POSTs the payload to `$GITHUB_API_URL/vscs_internal/commit/sign`. With
+  `GITHUB_API_URL` unset it builds a scheme-less relative URL and dies with
+  `unsupported protocol scheme ""`. Codespaces sets `commit.gpgsign=true`, so
+  this fails *every* commit.
+- `gh` falls back to the restricted `GITHUB_TOKEN` and `gh auth status` reports
+  it invalid.
+
+`GITHUB_TOKEN` **is** present in the non-login shell, which makes all three look
+like token problems when they are really missing-URL problems. Confirm before
+theorising:
+
+```elisp
+(copilot-cs-sh "echo login=$(bash -lc env | wc -l) nonlogin=$(env | wc -l)")
+```
+
+Wrap only these commands in a login shell, and `cd` explicitly — `bash -l` does
+not inherit the runner's directory:
+
+```elisp
+(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && git push -u origin <branch>'")
+```
+
+To sign a commit that was already made unsigned, amend it through a login
+shell:
+
+```elisp
+(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && git commit --amend --no-edit'")
+```
+
+Everything else stays on plain `sh`.
+
+### Following a long job
+
+```elisp
+(copilot-cs-poll)                      ; most recent job, waits up to 20s
+(copilot-cs-poll "job-124114-003")     ; a specific job
+(copilot-cs-poll nil 25)               ; wait longer, still under the 30s cap
+```
+
+Repeat until the state is `done`. Then read everything:
+
+```elisp
+(copilot-cs-output)
+```
+
+Reports include only the tail of the output; `copilot-cs-output` always returns
+all of it.
+
+`copilot-cs-poll` reconnects on its own if the connection carrying a job's
+output has died, replaying the log from the start. A dropped SSH session
+therefore costs nothing but the time to poll again — no output is lost, and
+there is no need to notice the drop or do anything about it.
+
+A job that reports `state=failed` never started, so nothing is running; the
+output below the status line says why.
+
+### Other job operations
+
+```elisp
+(copilot-cs-status)                    ; every job this daemon knows about
+(copilot-cs-stop)                      ; ask the most recent job to stop
+(copilot-cs-attach "job-124114-003")   ; re-attach to a job from an earlier session
+```
+
+Jobs run in their own session in the Codespace, so they outlive the SSH
+connection, the Emacs daemon, and the Copilot session that started them. If a
+session dies mid-build, `copilot-cs-attach` with the old job id picks the output
+back up, including the exit code. Within a session `copilot-cs-poll` already
+does this for you; reach for `copilot-cs-attach` when the job id came from an
+*earlier* session.
+
+`copilot-cs-stop` signals the job but leaves the wrapper watching it alive, so a
+stopped job reports a real exit code (`rc=143`) rather than looking like it ran
+away. It refuses to signal a job that has already finished, since the recorded
+pid may by then belong to something else.
+
+## Searching the repository
+
+Use **ripgrep (`rg`)** rather than `grep -r`. It is dramatically faster on a
+large repository, and it skips `.git/` and `.gitignore`d files by default, so
+the results are usually the ones you actually wanted.
+
+`rg` is frequently **not on `PATH`** in a Codespace, but it is almost always
+present anyway — vendored inside the VS Code server. Resolve it once, at the
+start of the session:
+
+```elisp
+(copilot-cs-sh "command -v rg 2>/dev/null || ls -1t /vscode/bin/*/*/node_modules/@vscode/ripgrep*/bin/rg /vscode/bin/*/*/node_modules/@vscode/ripgrep*/bin/*/rg ~/.vscode-server/bin/*/node_modules/@vscode/ripgrep/bin/rg 2>/dev/null | head -1")
+```
+
+Each `copilot-cs-sh` call is a **fresh** `sh`, so a shell variable will not
+survive to the next call. Note the path it prints and use it literally:
+
+```elisp
+(copilot-cs-sh "/vscode/bin/linux-x64/<hash>/node_modules/@vscode/ripgrep-universal/bin/linux-x64/rg -n 'pattern' -g '*.rb'")
+```
+
+If that turns up nothing, fall back to **`git grep`** before `grep -r` — it
+searches tracked files only and is far quicker than walking the whole tree.
+
+Two ripgrep behaviours are worth remembering, because both cause silent misses
+rather than errors:
+
+- It **skips `.gitignore`d and hidden files**. Pass `-u` to include ignored
+  files, `-uu` to include hidden ones too.
+- It **does not follow symlinks** without `-L`. Vendored and generated
+  directories are sometimes symlinked.
+
+Searches are still Codespace commands, so run them through `copilot-cs-sh` like
+everything else — a repo-wide search is exactly the kind of command that can
+outrun the per-call budget.
+
+## Reading and writing files
+
+Read with an ordinary command:
+
+```elisp
+(copilot-cs-sh "cat relative/path/to/file")
+```
+
+Write with `copilot-cs-put`, which ships content base64-encoded, so quotes,
+newlines, `$`, and backticks need no escaping and arrive byte-for-byte:
+
+```elisp
+(copilot-cs-put "relative/path/to/file" "line 1\nline 2\n")
+```
+
+Missing parent directories are created. For small, targeted edits `sed` is
+usually less work than rewriting the whole file:
+
+```elisp
+(copilot-cs-sh "sed -i 's/OLD/NEW/' relative/path/to/file && git diff -- relative/path/to/file")
+```
+
+Always confirm edits with `git diff` before running anything against them.
+
+## Clean up
+
+```elisp
+(copilot-cs-sh "git checkout -- relative/path/to/file && git status --porcelain")
+```
+
+## Security blocklist
+
+The MCP server inspects the Elisp form you submit and refuses it if it names a
+blocked function. Blocked (non-exhaustive): `shell-command`,
+`shell-command-to-string`, `call-process`, `start-process`,
+`async-shell-command`, `directory-files`, `directory-files-recursively`,
+`find-file`, `find-file-noselect`, `write-region`, `write-file`,
+`insert-file-contents`, `delete-file`, `copy-file`, `rename-file`,
+`make-directory`, `getenv`, `setenv`, `load`, `eval`, `with-current-buffer`,
+`with-temp-file`, `kill-emacs`.
+
+Only the submitted form is inspected, not the innards of what it calls. The
+`copilot-cs-*` helpers are loaded into the daemon at boot, so they can do things
+a form you write directly cannot — which is why the runner works at all.
+
+## Using TRAMP directly (rarely, and never for commands)
+
+The `/ghcs:` TRAMP method is still configured, and Emacs-native file operations
+against `/ghcs:<CS_ID>:/workspaces/<dir>/` can be convenient. **Every one of
+them blocks the daemon for as long as the operation takes**, so reach for them
+only when an operation is certainly small and the connection is already warm —
+and never for running commands, where `copilot-cs-sh` is strictly better.
+
+| Need | Use | Notes |
+|------|-----|-------|
+| Run any command | `copilot-cs-sh` | Never `process-file`/`start-file-process`. |
+| Read a remote file | `copilot-cs-sh "cat ..."` | Not `find-file`/`insert-file-contents`. |
+| Write a remote file | `copilot-cs-put` | Base64, so no quoting or escaping issues. |
+| Stop a remote job | `copilot-cs-stop` | `kill-process`/`delete-process` are blocked. |
+| Push, or sign a commit | `copilot-cs-sh "bash -lc '…'"` | Needs a login shell; see above. |
+
+### How large TRAMP transfers are routed
+
+`codespaces.el` registers `ghcs` as a login-only method, so TRAMP transfers
+every file inline, base64'd through the shell connection. Measured against a
+real Codespace that costs roughly **8s per MB**, which for a few megabytes is
+enough on its own to overrun Copilot CLI's per-call budget.
+
+The daemon therefore also teaches `ghcs` to copy *out of band* via
+`gh codespace cp`. That route has a flat ~6.5s setup cost and is then quick, so
+`tramp-copy-size-limit` is set to 1MB — the measured crossover:
+
+| File size | Inline | Out of band |
+|-----------|--------|-------------|
+| 256 KB | 2.3s | 6.5s |
+| 1 MB | 8.0s | 6.5s |
+| 4 MB | 32.0s | 6.7s |
+| 16 MB | prompts, then minutes | 4.9s |
+
+Two caveats are handled automatically, and neither needs any thought in normal
+use:
+
+- `gh codespace cp` cannot express remote paths containing spaces or shell
+  metacharacters — it either fails or silently writes to a backslashed name. A
+  guard keeps such paths on the inline route, which handles them correctly.
+- Inline transfers above `large-file-warning-threshold` would ask for
+  confirmation, and a prompt in a headless daemon hangs it. The threshold is
+  disabled.
+
+Size is not the only gate: `tramp-method-out-of-band-p` also picks the
+out-of-band route whenever no inline encoding is available for the connection,
+regardless of size. So probing the routing decision without a live connection
+reports out-of-band for everything — connect first, or the answer is meaningless.
+
+None of this applies to `copilot-cs-sh` or `copilot-cs-put`, which do not use
+TRAMP at all. Prefer them regardless of size.
