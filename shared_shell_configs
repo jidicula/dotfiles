@@ -83,8 +83,24 @@ export PATH="$HOMEBREW_PREFIX/opt/coreutils/libexec/gnubin:$PATH"
 # Brew curl first in path
 export PATH="$HOMEBREW_PREFIX/opt/curl/bin:$PATH"
 
+bell() {
+	# Ring the terminal bell.
+	#
+	# `printf` rather than `echo`: bash's builtin echo does not interpret
+	# escapes without -e, so `echo "\a"` emits a literal backslash-a. zsh's
+	# does interpret them, which makes the bug invisible when testing
+	# interactively under zsh but breaks every #!/bin/bash caller.
+	#
+	# `/dev/tty` rather than stdout: callers such as the Copilot CLI hooks run
+	# with their stdout captured by the parent process, so a BEL written to
+	# stdout is swallowed and never reaches the terminal. /dev/tty addresses
+	# the controlling terminal directly. Fall back to stdout where there is
+	# no controlling terminal (cron, CI).
+	printf '\a' >/dev/tty 2>/dev/null || printf '\a'
+}
+
 notify() {
-	echo "\a"
+	bell
 	local msg
 	local result
 	local curl_exit
@@ -98,7 +114,8 @@ notify() {
 	curl_exit="$?"
 
 	if [ "$curl_exit" -ne 0 ] || [ "$result" -ne 200 ]; then
-		echo -e "\aNotify curl failed with $curl_exit and HTTP $result." >&2
+		bell
+		echo "Notify curl failed with $curl_exit and HTTP $result." >&2
 		return 10
 	fi
 }
