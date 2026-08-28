@@ -49,6 +49,31 @@
       inhibit-startup-screen t
       vc-handled-backends nil)
 
+;;; Never block on a prompt
+
+;; There is nobody here to answer a minibuffer question.  A daemon that asks
+;; one waits forever: it stops serving MCP entirely -- not just the offending
+;; call -- and the only way out is SIGKILL.  Verified by stack-sampling a
+;; wedged daemon, which sat in `yes-or-no-p' -> `read-from-minibuffer' while
+;; the Codespace itself was perfectly reachable.
+;;
+;; The prompt that actually fires in normal use comes from `find-file-noselect':
+;; "File X changed on disk.  Reread from disk?".  It is not an edge case here,
+;; because the workflow changes files behind open buffers as a matter of course
+;; -- any `git checkout', `git pull', or generator run through `copilot-cs-sh'
+;; does it.  Settle that one with real semantics rather than an error:
+(setq revert-without-query '(".*")     ; unmodified buffer: silently reread
+      query-about-changed-file nil     ; modified buffer: report, keep the edits
+      large-file-warning-threshold nil ; no "File is large, really open?"
+      confirm-kill-processes nil)
+
+;; Backstop for every prompt not anticipated above -- host-key confirmations,
+;; password reads, `ask-user-about-supersession-threat' on save, and anything
+;; a future package introduces.  `inhibit-interaction' turns each of them into
+;; an `inhibited-interaction' error, so an unexpected prompt costs one failed
+;; call instead of the whole session.
+(setq inhibit-interaction t)
+
 ;;; TRAMP
 ;; Mirrors the ghcs tuning in init.el.  Keep the two in sync when either moves.
 
@@ -223,6 +248,99 @@ without losing this daemon.  Override with COPILOT_MCP_ORPHAN_GRACE.")
       mcp-server-socket-conflict-resolution 'error)
 
 (mcp-server-start-unix)
+
+;;; MCP security: Emacs-native file editing, confined to the Codespace
+
+;; By default the MCP server refuses every form naming a file-visiting or
+;; buffer function, which rules out editing a remote file as a buffer.  Allow
+;; them, but only for files inside a Codespace working tree -- the daemon has
+;; no business opening or writing anything on this machine.
+;;
+;; Do NOT reach for `mcp-server-security-prompt-for-permissions' as an
+;; alternative.  It asks via `read-char-choice', which in a headless daemon
+;; blocks forever: the daemon stops answering `emacsclient' entirely and has
+;; to be SIGKILLed.  That is the exact stop-the-world failure this whole
+;; setup exists to avoid, so the allow-list is the only safe route.
+
+(require 'mcp-server-security)
+
+(setq mcp-server-security-allowed-dangerous-functions
+      '(find-file
+        find-file-noselect
+        insert-file-contents
+        write-region
+        with-current-buffer))
+
+(defconst copilot-mcp-editable-local-root "/workspaces/"
+  "Remote directory tree the MCP server may open or write.
+The actual root is formed by adding this local name to the `/ghcs:' prefix
+from each submitted path, so every Codespace is scoped independently.")
+
+(defun copilot-mcp--editable-codespace-file-p (path)
+  "Return non-nil when PATH resolves below a Codespace's `/workspaces/'.
+This resolves `..' components and symlinks; checking the submitted string's
+prefix is not enough to enforce the boundary."
+  (let ((remote-prefix (and (stringp path) (file-remote-p path))))
+    (and remote-prefix
+         (string-equal (file-remote-p path 'method) "ghcs")
+         (file-in-directory-p
+          path
+          (concat remote-prefix copilot-mcp-editable-local-root)))))
+
+(defun copilot-mcp--only-codespace-files (orig path)
+  "Treat any PATH outside a Codespace working tree as sensitive.
+ORIG is `mcp-server-security--is-sensitive-file', whose result is honoured
+for paths that are in scope, so the usual credential-name patterns still
+apply there.  Everything else is reported sensitive and therefore refused.
+
+This is enforced on the sensitive-file check rather than the allow-list
+because that check runs regardless of the allow-list, and it covers both
+arguments of `copy-file' and `rename-file' -- so it also stops a Codespace
+file being copied out to this machine.
+
+Do not reduce this to a regexp on the submitted string.  A path such as
+`/ghcs:cs:/workspaces/../etc/hosts' has the right textual prefix but resolves
+outside the allowed tree, and a symlink below `/workspaces/' can do the same.
+`file-in-directory-p' canonicalizes `..' and resolves symlinks before making
+the decision."
+  (if (copilot-mcp--editable-codespace-file-p path)
+      (funcall orig path)
+    t))
+
+(advice-add 'mcp-server-security--is-sensitive-file
+            :around #'copilot-mcp--only-codespace-files)
+
+(defun copilot-mcp--check-with-current-buffer-target (form)
+  "Restrict `with-current-buffer' in submitted FORM to a scoped file buffer.
+The upstream checker only validates a literal buffer-name string.  Wrapping a
+sensitive name in `(get-buffer NAME)' bypasses that check, and any buffer-valued
+form does the same.  Accept only the pattern this workflow needs: a direct
+`find-file-noselect' call with a literal, canonically in-scope path."
+  (when (and (consp form) (eq (car form) 'with-current-buffer))
+    (let ((target (cadr form)))
+      (unless (and (consp target)
+                   (eq (car target) 'find-file-noselect)
+                   (stringp (cadr target))
+                   (copilot-mcp--editable-codespace-file-p (cadr target)))
+        (error "Security: `with-current-buffer' requires a direct, scoped `find-file-noselect' target")))))
+
+;; `mcp-server-security--check-form-safety' calls itself recursively, so this
+;; one-form check also runs on every nested `with-current-buffer' expression.
+(advice-add 'mcp-server-security--check-form-safety
+            :before #'copilot-mcp--check-with-current-buffer-target)
+
+(defun copilot-mcp--guard-basic-save-buffer (orig &rest args)
+  "Run ORIG with ARGS only for a buffer visiting an editable Codespace file.
+`save-buffer' is not in the MCP server's dangerous-function list and has no
+path argument for its file checker to inspect.  Guarding the primitive save
+closes that gap even if another allowed form changes `buffer-file-name' before
+saving."
+  (unless (and buffer-file-name
+               (copilot-mcp--editable-codespace-file-p buffer-file-name))
+    (error "Security: refusing to save a buffer outside a Codespace /workspaces tree"))
+  (apply orig args))
+
+(advice-add 'basic-save-buffer :around #'copilot-mcp--guard-basic-save-buffer)
 
 ;; Record the pid next to the socket.  A daemon wedged inside a synchronous
 ;; remote operation stops answering `emacsclient' altogether, so the wrapper

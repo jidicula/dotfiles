@@ -31,6 +31,7 @@ SOCKET_DIR="${COPILOT_MCP_SOCKET_DIR:-$HOME/.emacs.d}"
 BOOT_TIMEOUT="${COPILOT_MCP_BOOT_TIMEOUT:-60}"
 PROBE_TIMEOUT="${COPILOT_MCP_PROBE_TIMEOUT:-10}"
 REAP_PROBE_TIMEOUT="${COPILOT_MCP_REAP_PROBE_TIMEOUT:-2}"
+MAX_RECONNECTS="${COPILOT_MCP_MAX_RECONNECTS:-10}"
 
 # One daemon per Copilot session. The pid fallback keeps the script usable
 # outside Copilot CLI, for manual testing or other MCP clients.
@@ -166,7 +167,44 @@ main() {
 	esac
 
 	wait_for_socket
-	exec socat STDIO "UNIX-CONNECT:$SOCKET"
+	serve
+}
+
+# Bridge stdio to the daemon, surviving a daemon that dies mid-session.
+#
+# This used to be `exec socat', which made the recovery logic above a
+# once-per-spawn affair: after the hand-off this process *was* socat, so a
+# daemon that died took the transport with it and the whole Copilot session
+# had to be restarted to get it back. Looping instead means a daemon crash,
+# or an operator deliberately rebuilding one to pick up new config, costs a
+# single failed tool call rather than the session.
+#
+# Reconnecting to a *fresh* daemon is safe because the MCP server dispatches
+# `tools/call' without requiring the client's `initialize' handshake first,
+# so the client never learns it is talking to a different process. State held
+# in the old daemon is gone, though -- which is why `copilot-cs-use' must be
+# called again after a restart, and why the job runner refuses to run with no
+# target rather than silently falling back to the local machine.
+serve() {
+	local attempts=0
+	while :; do
+		socat STDIO "UNIX-CONNECT:$SOCKET" || true
+
+		# socat stopped. If the daemon is still healthy then it was the
+		# client that hung up, and this session is simply over.
+		if [[ -S $SOCKET ]] && probe_daemon "$ID"; then
+			exit 0
+		fi
+
+		attempts=$((attempts + 1))
+		if [[ $attempts -gt $MAX_RECONNECTS ]]; then
+			die "daemon $ID died $attempts times; giving up"
+		fi
+		log "daemon $ID went away; rebuilding it and reconnecting"
+		force_stop_daemon "$ID"
+		start_daemon
+		wait_for_socket
+	done
 }
 
 main "$@"

@@ -57,6 +57,17 @@
 Set with `copilot-cs-use'.  When nil, commands run on the local machine,
 which is useful for testing this library without a Codespace.")
 
+(defvar copilot-cs-configured nil
+  "Non-nil once `copilot-cs-use' has chosen a target for this session.
+Local execution is a deliberate choice, not a default: until a target has
+been picked, `copilot-cs--argv' refuses to run anything at all.
+
+Without this, a nil `copilot-cs-id' silently means \"run on the operator's
+own machine\" -- the one outcome this whole workflow exists to prevent.  It
+is an easy state to reach by accident, because a replacement daemon starts
+with every variable back at its default, so commands issued after a daemon
+restart would quietly retarget from the Codespace to the local machine.")
+
 (defvar copilot-cs-dir nil
   "Working directory inside the Codespace that commands start in.")
 
@@ -114,6 +125,9 @@ concurrent sessions share one job directory inside the Codespace."
   "Return an argv list that runs COMMAND, a shell string, on the target.
 With `copilot-cs-id' set that is a Codespace over `gh codespace ssh';
 otherwise it runs locally."
+  (unless copilot-cs-configured
+    (error "copilot-cs: no target selected -- call (copilot-cs-use CS-ID DIR) \
+first; pass nil as CS-ID only if you really mean to run on this machine"))
   (if copilot-cs-id
       (list "gh" "codespace" "ssh" "-c" copilot-cs-id "--" command)
     (list "sh" "-c" command)))
@@ -317,10 +331,11 @@ Also starts warming the SSH connection in the background so the first real
 command is not the one paying for the handshake.  A nil CS-ID targets the
 local machine, which is useful for testing."
   (setq copilot-cs-id (and cs-id (not (string-empty-p cs-id)) cs-id)
-        copilot-cs-dir (or dir "."))
+        copilot-cs-dir (or dir ".")
+        copilot-cs-configured t)
   (copilot-cs-warm)
   (format "target: cs=%s dir=%s%s"
-          (or copilot-cs-id "<local>") copilot-cs-dir
+          (or copilot-cs-id "<local -- THIS MACHINE>") copilot-cs-dir
           (if copilot-cs-id " (warming connection in background)" "")))
 
 (defun copilot-cs-warm ()

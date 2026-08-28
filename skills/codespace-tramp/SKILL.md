@@ -80,7 +80,11 @@ each of these must be set up on the operator's machine:
   - `setup/copilot-emacs-mcp` — an stdio bridge that Copilot CLI spawns once per
     session. It boots a throwaway Emacs daemon keyed on
     `COPILOT_AGENT_SESSION_ID`, reuses it for the rest of the session, and
-    replaces it automatically if it ever stops responding.
+    replaces it automatically if it ever stops responding — including
+    **mid-session**: if the daemon dies while the session is running, the bridge
+    rebuilds it and reconnects on the same stdio transport, so a crash costs one
+    failed tool call instead of the session. The replacement daemon starts with
+    default state, so `copilot-cs-use` must be called again after one.
   - `setup/copilot-mcp-init.el` — the daemon's `emacs -Q` init: MCP server plus
     the TRAMP/`ghcs` configuration, and nothing else.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
@@ -118,6 +122,47 @@ each of these must be set up on the operator's machine:
 
 Assume these work; diagnose only when a call fails. See the **Troubleshooting**
 section and `references/emacs-tramp-patterns.md` for the execution cookbook.
+
+## Record problems for follow-up
+
+Whenever this workflow exposes unexpected behaviour in the skill or its
+supporting Codespace, Emacs, TRAMP, MCP, or command-runner tooling, **you MUST
+immediately document it in [`ISSUES.md`](ISSUES.md)**. Record it even if you
+find a workaround, the problem is intermittent, or you fix it during the same
+session; the purpose of the file is to preserve reproducible observations for
+later follow-up.
+
+`ISSUES.md` is part of the local skill, not the target repository in the
+Codespace. Update it with the normal local file-editing mechanism; do not try
+to write it through the `emacs-codespace` MCP server.
+
+Use the entry format and next sequential `CT-NNNN` identifier from
+`ISSUES.md`. Each report must include:
+
+- the ISO date (`YYYY-MM-DD`);
+- available session information: Copilot session name or id, target repository,
+  immutable Codespace name, and branch (write `Unknown` or `N/A` rather than
+  omitting a field);
+- observable symptoms, including expected versus actual behaviour and a short,
+  redacted error or output excerpt when one exists; and
+- basic, numbered reproduction instructions: the required starting state, the
+  action that triggers the problem, and the resulting symptom.
+
+**Describe symptoms only. Do not diagnose the problem in the report.** Do not
+record a suspected cause, assign blame to a component, propose a fix, or add
+investigative reasoning. A symptom-oriented title such as *"MCP calls time out
+after reopening a file"* is correct; *"TRAMP cache race"* is not. Diagnosis and
+resolution belong in a later follow-up, not in the initial report. Never include
+credentials, tokens, private keys, or other sensitive output.
+
+After writing an entry, **you MUST immediately notify the human operator** that
+you encountered a problem and documented it. Do not wait for the final task
+summary. Name the issue id and title, link or name `ISSUES.md`, and give a
+one-sentence symptom summary, for example:
+
+> I encountered `CT-0001 — MCP calls time out after reopening a file` and
+> documented it in `skills/codespace-tramp/ISSUES.md`. The observed symptom was
+> that subsequent MCP calls stopped returning after the file changed on disk.
 
 ## Inputs
 
@@ -321,13 +366,44 @@ SKU — show the human-readable `display_name` for each option, but remember tha
 `-m` needs the machine `name`. Store the chosen `name` as `MACHINE`. If the API
 returns no machines (or errors), ask the user to supply a machine name directly.
 
-Then create the Codespace with the selected SKU:
+Next, pick the dev container config. A repo may define several, and when it
+does `gh codespace create` tries to **prompt** for one — which fails outright
+here, because this shell has no TTY:
+
+```
+failed to prompt: no terminal
+```
+
+That message is generic: it is also what you get when the branch is ambiguous
+or the Codespace requests extra permissions. Pre-answer **all three** prompts
+rather than guessing which one fired — pass `-b`, `--default-permissions`, and
+`--devcontainer-path` every time. List the available configs first:
 
 ```bash
-gh codespace create -R "$NWO" -d "$CS_NAME" -m "$MACHINE" --default-permissions
-# add -b <branch> to target a specific branch — required if `instructions`
-# named one, since a Codespace's branch is fixed at creation time
+gh api "/repos/$NWO/codespaces/devcontainers?ref=$BRANCH" \
+  --jq '.devcontainers[] | "\(.path)\t\(.display_name)"'
 ```
+
+If there is exactly one, use its path. If there are several, **prompt the user
+with `ask_user`** to choose, showing `display_name` and passing `path` to
+`--devcontainer-path`. Prefer the repo's plainest "base"/default entry as the
+suggested default, and avoid anything self-describing as a worker or
+special-purpose image. In `github/github`, for example, ten configs are on
+offer and the general-purpose one is `.devcontainer/devcontainer.json`
+("Base Dotcom Development"); one of the others is explicitly labelled
+"don't use".
+
+Then create the Codespace:
+
+```bash
+gh codespace create -R "$NWO" -d "$CS_NAME" -m "$MACHINE" \
+  -b "$BRANCH" --devcontainer-path "$DEVCONTAINER" --default-permissions
+# the branch is fixed at creation time, so -b must be right up front — a
+# Codespace cannot be moved to another branch afterwards
+```
+
+`gh codespace create` prints the Codespace **`name`** (id) on stdout as its
+last line, so you can capture it directly instead of re-deriving it below.
 
 Then resolve the immutable Codespace **`name`** (id), which every later step
 uses to address the Codespace:
@@ -376,6 +452,17 @@ Discover the repo's working directory rather than assuming it — list
 (copilot-cs-use "<CS_ID>" "/")
 (copilot-cs-sh "ls -d /workspaces/*/")
 ```
+
+`copilot-cs-use` is mandatory, not a convenience: the runner refuses to execute
+anything until a target has been chosen, because a runner with no target
+executes on the **operator's own machine**. Re-run it after any daemon restart,
+which resets it.
+
+If you intend to edit files as Emacs buffers over TRAMP rather than through
+`copilot-cs-put`, read the cookbook's **Using TRAMP directly** section first —
+in particular the note on prompts, which are what turn a slow remote operation
+into a permanently wedged daemon. `copilot-cs-sh` working is not evidence that
+TRAMP will: they use entirely separate connections.
 
 Then **run every Codespace command with `copilot-cs-sh`**, polling with
 `copilot-cs-poll` when it reports a job is still running. See the execution
@@ -445,33 +532,41 @@ Ask the user for the correct commands if none are supplied.
   any change.
 - **`Transport closed` on every call:** the stdio bridge is gone. Copilot CLI
   kills it when a tool call overruns its budget, which is what running commands
-  through blocking TRAMP primitives causes — use `copilot-cs-sh` instead. The
-  daemon itself survives this for 15 minutes (`COPILOT_MCP_ORPHAN_GRACE`), so
-  ask the user to run `/mcp`, or `/restart` if that does not bring the bridge
-  back; either way a replacement bridge reattaches to the same daemon and its
-  jobs are still there. Any job already launched keeps running in the Codespace
-  regardless — recover it with `(copilot-cs-attach "<job-id>")`.
-- **Daemon wedged (calls hang, then time out):** the bridge now detects this on
-  its next spawn and replaces the daemon automatically, so `/mcp` is usually
-  enough. To do it by hand, note that **Copilot CLI rejects `kill` when the PID
-  comes from a substitution** — resolve the PID in one call and pass the literal
-  number in the next:
+  through blocking TRAMP primitives causes — use `copilot-cs-sh` instead. A
+  daemon that merely *dies* no longer causes this: the bridge rebuilds it and
+  reconnects by itself. `Transport closed` therefore means the **bridge**
+  process itself was killed, which only `/mcp` or `/restart` can undo. The
+  daemon survives it for 15 minutes (`COPILOT_MCP_ORPHAN_GRACE`), so the
+  replacement bridge reattaches to the same one and its jobs are still there.
+  Any job already launched keeps running in the Codespace regardless — recover
+  it with `(copilot-cs-attach "<job-id>")`.
+- **Daemon wedged on a brand-new Codespace:** if the first thing that hung was a
+  TRAMP operation (`find-file`, `file-exists-p`, `save-buffer` on a `/ghcs:`
+  path), something asked a question the daemon cannot answer. Current versions
+  of `setup/copilot-mcp-init.el` set `inhibit-interaction`, so this should
+  surface as an `inhibited-interaction` error instead; if you are seeing a true
+  hang, the daemon predates that fix. Kill it and let the bridge rebuild it.
+  Note this cannot happen through `copilot-cs-sh`, which never uses TRAMP.
+- **Commands report on the operator's dotfiles instead of the repo:**
+  `copilot-cs-use` was never called, or a daemon restart reset it, so the runner
+  had no target. Current versions refuse outright with `no target selected`;
+  just call `(copilot-cs-use "<CS_ID>" "/workspaces/<dir>")` and re-issue.
+- **Daemon wedged (calls hang, then time out):** a bridge cannot diagnose this
+  while its `socat` connection is still open, so the current call times out and
+  Copilot CLI may kill the bridge. Run `/mcp`; the replacement bridge probes the
+  daemon at startup, force-stops it when it does not answer, and starts a fresh
+  one. Use `/restart` only if `/mcp` does not respawn the bridge.
+
+  To force-stop it by hand, note that **Copilot CLI rejects `kill` when the PID
+  comes from a substitution** — resolve the PID in one call and pass the
+  literal number in the next:
 
   ```sh
   cat ~/.emacs.d/emacs-mcp-server-copilot-<session8>.pid   # then: kill -9 <that number>
   ```
 
-  To rebuild the daemon without waiting for a bridge spawn:
-
-  ```sh
-  ID=copilot-<session8>
-  rm -f ~/.emacs.d/emacs-mcp-server-$ID.sock ~/.emacs.d/emacs-mcp-server-$ID.pid
-  EMACS_MCP_SOCKET_NAME="$ID" emacs -Q --bg-daemon="$ID" \
-    -l ~/dotfiles/skills/codespace-tramp/setup/copilot-mcp-init.el
-  ```
-
-  That restores the daemon but not the bridge; the bridge still needs `/mcp` or
-  `/restart`.
+  If the bridge is still alive, the closed socket makes it rebuild and reconnect
+  automatically. If Copilot already killed the bridge, run `/mcp` afterwards.
 - **Daemon fails to boot:** run `setup/copilot-emacs-mcp` directly in a terminal
   — it logs to stderr. Usual causes are `emacs`, `emacsclient`, or `socat`
   missing from `PATH`, or `codespaces.el` not being loadable from the package

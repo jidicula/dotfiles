@@ -37,9 +37,11 @@ A blocked daemon triggers a cascade wildly out of proportion to the command
 that caused it:
 
 1. The call outruns Copilot CLI's per-tool-call budget.
-2. Copilot CLI kills the stdio bridge.
-3. Every later tool call fails with `Transport closed`.
-4. Recovering costs a `/restart`, and with it the conversation context.
+2. Copilot CLI may kill the stdio bridge.
+3. Later tool calls fail with `Transport closed` until the bridge is respawned.
+4. `/mcp` respawns it; its startup probe replaces the wedged daemon. Use
+   `/restart` only as a fallback, because that also discards conversation
+   context.
 
 `copilot-cs-sh` avoids all of this. It launches work through a *local* child
 process, so a slow or stalled connection can never block Emacs; runs the work
@@ -56,6 +58,22 @@ into a local buffer, so polling is instant.
 Returns immediately and starts warming the SSH connection in the background, so
 the first real command does not pay for the handshake. Call it again to switch
 Codespaces or directories.
+
+**Call this before anything else, and again after any daemon restart.** Until a
+target has been chosen the runner refuses to run at all:
+
+```
+copilot-cs: no target selected -- call (copilot-cs-use CS-ID DIR) first
+```
+
+That guard exists because the alternative is worse than an error. A nil
+`copilot-cs-id` means "run on the operator's own machine", and a replacement
+daemon starts with every variable back at its default — so commands issued
+after a daemon restart used to retarget silently from the Codespace to the
+local machine, with `git status` and friends reporting on the operator's
+dotfiles as if they were the repo under work. Passing nil explicitly still
+selects local execution for testing, and `copilot-cs-use` labels it
+`cs=<local -- THIS MACHINE>` so it cannot be mistaken for a Codespace.
 
 ## Running commands
 
@@ -247,14 +265,54 @@ The MCP server inspects the Elisp form you submit and refuses it if it names a
 blocked function. Blocked (non-exhaustive): `shell-command`,
 `shell-command-to-string`, `call-process`, `start-process`,
 `async-shell-command`, `directory-files`, `directory-files-recursively`,
-`find-file`, `find-file-noselect`, `write-region`, `write-file`,
-`insert-file-contents`, `delete-file`, `copy-file`, `rename-file`,
-`make-directory`, `getenv`, `setenv`, `load`, `eval`, `with-current-buffer`,
-`with-temp-file`, `kill-emacs`.
+`write-file`, `delete-file`, `copy-file`, `rename-file`, `make-directory`,
+`getenv`, `setenv`, `load`, `eval`, `with-temp-file`, `kill-emacs`.
 
 Only the submitted form is inspected, not the innards of what it calls. The
 `copilot-cs-*` helpers are loaded into the daemon at boot, so they can do things
 a form you write directly cannot — which is why the runner works at all.
+
+### File access is confined to the Codespace
+
+`setup/copilot-mcp-init.el` re-permits the file-visiting functions
+(`find-file`, `find-file-noselect`, `insert-file-contents`, `write-region`,
+`with-current-buffer`) so a remote file can be edited as a buffer, and then
+narrows *every* path the daemon may touch to
+`/ghcs:<CS_ID>:/workspaces/…`.
+
+Anything else is reported as a sensitive file and refused — including paths on
+the operator's own machine, and paths **inside** the Codespace but outside the
+working tree, such as the Codespace's `~/.ssh` or `/etc/passwd`. Because the
+same check covers both arguments of `copy-file` and `rename-file`, it also
+blocks copying a Codespace file out to the local disk.
+
+The check uses `file-in-directory-p`, not a textual prefix: it canonicalizes
+`..` components and resolves symlinks before deciding. This matters because
+`/workspaces/../etc/hosts` and a symlink below `/workspaces/` pointing to
+`/etc` both look in-scope until resolved.
+
+`with-current-buffer` is additionally restricted to this exact target shape:
+
+```elisp
+(with-current-buffer (find-file-noselect "/ghcs:<CS_ID>:/workspaces/<dir>/file")
+  ...)
+```
+
+A literal buffer name, `(get-buffer ...)`, a variable, or any other
+buffer-producing form is refused. The upstream MCP check only protected
+literal sensitive names, so `(get-buffer "*Messages*")` otherwise bypassed it.
+`basic-save-buffer` is also guarded by the visited file's canonical path,
+closing the pathless `save-buffer` route.
+
+Verified against a live Codespace: reading `/workspaces/github/README.md`
+succeeds, while remote `~/.ssh/id_rsa`, remote `/etc/passwd`, local
+`~/dotfiles/init.el`, local `~/.ssh/id_rsa`, traversal through
+`/workspaces/..`, a `/workspaces` symlink to `/etc`, and a ghcs→local
+`copy-file` are all refused.
+
+Do **not** try to widen this with `mcp-server-security-prompt-for-permissions`.
+It asks via `read-char-choice`, which in a headless daemon never returns: the
+daemon stops answering `emacsclient` entirely and has to be `kill -9`'d.
 
 ## Using TRAMP directly (rarely, and never for commands)
 
@@ -263,6 +321,53 @@ against `/ghcs:<CS_ID>:/workspaces/<dir>/` can be convenient. **Every one of
 them blocks the daemon for as long as the operation takes**, so reach for them
 only when an operation is certainly small and the connection is already warm —
 and never for running commands, where `copilot-cs-sh` is strictly better.
+
+> **Prompts, not slowness, are what wedge the daemon.** A daemon that asks a
+> minibuffer question waits forever, because nobody can answer it: it stops
+> serving MCP entirely and only `kill -9` ends it. This was diagnosed by
+> stack-sampling a wedged daemon, which sat in
+> `find-file-noselect` → `yes-or-no-p` → `read-from-minibuffer` while the
+> Codespace itself answered `gh codespace ssh` in 11s.
+>
+> The trigger is ordinary workflow, not an edge case: edit a file as a buffer,
+> then let any `copilot-cs-sh` command change that file on disk — `git checkout`,
+> `git pull`, a generator — and the next `find-file-noselect` asks *"File X
+> changed on disk. Reread from disk?"* and hangs.
+>
+> `setup/copilot-mcp-init.el` closes this off, so it should not recur:
+> `revert-without-query` silently rereads an unmodified buffer,
+> `query-about-changed-file` downgrades the modified-buffer case to a message,
+> and `inhibit-interaction` turns every remaining prompt — host keys, passwords,
+> supersession-on-save — into an `inhibited-interaction` error. Verified by
+> reproducing the exact sequence above: it now returns in 0.4s with the buffer
+> correctly reread from disk.
+>
+> Keep this in mind before adding config that prompts, and note that a stale
+> buffer is silently refreshed rather than preserved — never treat an open
+> buffer as a durable copy of what you wrote.
+
+### Editing files as buffers
+
+With file access scoped to the Codespace (see **Security blocklist**), a remote
+file can be opened, edited, and saved as an ordinary buffer:
+
+```elisp
+(with-current-buffer (find-file-noselect "/ghcs:<CS_ID>:/workspaces/<dir>/config/boot.rb")
+  (goto-char (point-max))
+  (unless (bolp) (insert "\n"))
+  (insert "# appended\n")
+  (save-buffer)
+  (list :size (buffer-size) :saved (not (buffer-modified-p))))
+```
+
+This is genuinely useful for a surgical change to an existing file, where
+rewriting the whole thing with `copilot-cs-put` would be clumsy. It stays
+subject to the blocking rule above, so keep it to small files on a warm
+connection; `copilot-cs-put` remains the right tool for whole-file writes and
+for anything large.
+
+Always confirm the result from the Codespace side rather than trusting the
+buffer's own report — `(copilot-cs-sh "git diff --stat")` is the cheap check.
 
 | Need | Use | Notes |
 |------|-----|-------|
