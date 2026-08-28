@@ -93,13 +93,22 @@ each of these must be set up on the operator's machine:
   Register it in `~/.copilot/mcp-config.json`:
 
   ```json
-  "emacs-codespace": {
-    "type": "stdio",
-    "command": "/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
-    "args": [],
-    "tools": ["eval-elisp"]
+  {
+    "mcpServers": {
+      "emacs-codespace": {
+        "type": "stdio",
+        "command": "/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
+        "args": [],
+        "tools": ["eval-elisp"],
+        "deferTools": "never"
+      }
+    }
   }
   ```
+
+  Keep the registration beneath `mcpServers`; a duplicate top-level entry is
+  ignored. This workflow depends on its one narrow tool, so load it eagerly
+  instead of relying on deferred tool discovery.
 
   **Why a dedicated per-session daemon:** Emacs is single-threaded, so any
   synchronous remote operation blocks the entire instance. Sharing one daemon
@@ -510,6 +519,10 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   get, so on plain `sh` a push fails with `could not read Username` and every
   commit fails with `unsupported protocol scheme ""`. See the cookbook's
   **Git operations that need credentials or signing**.
+- Do **not** manually stop or delete the Codespace when the task is complete.
+  Leave it running; GitHub Codespaces stops it automatically after its
+  configured idle timeout. Stop or delete it only when the human operator
+  explicitly requests that.
 - Report back against `instructions`: what you did, what you skipped, and
   anything you could not satisfy.
 
@@ -524,12 +537,17 @@ Ask the user for the correct commands if none are supplied.
 
 ## Troubleshooting
 
-- **`emacs-codespace-*` tools missing:** the MCP server did not connect. Confirm
-  the `emacs-codespace` entry in `~/.copilot/mcp-config.json` points at an
-  **absolute** path to `setup/copilot-emacs-mcp` and that the file is
-  executable, then have the user run `/mcp` or `/restart`. Copilot CLI can
-  regenerate that config and revert hand-edits, so a reload is required after
-  any change.
+- **`Found 0 tools` for `emacs-codespace`:** this is local Copilot MCP tool
+  discovery, not Codespace availability. Confirm the registration is beneath
+  `mcpServers`, includes `"tools": ["eval-elisp"]` and
+  `"deferTools": "never"`, and has no duplicate top-level entry. Starting the
+  Codespace cannot repair tool discovery. Run `/mcp` or `/restart` after
+  changing the configuration.
+- **`emacs-codespace-*` tools still missing:** the MCP server may not have
+  connected. Confirm its entry points at an **absolute** path to
+  `setup/copilot-emacs-mcp` and that the file is executable, then run `/mcp` or
+  `/restart`. Copilot CLI can regenerate this configuration and revert
+  hand-edits, so reload after any change.
 - **`Transport closed` on every call:** the stdio bridge is gone. Copilot CLI
   kills it when a tool call overruns its budget, which is what running commands
   through blocking TRAMP primitives causes — use `copilot-cs-sh` instead. A

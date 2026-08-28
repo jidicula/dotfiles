@@ -15,11 +15,16 @@
 #
 # Wire it up in ~/.copilot/mcp-config.json:
 #
-#   "emacs-codespace": {
-#     "type": "stdio",
-#     "command": "/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
-#     "args": [],
-#     "tools": ["eval-elisp"]
+#   {
+#     "mcpServers": {
+#       "emacs-codespace": {
+#         "type": "stdio",
+#         "command": "/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
+#         "args": [],
+#         "tools": ["eval-elisp"],
+#         "deferTools": "never"
+#       }
+#     }
 #   }
 
 set -euo pipefail
