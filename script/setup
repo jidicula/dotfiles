@@ -69,7 +69,7 @@ mkdir -p "$HOME/Developer/work"
 
 # Install Homebrew
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-if [[ $CODESPACES ]]; then
+if [[ $OSTYPE == linux* ]]; then
 	eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 fi
 
