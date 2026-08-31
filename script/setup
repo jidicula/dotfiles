@@ -73,6 +73,23 @@ if [[ $CODESPACES ]]; then
 	eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 fi
 
+trust_brewfile_taps() {
+	local brewfile tap
+
+	for brewfile in "$@"; do
+		while IFS= read -r tap; do
+			brew trust --tap "$tap" || return
+		done < <(sed -En 's/^[[:space:]]*tap[[:space:]]+"([^"]+)".*/\1/p' "$brewfile")
+	done
+}
+
+# Homebrew refuses to load formulae and casks from taps that have not been trusted.
+trust_brewfile_taps \
+	"$DOTFILESDIR/Brewfile" \
+	"$DOTFILESDIR/codespaces_Brewfile" \
+	"$DOTFILESDIR/macos_Brewfile" ||
+	exit
+
 # Install common Homebrew packages
 brew bundle install # TODO: maybe this needs to go before macOS deps
 BREW_STATUS="$?"
