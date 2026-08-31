@@ -512,6 +512,25 @@ Use the Secretive-only helper so `gh` cannot select or fall back to a disk key:
 /absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
 ```
 
+For an explicit transfer between the operator's machine and the Codespace, use
+the same helper's `cp` mode. Never invoke `gh codespace cp` directly: the
+helper supplies the Secretive identity and the remote-path expansion needed to
+avoid literal quote characters in absolute destinations.
+
+```bash
+# Absolute remote destination.
+/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+  /local/path/baseline.txt remote:/tmp/baseline.txt
+
+# Relative remote destinations resolve below the remote user's home directory.
+/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+  /local/path/baseline.txt remote:baseline.txt
+```
+
+Remote copy paths are restricted to simple path characters because expansion
+is unsafe for shell metacharacters. Use `copilot-cs-put` or TRAMP's inline
+transfer for a path containing spaces or metacharacters.
+
 The task itself comes from `instructions` and the issue, in that order of
 precedence. Before editing, restate in one line what you are about to change and
 why, so a misread instruction is caught early. If `instructions` named a branch,
@@ -535,12 +554,12 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   `unsupported protocol scheme ""`, and validation tooling can report that no
   token exists. See the cookbook's **Commands that need the Codespace login
   environment**.
-- Run GitHub control-plane operations such as `gh pr` and `gh workflow` with the
-  operator's **local authenticated `gh`**, always passing `-R "$NWO"` (and the
-  target branch where needed). Do not send them through `copilot-cs-sh`: the
-  Codespace token is an integration token and may return
-  `Resource not accessible by integration`. Never copy local credentials into
-  the Codespace.
+- Run GitHub control-plane operations such as `gh pr`, `gh workflow`, and
+  `gh run` with the operator's **local authenticated `gh`**, always passing
+  `-R "$NWO"` (and the target branch, run, or job where needed). Do not send
+  them through `copilot-cs-sh`: the Codespace token is an integration token and
+  may return `Bad credentials` or `Resource not accessible by integration`.
+  Never copy local credentials into the Codespace.
 - If the task leaves a code change, the final deliverable **must be a draft pull
   request**. Do not stop at an uncommitted diff, local commit, or pushed branch:
   commit and push the change in the Codespace, then use local `gh` with
@@ -658,6 +677,14 @@ Ask the user for the correct commands if none are supplied.
   Codespace integration token cannot dispatch that workflow. Run the command
   locally with the operator's authenticated CLI, including the repository and
   branch explicitly: `gh workflow run <workflow> -R "$NWO" --ref "$BRANCH"`.
+- **`gh run view` returns `Bad credentials`:** workflow runs and job logs are
+  GitHub control-plane data. Read them with the operator's local authenticated
+  CLI rather than through `copilot-cs-sh`:
+  `gh run view <run-id> -R "$NWO" --job <job-id> --log`.
+- **`gh codespace cp` fails for an absolute path or cannot find a relative
+  result:** the raw command bypassed the workflow's required transport. Use
+  `setup/copilot-ghcs cp "$CS_ID" <local-path> remote:/absolute/path` or
+  `remote:relative-path`; the latter resolves below the remote user's home.
 - **`git push` fails with `could not read Username for 'https://github.com'`:**
   you ran it on the runner's plain, non-login `sh`. Codespaces' credential
   helper needs `GITHUB_SERVER_URL`, which only login shells get. Re-run as

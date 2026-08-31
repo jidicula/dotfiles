@@ -25,6 +25,20 @@ codespace="${2:-}"
 	die "invalid Codespace id: $codespace"
 shift 2
 
+if [[ "$mode" == "cp" ]]; then
+	(( $# >= 2 )) || die "usage: copilot-ghcs cp CODESPACE SOURCE... DESTINATION"
+	remote_paths=0
+	for path in "$@"; do
+		if [[ "$path" == remote:* ]]; then
+			remote_paths=$((remote_paths + 1))
+			[[ "$path" =~ ^remote:[A-Za-z0-9_./+@,=:-]+$ ]] ||
+				die "unsafe remote copy path: $path"
+		fi
+	done
+	(( remote_paths > 0 )) ||
+		die "a copy source or destination must use the remote: prefix"
+fi
+
 [[ -S "$SECRETIVE_SOCKET" ]] ||
 	die "Secretive agent socket is unavailable: $SECRETIVE_SOCKET"
 
@@ -69,6 +83,9 @@ ssh)
 	exec gh codespace ssh -c "$codespace" -- "${ssh_args[@]}" "$@"
 	;;
 cp)
-	exec gh codespace cp -c "$codespace" -e -r -- "${ssh_args[@]}" "$@"
+	# Expansion avoids scp treating gh's protective quotes as literal path
+	# characters. Remote paths are restricted above before enabling it.
+	exec gh codespace cp -c "$codespace" --expand --recursive \
+		-- "${ssh_args[@]}" "$@"
 	;;
 esac

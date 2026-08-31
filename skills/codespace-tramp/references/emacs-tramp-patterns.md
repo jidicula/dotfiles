@@ -184,22 +184,44 @@ Everything else stays on plain `sh`.
 
 ### GitHub control-plane operations use local `gh`
 
-Creating or updating a pull request, dispatching a workflow, and similar
-GitHub API operations do not need the Codespace execution environment. Run
-them with the operator's local authenticated `gh`, not through
-`copilot-cs-sh`, and always identify the remote repository explicitly:
+Creating or updating a pull request, dispatching a workflow, reading workflow
+runs or job logs, and similar GitHub API operations do not need the Codespace
+execution environment. Run them with the operator's local authenticated `gh`,
+not through `copilot-cs-sh`, and always identify the remote repository
+explicitly:
 
 ```bash
 gh pr list -R "$NWO" --head "$BRANCH" --state open
 gh pr create -R "$NWO" --head "$BRANCH" --draft \
   --title "<title>" --body "<body>"
 gh workflow run <workflow> -R "$NWO" --ref "$BRANCH"
+gh run view <run-id> -R "$NWO" --job <job-id> --log
 ```
 
 The Codespace's `GITHUB_TOKEN` is an integration token whose permissions can
-reject operations such as workflow dispatch with
+reject these operations with errors such as `Bad credentials` or
 `Resource not accessible by integration`. Do not copy the operator's local
 credentials into the Codespace; keep these control-plane actions local.
+
+### Explicit host-to-Codespace copies
+
+Use `setup/copilot-ghcs cp` for an explicit transfer between the operator's
+machine and a Codespace. Never invoke raw `gh codespace cp`: the helper pins
+Secretive, enables the remote expansion needed for absolute paths, and rejects
+remote path characters that would make expansion unsafe.
+
+```bash
+# Write an exact absolute remote path.
+setup/copilot-ghcs cp "$CS_ID" \
+  /local/path/baseline.txt remote:/tmp/baseline.txt
+
+# A plain relative remote path is below the remote user's home directory.
+setup/copilot-ghcs cp "$CS_ID" \
+  /local/path/baseline.txt remote:baseline.txt
+```
+
+For paths containing spaces or shell metacharacters, use `copilot-cs-put` or
+TRAMP's inline transfer instead.
 
 ### Running `gh copilot` without a TTY
 
@@ -445,6 +467,8 @@ buffer's own report — `(copilot-cs-sh "git diff --stat")` is the cheap check.
 | Write a remote file | `copilot-cs-put` | Base64, so no quoting or escaping issues. |
 | Stop a remote job | `copilot-cs-stop` | `kill-process`/`delete-process` are blocked. |
 | Push, or sign a commit | `copilot-cs-sh "bash -lc '…'"` | Needs a login shell; see above. |
+| Read workflow/job logs | Local `gh run view ... -R "$NWO"` | Never through `copilot-cs-sh`. |
+| Copy a local file | `setup/copilot-ghcs cp ... remote:<path>` | Never raw `gh codespace cp`. |
 
 ### How large TRAMP transfers are routed
 
