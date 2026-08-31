@@ -157,6 +157,24 @@ later follow-up.
 Codespace. Update it with the normal local file-editing mechanism; do not try
 to write it through the `emacs-codespace` MCP server.
 
+Copilot sessions share the local worktree, so an issue-log edit left only
+unstaged can be discarded by another session's cleanup. Before assigning an id
+or editing the file, re-read its current contents and inspect both its staged
+and unstaged diffs. Immediately after **every** addition or resolution, stage
+the log itself:
+
+```bash
+git -C "/absolute/path/to/skills/codespace-tramp" diff -- ISSUES.md
+git -C "/absolute/path/to/skills/codespace-tramp" diff --cached -- ISSUES.md
+# Edit only after reading the current file and both views above.
+git -C "/absolute/path/to/skills/codespace-tramp" add -- ISSUES.md
+```
+
+This staging is required durability, not an instruction to stage other skill
+changes. Never restore `ISSUES.md` to the tracked version as task cleanup. If
+an expected entry is absent from the worktree but present in the staged diff,
+recover and merge it before assigning another id.
+
 Use the entry format and next sequential `CT-NNNN` identifier from
 `ISSUES.md`. Each report must include:
 
@@ -642,12 +660,14 @@ Ask the user for the correct commands if none are supplied.
   build directory.
 - **`Security: 'FUNC' is blocked`:** you used a blocklisted Elisp function.
   Switch to the `copilot-cs-*` helper from the cookbook.
-- **`Execution timeout exceeded`:** you ran something blocking inline. Every
-  command belongs in `copilot-cs-sh`, which cannot exceed the cap.
+- **`Execution timeout exceeded`:** if it came from a runner poll, the daemon
+  predates the bounded-wait fix or the call used an old helper; current runner
+  calls clamp every wait to 15 seconds. For other calls, you likely ran
+  something blocking inline. Every command belongs in `copilot-cs-sh`.
 - **`Wrong number of arguments ... 3` from `copilot-cs-poll`:** the function
-  accepts at most two arguments: `(copilot-cs-poll "job-id" 25)` polls a named
-  job for up to 25 seconds, while `(copilot-cs-poll nil 25)` applies that wait
-  to the most recent job.
+  accepts at most two arguments: `(copilot-cs-poll "job-id" 15)` polls a named
+  job for up to 15 seconds, while `(copilot-cs-poll nil 15)` applies that wait
+  to the most recent job. Larger waits are clamped to 15 seconds.
 - **`sign_and_send_pubkey` reports an agent refusal or communication failure:**
   if the remote command then succeeds, the daemon predates the Secretive-only
   transport and fell back to another key; run `/mcp` or `/restart`. Current

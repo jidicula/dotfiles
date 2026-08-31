@@ -84,7 +84,7 @@ selects local execution for testing, and `copilot-cs-use` labels it
 (copilot-cs-sh "git status --porcelain")
 ```
 
-`copilot-cs-sh` waits up to 20 seconds and then reports. Short commands come
+`copilot-cs-sh` waits up to 10 seconds and then reports. Short commands come
 back with their output directly:
 
 ```
@@ -96,7 +96,7 @@ job=job-124113-002 state=done rc=0 elapsed=1.2s
 Longer ones come back with a job id to follow:
 
 ```
-job=job-124114-003 state=running elapsed=20.2s -- still going; poll with (copilot-cs-poll "job-124114-003")
+job=job-124114-003 state=running elapsed=10.2s -- still going; poll with (copilot-cs-poll "job-124114-003")
 ----
 Running 412 tests...
 ```
@@ -241,11 +241,15 @@ not require copying the operator's local installation or credentials.
 ### Following a long job
 
 ```elisp
-(copilot-cs-poll)                      ; most recent job, waits up to 20s
+(copilot-cs-poll)                      ; most recent job, waits up to 10s
 (copilot-cs-poll "job-124114-003")     ; a specific job
-(copilot-cs-poll nil 25)               ; wait longer, still under the 30s cap
-(copilot-cs-poll "job-124114-003" 25)  ; named job with a custom wait
+(copilot-cs-poll nil 15)               ; longest supported wait
+(copilot-cs-poll "job-124114-003" 15)  ; named job with a custom wait
 ```
+
+Wait values above 15 seconds are clamped. Repeated short polls leave enough
+time for MCP request and response overhead while the detached job continues
+unaffected in the Codespace.
 
 Repeat until the state is `done`. Then read everything:
 

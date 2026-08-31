@@ -79,9 +79,14 @@ restart would quietly retarget from the Codespace to the local machine.")
 (defvar copilot-cs-dir nil
   "Working directory inside the Codespace that commands start in.")
 
-(defvar copilot-cs-default-wait 20
-  "Seconds `copilot-cs-sh' and `copilot-cs-poll' wait before reporting back.
-Kept comfortably under the MCP server's 30s per-call execution limit.")
+(defvar copilot-cs-default-wait 10
+  "Seconds runner calls wait by default before reporting back.
+Kept well below the MCP tool's execution limit.")
+
+(defconst copilot-cs-max-wait 15
+  "Maximum seconds any single runner call may wait before reporting.
+This leaves time for MCP request and response overhead instead of consuming
+the complete tool-call budget inside the Emacs event loop.")
 
 (defvar copilot-cs-tail-bytes 4000
   "Maximum bytes of job output included in a status report.
@@ -293,10 +298,17 @@ the job running with nobody listening; this picks it back up."
       job
     (copilot-cs--resume job)))
 
+(defun copilot-cs--bounded-wait (seconds)
+  "Return SECONDS constrained to the safe wait interval."
+  (unless (numberp seconds)
+    (error "copilot-cs: wait must be a number, got %S" seconds))
+  (min copilot-cs-max-wait (max 0 seconds)))
+
 (defun copilot-cs--settle (job seconds)
-  "Let JOB run for up to SECONDS, returning early once it finishes.
-Waits by running the Emacs event loop, so the daemon stays responsive."
-  (let ((deadline (+ (float-time) seconds))
+  "Let JOB run briefly, returning early once it finishes.
+SECONDS is capped at `copilot-cs-max-wait'. Waits by running the Emacs event
+loop, so the daemon stays responsive."
+  (let ((deadline (+ (float-time) (copilot-cs--bounded-wait seconds)))
         (process (plist-get job :process)))
     (while (and (null (copilot-cs--rc job))
                 (process-live-p process)
@@ -370,9 +382,9 @@ COMMAND is a shell string, run by `sh' from `copilot-cs-dir'.  It is
 launched detached and its output streamed back, so this call cannot block
 the daemon no matter how long the command takes.
 
-Waits up to WAIT seconds (default `copilot-cs-default-wait') for it to
-finish.  Short commands therefore return their output directly; longer ones
-return a job id to hand to `copilot-cs-poll'."
+Waits up to WAIT seconds (default `copilot-cs-default-wait', capped at
+`copilot-cs-max-wait') for it to finish. Short commands therefore return their
+output directly; longer ones return a job id to hand to `copilot-cs-poll'."
   (let* ((id (copilot-cs--new-id))
          (job (copilot-cs--start id (copilot-cs--launcher id command) command)))
     (copilot-cs--report
@@ -380,10 +392,10 @@ return a job id to hand to `copilot-cs-poll'."
 
 (defun copilot-cs-poll (&optional id wait)
   "Report on job ID, defaulting to the most recent job.
-Waits up to WAIT seconds (default `copilot-cs-default-wait') for it to
-finish before reporting.  If the connection carrying the job's output has
-died, this silently reconnects, so a dropped SSH session costs nothing but
-the time to poll again."
+Waits up to WAIT seconds (default `copilot-cs-default-wait', capped at
+`copilot-cs-max-wait') for it to finish before reporting. If the connection
+carrying the job's output has died, this silently reconnects, so a dropped SSH
+session costs nothing but the time to poll again."
   (copilot-cs--report
    (copilot-cs--settle (copilot-cs--live (copilot-cs--job id))
                        (or wait copilot-cs-default-wait))))

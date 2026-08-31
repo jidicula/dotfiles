@@ -23,7 +23,10 @@ reports are observation logs, not diagnoses.
    may update the status and resolution without rewriting the original symptom
    report. When resolving an entry, move the whole unchanged report beneath
    **Resolved issues**.
-8. Immediately notify the human operator after adding an entry. Include its id,
+8. Before editing, re-read the working file and its staged and unstaged diffs
+   so concurrent session changes are preserved. Immediately stage `ISSUES.md`
+   after every addition or resolution; never leave the only copy unstaged.
+9. Immediately notify the human operator after adding an entry. Include its id,
    title, this file's path, and a one-sentence symptom summary; do not defer the
    notification to the final task summary.
 
