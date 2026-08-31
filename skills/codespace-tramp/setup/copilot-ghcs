@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# Run gh Codespaces SSH operations with a Secretive-backed identity only.
+#
+# gh requires an identity path whose sibling <path>.pub can be uploaded to the
+# Codespace. Secretive exposes public-key stand-in files but no private key, so
+# this wrapper creates two symlinks to the active stand-in. OpenSSH reads the
+# public key from the base path and delegates signing to Secretive.
+
+set -euo pipefail
+
+SECRETIVE_DATA_DIR="${COPILOT_SECRETIVE_DATA_DIR:-$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data}"
+SECRETIVE_SOCKET="${COPILOT_SECRETIVE_AGENT_SOCKET:-${COPILOT_SECRETIVE_SOCKET:-$SECRETIVE_DATA_DIR/socket.ssh}}"
+SECRETIVE_PUBLIC_KEYS_DIR="${COPILOT_SECRETIVE_PUBLIC_KEYS_DIR:-$SECRETIVE_DATA_DIR/PublicKeys}"
+SECRETIVE_STANDIN="${COPILOT_SECRETIVE_STANDIN:-$HOME/.ssh/secretive-codespaces}"
+
+log() { printf '[copilot-ghcs] %s\n' "$*" >&2; }
+die() { log "$*"; exit 1; }
+
+mode="${1:-}"
+codespace="${2:-}"
+[[ "$mode" == "ssh" || "$mode" == "cp" ]] ||
+	die "usage: copilot-ghcs {ssh|cp} CODESPACE [arguments...]"
+[[ "$codespace" =~ ^[A-Za-z0-9._-]+$ ]] ||
+	die "invalid Codespace id: $codespace"
+shift 2
+
+[[ -S "$SECRETIVE_SOCKET" ]] ||
+	die "Secretive agent socket is unavailable: $SECRETIVE_SOCKET"
+
+public_key="${COPILOT_SECRETIVE_PUBLIC_KEY:-}"
+if [[ -z "$public_key" ]]; then
+	if ! active_key=$(SSH_AUTH_SOCK="$SECRETIVE_SOCKET" ssh-add -L 2>/dev/null |
+		sed -n '1p'); then
+		die "Secretive did not return an SSH identity"
+	fi
+	[[ -n "$active_key" ]] || die "Secretive has no active SSH identity"
+
+	for candidate in "$SECRETIVE_PUBLIC_KEYS_DIR"/*.pub; do
+		[[ -f "$candidate" ]] || continue
+		if [[ "$(sed -n '1p' "$candidate")" == "$active_key" ]]; then
+			public_key="$candidate"
+			break
+		fi
+	done
+fi
+
+[[ -f "$public_key" ]] ||
+	die "the active Secretive public-key stand-in could not be found"
+
+standin_dir=$(dirname "$SECRETIVE_STANDIN")
+mkdir -p "$standin_dir"
+chmod 700 "$standin_dir"
+for path in "$SECRETIVE_STANDIN" "$SECRETIVE_STANDIN.pub"; do
+	[[ ! -e "$path" || -L "$path" ]] ||
+		die "refusing to replace non-symlink path: $path"
+done
+ln -sfn "$public_key" "$SECRETIVE_STANDIN"
+ln -sfn "$public_key" "$SECRETIVE_STANDIN.pub"
+
+ssh_args=(
+	-i "$SECRETIVE_STANDIN"
+	-o "IdentitiesOnly=yes"
+	-o "IdentityAgent=$SECRETIVE_SOCKET"
+)
+
+case "$mode" in
+ssh)
+	exec gh codespace ssh -c "$codespace" -- "${ssh_args[@]}" "$@"
+	;;
+cp)
+	exec gh codespace cp -c "$codespace" -e -r -- "${ssh_args[@]}" "$@"
+	;;
+esac

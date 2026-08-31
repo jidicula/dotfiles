@@ -78,6 +78,9 @@
 ;; Mirrors the ghcs tuning in init.el.  Keep the two in sync when either moves.
 
 (require 'tramp)
+;; Declare shell-method variables before submitted forms can dynamically bind
+;; them during the first remote operation.
+(require 'tramp-sh)
 
 (setq tramp-persistency-file-name
       (expand-file-name (format "tramp-%s" copilot-mcp-id)
@@ -126,6 +129,17 @@
 (require 'codespaces)
 (codespaces-setup)
 
+;; Route TRAMP's interactive shell through the same Secretive-only wrapper as
+;; the detached command runner.
+(defconst copilot-mcp-ghcs-program
+  (expand-file-name "copilot-ghcs" copilot-mcp-setup-dir))
+(let ((ghcs (assoc "ghcs" tramp-methods)))
+  (when ghcs
+    (setf (cadr (assq 'tramp-login-program (cdr ghcs)))
+          copilot-mcp-ghcs-program
+          (cadr (assq 'tramp-login-args (cdr ghcs)))
+          '(("ssh") ("%h")))))
+
 ;;; Out-of-band file copying
 ;; codespaces.el registers ghcs as a login-only method, so every transfer is
 ;; inline: the file is base64'd through the shell connection.  That is the
@@ -133,10 +147,11 @@
 ;; measured against a real Codespace, a write costs roughly 8s/MB, so a 4MB
 ;; file takes over 30s.  That alone can exceed Copilot CLI's per-call budget.
 ;;
-;; Teaching ghcs to copy out of band with `gh codespace cp' gives TRAMP a
-;; second option.  It has a flat ~6.5s setup cost and is then near-instant, so
-;; it wins above roughly 1MB and gets dramatically better from there (a 16MB
-;; write: ~5s out of band, versus minutes inline).
+;; Teaching ghcs to copy out of band through `copilot-ghcs cp' gives TRAMP a
+;; second option while retaining Secretive authentication. It has a flat ~6.5s
+;; setup cost and is then near-instant, so it wins above roughly 1MB and gets
+;; dramatically better from there (a 16MB write: ~5s out of band, versus
+;; minutes inline).
 ;;
 ;; `-e' asks gh to evaluate remote names as a shell would, which is what TRAMP
 ;; assumes when it quotes them.
@@ -144,9 +159,8 @@
   (when (and ghcs (null (assq 'tramp-copy-program (cdr ghcs))))
     (setcdr ghcs
             (append (cdr ghcs)
-                    '((tramp-copy-program "gh")
-                      (tramp-copy-args (("codespace") ("cp") ("-c" "%h")
-                                        ("-e") ("-r")))
+                    `((tramp-copy-program ,copilot-mcp-ghcs-program)
+                      (tramp-copy-args (("cp") ("%h")))
                       (tramp-copy-file-name (("remote:") ("%f")))
                       (tramp-copy-recursive t))))))
 

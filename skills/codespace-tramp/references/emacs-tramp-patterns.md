@@ -9,11 +9,14 @@ Emacs daemon behind the `emacs-codespace` MCP server. Referenced by the
 - `<dir>` — the repo's working directory under `/workspaces/` inside the
   Codespace (discover it; do not assume).
 
-Everything runs through the **`emacs-codespace-eval-elisp`** tool.
+Repository commands and file operations run through the
+**`emacs-codespace-eval-elisp`** tool. GitHub control-plane operations use the
+operator's local authenticated `gh`, as described below.
 
 ## Golden rules
 
-1. **Run every Codespace command with `copilot-cs-sh`.** Never with
+1. **Run every command whose execution environment is the Codespace with
+   `copilot-cs-sh`.** Never with
    `process-file`, `start-file-process`, or `gh codespace ssh -c <id> -- <cmd>`.
    The reason is in "Why not TRAMP" below, and it is not a style preference —
    getting this wrong can cost the whole session.
@@ -98,19 +101,38 @@ job=job-124114-003 state=running elapsed=20.2s -- still going; poll with (copilo
 Running 412 tests...
 ```
 
+Before the remote launcher prints its acknowledgement, the report uses
+`state=connecting`, not `state=running`. No remote job is known to have started
+yet. This usually means the Codespace is connecting or Secretive is waiting for
+approval; approve the request and poll the same job instead of launching a
+duplicate.
+
 The command is a shell string run by a **non-login, non-interactive `sh`** from
 the directory given to `copilot-cs-use`. Prefer `sh` syntax over `bash -lc`:
 some Codespaces' login-shell setup fails silently, returning rc=1 with no output
 at all, and a login shell costs an extra process on every call.
 
-The one exception is git operations that need credentials or signing, below.
+The one exception is commands that need the Codespace's login-shell
+environment, below.
 
-### Git operations that need credentials or signing
+The runner routes SSH and out-of-band copies through `setup/copilot-ghcs`. The
+helper presents the active Secretive public-key stand-in in the base-plus-`.pub`
+shape required by `gh`, pins Secretive's agent socket, and enables
+`IdentitiesOnly=yes`. All private signing remains in Secretive. If signing is
+not approved, the connection fails instead of silently succeeding with
+`~/.ssh/codespaces.auto` or another disk key.
 
-`git push`, HTTPS `git fetch`, `gh` API calls, and signed `git commit` are the
-one place where the non-login shell is the wrong default. Codespaces injects
-`GITHUB_SERVER_URL`, `GITHUB_API_URL`, and `CODESPACE_NAME` into **login shells
-only**, and three separate things depend on them:
+Do not replace this with raw `gh codespace ssh` or `gh codespace cp`. If
+Secretive authentication fails three times, stop and prompt the operator before
+trying again; they may be away from the computer and unable to approve the
+request.
+
+### Commands that need the Codespace login environment
+
+`git push`, HTTPS `git fetch`, signed `git commit`, and repository commands that
+fetch authenticated remote data are where the non-login shell is the wrong
+default. Codespaces injects `GITHUB_SERVER_URL`, `GITHUB_API_URL`, and
+`CODESPACE_NAME` into **login shells only**, and several things depend on them:
 
 - `/.codespaces/bin/gitcredential_github.sh` exits without emitting credentials
   unless **both** `GITHUB_TOKEN` and `GITHUB_SERVER_URL` are set, so git falls
@@ -123,6 +145,9 @@ only**, and three separate things depend on them:
   this fails *every* commit.
 - `gh` falls back to the restricted `GITHUB_TOKEN` and `gh auth status` reports
   it invalid.
+- Repository validation tools that fetch coverage maps or other protected
+  artifacts may report `No token found` when the URLs or related login
+  environment are absent.
 
 `GITHUB_TOKEN` **is** present in the non-login shell, which makes all three look
 like token problems when they are really missing-URL problems. Confirm before
@@ -139,6 +164,15 @@ not inherit the runner's directory:
 (copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && git push -u origin <branch>'")
 ```
 
+The same pattern applies to an authenticated validation command:
+
+```elisp
+(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && <validation-command>'")
+```
+
+Do not print, copy, or manually export a token. The login shell supplies the
+environment through the Codespace's normal configuration.
+
 To sign a commit that was already made unsigned, amend it through a login
 shell:
 
@@ -148,12 +182,47 @@ shell:
 
 Everything else stays on plain `sh`.
 
+### GitHub control-plane operations use local `gh`
+
+Creating or updating a pull request, dispatching a workflow, and similar
+GitHub API operations do not need the Codespace execution environment. Run
+them with the operator's local authenticated `gh`, not through
+`copilot-cs-sh`, and always identify the remote repository explicitly:
+
+```bash
+gh pr list -R "$NWO" --head "$BRANCH" --state open
+gh pr create -R "$NWO" --head "$BRANCH" --draft \
+  --title "<title>" --body "<body>"
+gh workflow run <workflow> -R "$NWO" --ref "$BRANCH"
+```
+
+The Codespace's `GITHUB_TOKEN` is an integration token whose permissions can
+reject operations such as workflow dispatch with
+`Resource not accessible by integration`. Do not copy the operator's local
+credentials into the Codespace; keep these control-plane actions local.
+
+### Running `gh copilot` without a TTY
+
+`gh copilot` normally prompts before downloading Copilot CLI when the binary is
+absent. The runner deliberately has no TTY, so that prompt is unavailable and
+`gh` exits with `Copilot CLI not installed`. Set `CI=1` on the first and
+subsequent non-interactive invocations; `gh` then performs its supported
+prompt-free download:
+
+```elisp
+(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && CI=1 gh copilot -- <copilot-arguments>'")
+```
+
+This installs the CLI in `gh`'s data directory inside the Codespace. It does
+not require copying the operator's local installation or credentials.
+
 ### Following a long job
 
 ```elisp
 (copilot-cs-poll)                      ; most recent job, waits up to 20s
 (copilot-cs-poll "job-124114-003")     ; a specific job
 (copilot-cs-poll nil 25)               ; wait longer, still under the 30s cap
+(copilot-cs-poll "job-124114-003" 25)  ; named job with a custom wait
 ```
 
 Repeat until the state is `done`. Then read everything:

@@ -52,10 +52,18 @@
 
 ;;; Configuration
 
+(defconst copilot-cs-setup-dir
+  (file-name-directory (or load-file-name buffer-file-name default-directory))
+  "Directory holding this runner and its companion programs.")
+
 (defvar copilot-cs-id nil
   "Immutable Codespace name (id) that commands are sent to.
 Set with `copilot-cs-use'.  When nil, commands run on the local machine,
 which is useful for testing this library without a Codespace.")
+
+(defvar copilot-cs-ghcs-program
+  (expand-file-name "copilot-ghcs" copilot-cs-setup-dir)
+  "Program that runs Codespace SSH through Secretive.")
 
 (defvar copilot-cs-configured nil
   "Non-nil once `copilot-cs-use' has chosen a target for this session.
@@ -129,7 +137,10 @@ otherwise it runs locally."
     (error "copilot-cs: no target selected -- call (copilot-cs-use CS-ID DIR) \
 first; pass nil as CS-ID only if you really mean to run on this machine"))
   (if copilot-cs-id
-      (list "gh" "codespace" "ssh" "-c" copilot-cs-id "--" command)
+      ;; The wrapper pins Secretive and refuses disk-key fallback. A signing
+      ;; failure therefore fails this connection instead of printing an agent
+      ;; error and then succeeding with an unrelated identity.
+      (list copilot-cs-ghcs-program "ssh" copilot-cs-id command)
     (list "sh" "-c" command)))
 
 (defun copilot-cs--launcher (id command)
@@ -309,6 +320,11 @@ Waits by running the Emacs event loop, so the daemon stays responsive."
     (concat
      (cond
       (rc (format "job=%s state=done rc=%d elapsed=%.1fs" id rc elapsed))
+      ((and (process-live-p process) (not (copilot-cs--acked-p job)))
+       (format "job=%s state=connecting elapsed=%.1fs -- waiting for the \
+Codespace connection or Secretive approval; no remote job has been \
+acknowledged yet; approve Secretive, then poll with \
+(copilot-cs-poll \"%s\")" id elapsed id))
       ((process-live-p process)
        (format "job=%s state=running elapsed=%.1fs -- still going; \
 poll with (copilot-cs-poll \"%s\")" id elapsed id))

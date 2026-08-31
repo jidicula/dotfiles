@@ -21,7 +21,8 @@ reports are observation logs, not diagnoses.
 6. Redact credentials and sensitive data from commands and output excerpts.
 7. Leave **Resolution** as `Pending follow-up` when filing. A later follow-up
    may update the status and resolution without rewriting the original symptom
-   report.
+   report. When resolving an entry, move the whole unchanged report beneath
+   **Resolved issues**.
 8. Immediately notify the human operator after adding an entry. Include its id,
    title, this file's path, and a one-sentence symptom summary; do not defer the
    notification to the final task summary.

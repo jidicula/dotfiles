@@ -77,6 +77,12 @@ each of these must be set up on the operator's machine:
 - A **per-session Emacs MCP server** registered as **`emacs-codespace`**, which
   you invoke through the `emacs-codespace-eval-elisp` tool. The `setup/`
   directory in this skill provides it:
+  - `setup/copilot-ghcs` — the sole SSH/copy transport for this workflow. It
+    resolves the active Secretive public-key stand-in, presents it in the
+    two-path shape `gh` requires, pins the Secretive agent socket, and enables
+    `IdentitiesOnly=yes`. Private signing remains in Secretive, and a refused
+    signing request fails rather than falling back to an on-disk or
+    `codespaces.auto` key.
   - `setup/copilot-emacs-mcp` — an stdio bridge that Copilot CLI spawns once per
     session. It boots a throwaway Emacs daemon keyed on
     `COPILOT_AGENT_SESSION_ID`, reuses it for the rest of the session, and
@@ -128,6 +134,12 @@ each of these must be set up on the operator's machine:
   instead (see Step 5).
 - The **GitHub CLI** (`gh`) installed and authenticated, and **`socat`**
   installed.
+- **Secretive** installed with its SSH agent enabled and at least one active
+  identity. `setup/copilot-ghcs` uses Secretive's standard data directory by
+  default. `COPILOT_SECRETIVE_AGENT_SOCKET` selects another socket
+  (`COPILOT_SECRETIVE_SOCKET` remains a compatibility alias), and the other
+  `COPILOT_SECRETIVE_*` variables support a different data directory or an
+  explicitly selected public-key stand-in.
 
 Assume these work; diagnose only when a call fails. See the **Troubleshooting**
 section and `references/emacs-tramp-patterns.md` for the execution cookbook.
@@ -443,7 +455,7 @@ done
 Run this as one synchronous shell call with a long `initial_wait` (it returns as
 soon as the state is `Available`), or asynchronously and read once. To start a
 reused `Shutdown` Codespace, initiate a connection (the Step 5 pre-warm
-`gh codespace ssh … -- true` boots it), then poll for readiness as above.
+through `setup/copilot-ghcs` boots it), then poll for readiness as above.
 
 ## Step 5 — Connect and make the changes
 
@@ -492,11 +504,12 @@ whole session's transport, not just that call. On a large repository even
 the normal case rather than an edge case. `copilot-cs-sh` runs work detached and
 non-blocking, and its jobs survive a disconnect.
 
-`gh codespace ssh` remains useful as a **connection primitive** — pre-warming
-and booting a `Shutdown` Codespace — but never as a command runner:
+`gh codespace ssh` remains useful internally as a **connection primitive** —
+pre-warming and booting a `Shutdown` Codespace — but never invoke it directly.
+Use the Secretive-only helper so `gh` cannot select or fall back to a disk key:
 
 ```bash
-gh codespace ssh -c "$CS_ID" -- true   # pre-warm/boot only
+/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
 ```
 
 The task itself comes from `instructions` and the issue, in that order of
@@ -504,7 +517,7 @@ precedence. Before editing, restate in one line what you are about to change and
 why, so a misread instruction is caught early. If `instructions` named a branch,
 check it out here (or confirm Step 4 already created the Codespace on it).
 
-## Step 6 — Validate and clean up
+## Step 6 — Validate, publish, and clean up
 
 - Run the repository's tests/linters/type-checks in the Codespace to verify your
   change — preferring any commands given in `instructions`, otherwise the
@@ -513,12 +526,31 @@ check it out here (or confirm Step 4 already created the Codespace on it).
 - Revert any throwaway/exploratory edits and confirm a clean tree
   (`git checkout -- <file>` then `git status --porcelain`) unless the user asked
   to keep the changes — either in `instructions` or in conversation.
-- If you commit or push, wrap **those** commands in a login shell
-  (`bash -lc 'cd <dir> && …'`). Codespaces' git credential helper and its
-  commit-signing shim both read environment variables that only login shells
-  get, so on plain `sh` a push fails with `could not read Username` and every
-  commit fails with `unsupported protocol scheme ""`. See the cookbook's
-  **Git operations that need credentials or signing**.
+- Wrap signed commits, pushes, authenticated fetches, and repository commands
+  that fetch protected remote data in a login shell
+  (`bash -lc 'cd <dir> && …'`). Codespaces' git credential and commit-signing
+  helpers, plus some repository tooling, read authentication environment
+  variables that only login shells get. On plain `sh`, a push can fail with
+  `could not read Username`, a commit can fail with
+  `unsupported protocol scheme ""`, and validation tooling can report that no
+  token exists. See the cookbook's **Commands that need the Codespace login
+  environment**.
+- Run GitHub control-plane operations such as `gh pr` and `gh workflow` with the
+  operator's **local authenticated `gh`**, always passing `-R "$NWO"` (and the
+  target branch where needed). Do not send them through `copilot-cs-sh`: the
+  Codespace token is an integration token and may return
+  `Resource not accessible by integration`. Never copy local credentials into
+  the Codespace.
+- If the task leaves a code change, the final deliverable **must be a draft pull
+  request**. Do not stop at an uncommitted diff, local commit, or pushed branch:
+  commit and push the change in the Codespace, then use local `gh` with
+  `-R "$NWO"` to reuse the current branch's open draft PR or create one with
+  `gh pr create -R "$NWO" --draft --head "$BRANCH"` plus a task-derived title
+  and body. If an open PR already exists but is ready for review, return it to
+  draft with `gh pr ready --undo` rather than opening a duplicate. Lead the
+  final response with the full draft PR URL. Skip this only when the user
+  explicitly requested no commit, push, or PR, or when the task was read-only
+  and retained no code change.
 - Do **not** manually stop or delete the Codespace when the task is complete.
   Leave it running; GitHub Codespaces stops it automatically after its
   configured idle timeout. Stop or delete it only when the human operator
@@ -593,10 +625,39 @@ Ask the user for the correct commands if none are supplied.
   Switch to the `copilot-cs-*` helper from the cookbook.
 - **`Execution timeout exceeded`:** you ran something blocking inline. Every
   command belongs in `copilot-cs-sh`, which cannot exceed the cap.
+- **`Wrong number of arguments ... 3` from `copilot-cs-poll`:** the function
+  accepts at most two arguments: `(copilot-cs-poll "job-id" 25)` polls a named
+  job for up to 25 seconds, while `(copilot-cs-poll nil 25)` applies that wait
+  to the most recent job.
+- **`sign_and_send_pubkey` reports an agent refusal or communication failure:**
+  if the remote command then succeeds, the daemon predates the Secretive-only
+  transport and fell back to another key; run `/mcp` or `/restart`. Current
+  versions either authenticate with Secretive or fail without fallback. Retry
+  Secretive authentication at most three times. After the third failure, stop
+  and prompt the human operator before trying again so they can return and
+  approve the signing request. Never create or select `~/.ssh/codespaces.auto`
+  or another on-disk private key as a workaround.
+- **A short command reports `state=connecting` with no output:** no remote job
+  has been acknowledged yet. The Codespace may still be connecting, but an
+  unanswered Secretive request is the usual cause. Approve it, then poll the
+  same job id. Do not launch a replacement job while the original connection
+  is still pending.
 - **A command returns rc=1 with no output at all:** you used `bash -lc`. Some
   Codespaces' login shell setup breaks it silently. Use `sh` syntax, which is
-  what `copilot-cs-sh` runs — except for the two git cases below, which need a
-  login shell.
+  what `copilot-cs-sh` runs, except for commands that explicitly need the
+  Codespace login environment.
+- **Repository validation reports `No token found`:** if the command fetches
+  protected remote data, rerun that exact command as
+  `bash -lc 'cd <dir> && <command>'`. Do not print, export, or copy the token;
+  the login shell supplies the environment the repository tool expects.
+- **`gh copilot` reports `Copilot CLI not installed`:** the runner has no TTY,
+  so `gh` refuses its normal installation prompt. Prefix the command with
+  `CI=1`, which tells `gh copilot` to download the CLI without prompting:
+  `bash -lc 'cd <dir> && CI=1 gh copilot -- <copilot-arguments>'`.
+- **`gh workflow run` returns `Resource not accessible by integration`:** the
+  Codespace integration token cannot dispatch that workflow. Run the command
+  locally with the operator's authenticated CLI, including the repository and
+  branch explicitly: `gh workflow run <workflow> -R "$NWO" --ref "$BRANCH"`.
 - **`git push` fails with `could not read Username for 'https://github.com'`:**
   you ran it on the runner's plain, non-login `sh`. Codespaces' credential
   helper needs `GITHUB_SERVER_URL`, which only login shells get. Re-run as
