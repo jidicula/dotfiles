@@ -62,7 +62,8 @@ if [[ $OSTYPE == darwin* ]]; then
 fi
 
 # Make folder for code
-mkdir -p "$HOME/Developer/work"
+mkdir -p "$HOME/Developer"
+mkdir -p "$HOME/work/github"
 
 # Install Homebrew
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
