@@ -1,3 +1,4 @@
+tap "angristan/tap"
 tap "darrylmorley/whatcable"
 tap "d12frosted/emacs-plus"
 tap "epk/epk"

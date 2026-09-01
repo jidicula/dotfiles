@@ -8,6 +8,13 @@ on:
       - '*-Brewfile'
       - '.github/workflows/*.yml'
       - '*.el'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'script/**'
+      - '*-Brewfile'
+      - '.github/workflows/*.yml'
+      - '*.el'
   # Run every Saturday at midnight
   schedule:
     - cron: '0 0 * * 6'
