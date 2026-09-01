@@ -16,6 +16,9 @@ mkdir -p "$HOME/.gnupg"
 # Make local bin folder
 mkdir -p "$HOME/.local/bin"
 
+# Make config folder
+mkdir -p "$HOME/.config"
+
 # copy GPG config
 ln -sfv "$DOTFILESDIR/gpg.conf" "$HOME/.gnupg/gpg.conf"
 ln -sfv "$DOTFILESDIR/gpg-agent.conf" "$HOME/.gnupg/gpg-agent.conf"
@@ -108,7 +111,8 @@ if [[ $CODESPACES ]]; then
 	BREW_STATUS="$(($? + BREW_STATUS))"
 elif [[ $OSTYPE == darwin* ]]; then
 	# Install macOS Homebrew packages
-	brew bundle install --file macos_Brewfile
+	HOMEBREW_EMACS_PLUS_BUILD_CONFIG="$DOTFILESDIR/emacs-plus/build.yml" \
+		brew bundle install --file macos_Brewfile
 	BREW_STATUS="$(($? + BREW_STATUS))"
 elif [[ $OSTYPE == linux* ]]; then
 	sudo apt-get update
