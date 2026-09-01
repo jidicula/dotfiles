@@ -14,6 +14,8 @@
 	CBEaJCkyN0lMUVNZX2hwfZKZnJ6goqesrrC1wMnW2ebv9PwAAAAAAAABAQAAAAAAAAAj
 	AAAAAAAAAAAAAAAAAAAA/w==
 	</data>
+	<key>BellBounceCritical</key>
+	<true/>
 	<key>CommandString</key>
 	<string></string>
 	<key>CursorBlink</key>
@@ -42,7 +44,7 @@
 	<key>FontWidthSpacing</key>
 	<integer>1</integer>
 	<key>ProfileCurrentVersion</key>
-	<real>2.0699999999999998</real>
+	<real>2.0899999999999999</real>
 	<key>RunCommandAsShell</key>
 	<true/>
 	<key>SelectionColor</key>
@@ -108,9 +110,9 @@
 	<key>UseBrightBold</key>
 	<false/>
 	<key>VisualBellOnlyWhenMuted</key>
-	<false/>
+	<true/>
 	<key>name</key>
-	<string>Pro</string>
+	<string>jidiculous</string>
 	<key>rowCount</key>
 	<integer>37</integer>
 	<key>shellExitAction</key>
