@@ -98,13 +98,11 @@ if [[ $CODESPACES ]]; then
 	# Install Codespace Homebrew packages
 	brew bundle install --file codespaces_Brewfile
 	BREW_STATUS="$(($? + BREW_STATUS))"
-else
+elif [[ $OSTYPE == darwin* ]]; then
 	# Install macOS Homebrew packages
 	brew bundle install --file macos_Brewfile
 	BREW_STATUS="$(($? + BREW_STATUS))"
-fi
-
-if ! [[ $CODESPACES ]]; then
+elif [[ $OSTYPE == linux* ]]; then
 	sudo apt-get update
 	sudo apt-get install -y emacs
 fi

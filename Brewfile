@@ -1,6 +1,5 @@
 tap "derailed/k9s"
 tap "github/bootstrap"
-tap "homebrew/core"
 tap "jakehilborn/jakehilborn"
 tap "datadog-labs/pack"
 brew "age"
@@ -68,7 +67,6 @@ brew "node-build"
 brew "nodenv", args: ["HEAD"]
 brew "oha"
 brew "pandoc"
-brew "pidof"
 brew "pigz"
 brew "pre-commit"
 brew "pv" # pipe viewer
