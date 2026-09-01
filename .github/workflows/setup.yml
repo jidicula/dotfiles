@@ -54,20 +54,48 @@ jobs:
         run: |
           script/actions-runner-preclean.sh
 
-      # Cache Homebrew directories for amend matrix option
-      - uses: actions/cache@v3
-        if: ${{ matrix.amend-scratch == 'amend' }}
+      - name: Restore applications
+        id: applications-cache
+        uses: actions/cache/restore@v4
+        if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'macOS' }}
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
         with:
-          path: |
-            /opt/homebrew/bin
-            /opt/homebrew/Cellar
-            /usr/local/Cellar
-            /usr/local/bin
-            /usr/local/opt
-            /Applications
-          key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
+          path: /Applications
+          key: applications-${{ runner.os }}-${{ hashFiles('macos_Brewfile') }}
           restore-keys: |
-            ${{ runner.os }}-
+            applications-${{ runner.os }}-
+
+      - name: Cache Homebrew downloads on macOS
+        uses: actions/cache@v4
+        if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'macOS' }}
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-downloads-${{ runner.os }}-${{ hashFiles('Brewfile', 'codespaces_Brewfile', 'macos_Brewfile') }}
+          restore-keys: |
+            homebrew-downloads-${{ runner.os }}-
+
+      - name: Cache Homebrew downloads on Linux
+        uses: actions/cache@v4
+        if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'Linux' }}
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+        with:
+          path: ~/.cache/Homebrew
+          key: homebrew-downloads-${{ runner.os }}-${{ hashFiles('Brewfile', 'codespaces_Brewfile', 'macos_Brewfile') }}
+          restore-keys: |
+            homebrew-downloads-${{ runner.os }}-
 
       - name: Run setup script
         run: script/setup "TEST_HOSTNAME"
+
+      - name: Save applications
+        uses: actions/cache/save@v4
+        if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'macOS' && github.ref == 'refs/heads/main' && steps.applications-cache.outputs.cache-hit != 'true' }}
+        with:
+          path: /Applications
+          key: applications-${{ runner.os }}-${{ hashFiles('macos_Brewfile') }}
