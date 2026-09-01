@@ -54,20 +54,25 @@ jobs:
         run: |
           script/actions-runner-preclean.sh
 
-      # Cache Homebrew directories for amend matrix option
-      - uses: actions/cache@v3
-        if: ${{ matrix.amend-scratch == 'amend' }}
+      - name: Cache Homebrew downloads and applications
+        uses: actions/cache@v4
+        if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'macOS' }}
         with:
           path: |
-            /opt/homebrew/bin
-            /opt/homebrew/Cellar
-            /usr/local/Cellar
-            /usr/local/bin
-            /usr/local/opt
+            ~/Library/Caches/Homebrew
             /Applications
-          key: ${{ runner.os }}-${{ hashFiles('Brewfile') }}
+          key: homebrew-${{ runner.os }}-${{ hashFiles('Brewfile', 'codespaces_Brewfile', 'macos_Brewfile') }}
           restore-keys: |
-            ${{ runner.os }}-
+            homebrew-${{ runner.os }}-
+
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v4
+        if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'Linux' }}
+        with:
+          path: ~/.cache/Homebrew
+          key: homebrew-${{ runner.os }}-${{ hashFiles('Brewfile', 'codespaces_Brewfile', 'macos_Brewfile') }}
+          restore-keys: |
+            homebrew-${{ runner.os }}-
 
       - name: Run setup script
         run: script/setup "TEST_HOSTNAME"
