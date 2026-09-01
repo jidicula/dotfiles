@@ -73,7 +73,9 @@ mkdir -p "$HOME/Developer"
 mkdir -p "$HOME/work/github"
 
 # Install Homebrew
+set +x
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+set -x
 if [[ $OSTYPE == darwin* ]]; then
 	if [[ $(uname -m) == arm64 ]]; then
 		eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -134,7 +136,9 @@ emacs --batch --load "$DOTFILESDIR/init.el" --eval '(straight-thaw-versions)'
 if ! [[ $CODESPACES ]]; then
 
 	# Install Oh My Zsh
+	set +x
 	(sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && exit)
+	set -x
 
 else
 	# Fix locale issue on Codespaces
@@ -197,7 +201,9 @@ fi
 
 # Install Poetry
 if [[ $OSTYPE == darwin* ]]; then
+	set +x
 	curl -sSL https://install.python-poetry.org | python3 -
+	set -x
 	script/poetry-setup
 	POETRY_CONFIG_PATH="$HOME/.config/pypoetry"
 	if [[ $OSTYPE == darwin* ]]; then
