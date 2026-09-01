@@ -167,6 +167,7 @@ if [[ $OSTYPE == darwin* ]]; then
 	ln -sfv "$HOMEBREW_PREFIX/bin/code" "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"
 	karabiner_cli="/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"
 	karabiner_config="$HOME/.config/karabiner/karabiner.json"
+	karabiner_service="gui/$(id -u)/org.pqrs.service.agent.Karabiner-Console-User-Server"
 	karabiner_profile="$(jq -er 'first(.profiles[] | select(.selected == true) | .name)' "$DOTFILESDIR/karabiner.json")" ||
 		exit
 	mkdir -p "$(dirname "$karabiner_config")"
@@ -176,10 +177,22 @@ if [[ $OSTYPE == darwin* ]]; then
 	install -m 600 "$DOTFILESDIR/karabiner.json" "$karabiner_config" || exit
 
 	# Start Karabiner with the configuration already in place.
-	open "/Applications/Karabiner-Elements.app" && sleep 60
+	open "/Applications/Karabiner-Elements.app" || exit
+	karabiner_service_ready=false
+	for _ in {1..60}; do
+		if launchctl print "$karabiner_service" >/dev/null 2>&1; then
+			karabiner_service_ready=true
+			break
+		fi
+		sleep 1
+	done
+	if [[ $karabiner_service_ready != true ]]; then
+		echo "Timed out waiting for the Karabiner console-user service"
+		exit 1
+	fi
+
 	osascript -e 'tell application "Karabiner-Elements" to quit'
-	launchctl kickstart -k "gui/$(id -u)/org.pqrs.service.agent.Karabiner-Console-User-Server" ||
-		exit
+	launchctl kickstart -k "$karabiner_service" || exit
 
 	karabiner_profile_selected=false
 	for _ in {1..30}; do
