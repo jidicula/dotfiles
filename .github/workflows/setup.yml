@@ -56,7 +56,7 @@ jobs:
 
       - name: Restore applications
         id: applications-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'macOS' }}
         continue-on-error: true
         timeout-minutes: 10
@@ -69,7 +69,7 @@ jobs:
             applications-${{ runner.os }}-
 
       - name: Cache Homebrew downloads on macOS
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'macOS' }}
         env:
           SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
@@ -80,7 +80,7 @@ jobs:
             homebrew-downloads-${{ runner.os }}-
 
       - name: Cache Homebrew downloads on Linux
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'Linux' }}
         env:
           SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
@@ -94,7 +94,7 @@ jobs:
         run: script/setup "TEST_HOSTNAME"
 
       - name: Save applications
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         if: ${{ matrix.amend-scratch == 'amend' && runner.os == 'macOS' && github.ref == 'refs/heads/main' && steps.applications-cache.outputs.cache-hit != 'true' }}
         with:
           path: /Applications
