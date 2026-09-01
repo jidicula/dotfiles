@@ -6,8 +6,9 @@ npm install --global bash-language-server
 # Install gopls
 go install golang.org/x/tools/gopls@latest
 
-# Install Solargraph (Ruby)
-gem install solargraph
+# Install ruby-lsp (Ruby/Rails)
+# For Rails projects, add ruby-lsp-rails to the project's Gemfile
+brew install ruby-lsp
 
 # Install python LSP
 npm install --global pyright
