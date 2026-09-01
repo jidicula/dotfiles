@@ -240,11 +240,8 @@ defaults write com.apple.ActivityMonitor SortColumn -string "CPUUsage"
 defaults write com.apple.ActivityMonitor SortDirection -int 0
 
 ###############################################################################
-#                  Address Book, iCal, TextEdit, Disk Utility                 #
+#                         TextEdit and Disk Utility                           #
 ###############################################################################
-
-# Enable the debug menu in Address Book
-defaults write com.apple.AddressBook ABShowDebugMenu -bool true
 
 # Use plain text mode for new TextEdit documents
 defaults write com.apple.TextEdit RichText -int 0
