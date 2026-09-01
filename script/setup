@@ -158,15 +158,34 @@ fi
 if [[ $OSTYPE == darwin* ]]; then
 	# VS Code Insiders setup
 	ln -sfv "$HOMEBREW_PREFIX/bin/code" "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"
-	# Open Karabiner for the first time
+	karabiner_cli="/Library/Application Support/org.pqrs/Karabiner-Elements/bin/karabiner_cli"
+	karabiner_config="$HOME/.config/karabiner/karabiner.json"
+	karabiner_profile="$(jq -er 'first(.profiles[] | select(.selected == true) | .name)' "$DOTFILESDIR/karabiner.json")" ||
+		exit
+	mkdir -p "$(dirname "$karabiner_config")"
+	if [[ -L $karabiner_config ]]; then
+		rm "$karabiner_config"
+	fi
+	install -m 600 "$DOTFILESDIR/karabiner.json" "$karabiner_config" || exit
+
+	# Start Karabiner with the configuration already in place.
 	open "/Applications/Karabiner-Elements.app" && sleep 60
 	osascript -e 'tell application "Karabiner-Elements" to quit'
-	mkdir -p "$HOME/.config/karabiner"
-	if [[ -L "$HOME/.config/karabiner/karabiner.json" ]]; then
-		rm "$HOME/.config/karabiner/karabiner.json"
+	launchctl kickstart -k "gui/$(id -u)/org.pqrs.service.agent.Karabiner-Console-User-Server" ||
+		exit
+
+	karabiner_profile_selected=false
+	for _ in {1..30}; do
+		if "$karabiner_cli" --select-profile "$karabiner_profile" >/dev/null 2>&1; then
+			karabiner_profile_selected=true
+			break
+		fi
+		sleep 1
+	done
+	if [[ $karabiner_profile_selected != true ]]; then
+		echo "Failed to load Karabiner profile: $karabiner_profile"
+		exit 1
 	fi
-	install -m 600 "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
-	launchctl kickstart -k "gui/$(id -u)/org.pqrs.service.agent.Karabiner-Console-User-Server"
 
 	# Set up macOS system configs
 	chmod +x script/macos-setup
