@@ -343,6 +343,50 @@ form does the same.  Accept only the pattern this workflow needs: a direct
 (advice-add 'mcp-server-security--check-form-safety
             :before #'copilot-mcp--check-with-current-buffer-target)
 
+(defvar copilot-mcp--ghcs-file-operation-active nil
+  "Non-nil while a top-level ghcs file operation owns retry handling.")
+
+(defun copilot-mcp--ghcs-file-p (path)
+  "Return non-nil when PATH uses the ghcs TRAMP method."
+  (and (stringp path)
+       (string-equal (file-remote-p path 'method) "ghcs")))
+
+(defun copilot-mcp--call-with-ghcs-retry (orig path args)
+  "Call ORIG with ARGS, retrying one failed ghcs operation for PATH.
+Nested file primitives share the top-level operation's retry so a single
+open or save cannot cascade into repeated retries."
+  (if (or copilot-mcp--ghcs-file-operation-active
+          (not (copilot-mcp--ghcs-file-p path)))
+      (apply orig args)
+    (let ((copilot-mcp--ghcs-file-operation-active t))
+      (condition-case err
+          (apply orig args)
+        (remote-file-error
+         (tramp-cleanup-connection (tramp-dissect-file-name path) t t)
+         (apply orig args))))))
+
+(defun copilot-mcp--retry-find-file-noselect (orig filename &rest args)
+  "Run ORIG for FILENAME with one ghcs reconnection retry."
+  (copilot-mcp--call-with-ghcs-retry
+   orig filename (cons filename args)))
+
+(defun copilot-mcp--retry-insert-file-contents (orig filename &rest args)
+  "Run ORIG for FILENAME with one ghcs reconnection retry."
+  (copilot-mcp--call-with-ghcs-retry
+   orig filename (cons filename args)))
+
+(defun copilot-mcp--retry-write-region (orig start end filename &rest args)
+  "Run ORIG for FILENAME with one ghcs reconnection retry."
+  (copilot-mcp--call-with-ghcs-retry
+   orig filename (append (list start end filename) args)))
+
+(advice-add 'find-file-noselect :around
+            #'copilot-mcp--retry-find-file-noselect)
+(advice-add 'insert-file-contents :around
+            #'copilot-mcp--retry-insert-file-contents)
+(advice-add 'write-region :around
+            #'copilot-mcp--retry-write-region)
+
 (defun copilot-mcp--guard-basic-save-buffer (orig &rest args)
   "Run ORIG with ARGS only for a buffer visiting an editable Codespace file.
 `save-buffer' is not in the MCP server's dangerous-function list and has no
@@ -352,7 +396,7 @@ saving."
   (unless (and buffer-file-name
                (copilot-mcp--editable-codespace-file-p buffer-file-name))
     (error "Security: refusing to save a buffer outside a Codespace /workspaces tree"))
-  (apply orig args))
+  (copilot-mcp--call-with-ghcs-retry orig buffer-file-name args))
 
 (advice-add 'basic-save-buffer :around #'copilot-mcp--guard-basic-save-buffer)
 

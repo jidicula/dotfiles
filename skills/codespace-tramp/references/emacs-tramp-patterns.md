@@ -265,6 +265,11 @@ output has died, replaying the log from the start. A dropped SSH session
 therefore costs nothing but the time to poll again — no output is lost, and
 there is no need to notice the drop or do anything about it.
 
+If a command exits nonzero without writing anything, the runner records
+`command exited with status N without producing stdout or stderr`. This is a
+real silent failure rather than lost output; split the command or add
+command-specific diagnostics to identify the failing step.
+
 A job that reports `state=failed` never started, so nothing is running; the
 output below the status line says why.
 
@@ -416,6 +421,12 @@ against `/ghcs:<CS_ID>:/workspaces/<dir>/` can be convenient. **Every one of
 them blocks the daemon for as long as the operation takes**, so reach for them
 only when an operation is certainly small and the connection is already warm —
 and never for running commands, where `copilot-cs-sh` is strictly better.
+
+If a ghcs connection has gone stale, the dedicated daemon automatically cleans
+it and retries one top-level `find-file-noselect`, `insert-file-contents`,
+`write-region`, or buffer save. Nested primitives do not multiply the retry. A
+second `remote-file-error` is returned unchanged so the workflow never loops
+indefinitely.
 
 > **Prompts, not slowness, are what wedge the daemon.** A daemon that asks a
 > minibuffer question waits forever, because nobody can answer it: it stops

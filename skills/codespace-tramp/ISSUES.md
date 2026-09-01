@@ -23,9 +23,9 @@ reports are observation logs, not diagnoses.
    may update the status and resolution without rewriting the original symptom
    report. When resolving an entry, move the whole unchanged report beneath
    **Resolved issues**.
-8. Before editing, re-read the working file and its staged and unstaged diffs
-   so concurrent session changes are preserved. Immediately stage `ISSUES.md`
-   after every addition or resolution; never leave the only copy unstaged.
+8. Acquire `setup/copilot-issues-lock` before reading or editing, then re-read
+   the working file and its staged and unstaged diffs. Hold the lock until the
+   helper stages `ISSUES.md`; staging without the lock is not sufficient.
 9. Immediately notify the human operator after adding an entry. Include its id,
    title, this file's path, and a one-sentence symptom summary; do not defer the
    notification to the final task summary.

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+#
+# Serialize edits to the shared Codespace TRAMP issue log.
+
+set -euo pipefail
+
+log() { printf '[copilot-issues-lock] %s\n' "$*" >&2; }
+die() { log "$*"; exit 1; }
+
+action="${1:-}"
+owner="${2:-${COPILOT_AGENT_SESSION_ID:-}}"
+[[ "$action" == "acquire" || "$action" == "stage" ||
+	"$action" == "release" || "$action" == "status" ]] ||
+	die "usage: copilot-issues-lock {acquire|stage|release|status} [owner]"
+if [[ "$action" != "status" ]]; then
+	[[ -n "$owner" && "$owner" =~ ^[A-Za-z0-9._-]+$ ]] ||
+		die "owner must be a session id or another safe unique identifier"
+fi
+
+setup_dir=$(cd "$(dirname "$0")" && pwd -P)
+repo_root=$(git -C "$setup_dir" rev-parse --show-toplevel)
+git_common_dir=$(git -C "$setup_dir" rev-parse \
+	--path-format=absolute --git-common-dir)
+issue_path="skills/codespace-tramp/ISSUES.md"
+lock_dir="$git_common_dir/copilot-codespace-tramp-issues.lock"
+owner_file="$lock_dir/owner"
+created_file="$lock_dir/created"
+
+held_by() {
+	[[ -f "$owner_file" ]] && sed -n '1p' "$owner_file"
+}
+
+require_owner() {
+	local current
+	current=$(held_by)
+	[[ "$current" == "$owner" ]] ||
+		die "issue log is locked by ${current:-an unknown session}, not $owner"
+}
+
+release_lock() {
+	rm -f "$owner_file" "$created_file"
+	rmdir "$lock_dir"
+}
+
+case "$action" in
+acquire)
+	if mkdir "$lock_dir" 2>/dev/null; then
+		printf '%s\n' "$owner" >"$owner_file"
+		date -u '+%Y-%m-%dT%H:%M:%SZ' >"$created_file"
+	elif [[ "$(held_by)" != "$owner" ]]; then
+		die "issue log is locked by $(held_by || printf 'an unknown session')"
+	fi
+	printf 'locked %s for %s\n' "$issue_path" "$owner"
+	;;
+stage)
+	require_owner
+	[[ -z "$(git -C "$repo_root" ls-files -u -- "$issue_path")" ]] ||
+		die "$issue_path has unresolved merge conflicts"
+	git -C "$repo_root" diff --check -- "$issue_path"
+	git -C "$repo_root" add -- "$issue_path"
+	release_lock
+	printf 'staged %s and released lock for %s\n' "$issue_path" "$owner"
+	;;
+release)
+	require_owner
+	release_lock
+	printf 'released lock for %s\n' "$owner"
+	;;
+status)
+	if [[ -d "$lock_dir" ]]; then
+		printf 'owner=%s created=%s\n' \
+			"$(held_by || printf 'unknown')" \
+			"$([[ -f "$created_file" ]] && sed -n '1p' "$created_file" ||
+				printf 'unknown')"
+	else
+		printf 'unlocked\n'
+	fi
+	;;
+esac

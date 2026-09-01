@@ -83,6 +83,8 @@ each of these must be set up on the operator's machine:
     `IdentitiesOnly=yes`. Private signing remains in Secretive, and a refused
     signing request fails rather than falling back to an on-disk or
     `codespaces.auto` key.
+  - `setup/copilot-issues-lock` — serializes updates to `ISSUES.md` across
+    concurrent Copilot sessions that share the same worktree and Git index.
   - `setup/copilot-emacs-mcp` — an stdio bridge that Copilot CLI spawns once per
     session. It boots a throwaway Emacs daemon keyed on
     `COPILOT_AGENT_SESSION_ID`, reuses it for the rest of the session, and
@@ -157,23 +159,27 @@ later follow-up.
 Codespace. Update it with the normal local file-editing mechanism; do not try
 to write it through the `emacs-codespace` MCP server.
 
-Copilot sessions share the local worktree, so an issue-log edit left only
-unstaged can be discarded by another session's cleanup. Before assigning an id
-or editing the file, re-read its current contents and inspect both its staged
-and unstaged diffs. Immediately after **every** addition or resolution, stage
-the log itself:
+Copilot sessions share the local worktree and Git index. Staging alone does not
+serialize them: another session can overwrite both with a stale copy. Every
+addition or resolution must therefore hold the issue-log lock from before the
+first read until the updated file has been staged:
 
 ```bash
+OWNER="${COPILOT_AGENT_SESSION_ID:?session id required}"
+/absolute/path/to/skills/codespace-tramp/setup/copilot-issues-lock \
+  acquire "$OWNER"
 git -C "/absolute/path/to/skills/codespace-tramp" diff -- ISSUES.md
 git -C "/absolute/path/to/skills/codespace-tramp" diff --cached -- ISSUES.md
-# Edit only after reading the current file and both views above.
-git -C "/absolute/path/to/skills/codespace-tramp" add -- ISSUES.md
+# Re-read and edit only after acquiring the lock.
+/absolute/path/to/skills/codespace-tramp/setup/copilot-issues-lock \
+  stage "$OWNER"
 ```
 
-This staging is required durability, not an instruction to stage other skill
-changes. Never restore `ISSUES.md` to the tracked version as task cleanup. If
-an expected entry is absent from the worktree but present in the staged diff,
-recover and merge it before assigning another id.
+`stage` checks and stages only `ISSUES.md`, then releases the lock. If the edit
+cannot be completed, run the helper's `release "$OWNER"` action. A lock held
+by another session must not be bypassed; inspect it with the helper's `status`
+action and wait for that session or ask the operator. Never restore
+`ISSUES.md` to the tracked version as task cleanup.
 
 Use the entry format and next sequential `CT-NNNN` identifier from
 `ISSUES.md`. Each report must include:
@@ -634,6 +640,11 @@ Ask the user for the correct commands if none are supplied.
   surface as an `inhibited-interaction` error instead; if you are seeing a true
   hang, the daemon predates that fix. Kill it and let the bridge rebuild it.
   Note this cannot happen through `copilot-cs-sh`, which never uses TRAMP.
+- **A `/ghcs:` file open or save reports `Tramp failed to connect`:** current
+  daemons clean the stale ghcs connection and retry the top-level file
+  operation once. If the retry also fails, the error is real and is surfaced
+  without further retries; use `/mcp` to rebuild the daemon if the connection
+  remains unhealthy.
 - **Commands report on the operator's dotfiles instead of the repo:**
   `copilot-cs-use` was never called, or a daemon restart reset it, so the runner
   had no target. Current versions refuse outright with `no target selected`;
@@ -685,6 +696,10 @@ Ask the user for the correct commands if none are supplied.
   Codespaces' login shell setup breaks it silently. Use `sh` syntax, which is
   what `copilot-cs-sh` runs, except for commands that explicitly need the
   Codespace login environment.
+- **A failed job says it produced no stdout or stderr:** the command genuinely
+  exited silently. The runner now emits this diagnostic instead of returning an
+  empty result. Split the command or add command-specific diagnostics to find
+  the failing step.
 - **Repository validation reports `No token found`:** if the command fetches
   protected remote data, rerun that exact command as
   `bash -lc 'cd <dir> && <command>'`. Do not print, export, or copy the token;

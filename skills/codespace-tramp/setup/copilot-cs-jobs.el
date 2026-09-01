@@ -176,9 +176,13 @@ the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n
      ;; touch it. Codespaces are Linux and always have it; elsewhere we fall
      ;; back to plain nohup.
      "S=; command -v setsid >/dev/null 2>&1 && S=setsid; "
-     ;; $HOME and $? stay single-quoted here so the *inner* shell expands them.
-     "$S nohup sh -c 'sh " dir "/" id ".sh; "
-     "printf \"\\n" (copilot-cs--done-marker id) "%s\\n\" $?' "
+     ;; $HOME and $R stay single-quoted here so the *inner* shell expands them.
+     "$S nohup sh -c 'sh " dir "/" id ".sh; R=$?; "
+     "if [ \"$R\" -ne 0 ] && [ ! -s " dir "/" id ".log ]; then "
+     "printf \"copilot-cs: command exited with status %s without producing "
+     "stdout or stderr\\n\" \"$R\"; "
+     "fi; "
+     "printf \"\\n" (copilot-cs--done-marker id) "%s\\n\" \"$R\"' "
      "> " dir "/" id ".log 2>&1 & "
      "echo $! > " dir "/" id ".pid; "
      "echo " (copilot-cs--ack-marker id) "; "
@@ -263,6 +267,15 @@ output cannot be mistaken for it."
                 (substring trimmed (- (length trimmed) copilot-cs-tail-bytes)))
       trimmed)))
 
+(defun copilot-cs--output-text (job)
+  "Return cleaned output for JOB, including a silent-failure diagnostic."
+  (let* ((rc (copilot-cs--rc job))
+         (output (copilot-cs--clean job (copilot-cs--text job))))
+    (if (and rc (/= rc 0) (string-empty-p (string-trim output)))
+        (format "copilot-cs: command exited with status %d without producing \
+stdout or stderr" rc)
+      output)))
+
 (defun copilot-cs--attach-command (id)
   "Return the remote shell string that replays and follows job ID's log."
   (format "test -f %s/%s.log || { printf '%%s\\n' \
@@ -324,8 +337,7 @@ loop, so the daemon stays responsive."
          (process (plist-get job :process))
          (rc (copilot-cs--rc job))
          (elapsed (- (float-time) (plist-get job :started)))
-         (output (copilot-cs--tail
-                  (copilot-cs--clean job (copilot-cs--text job)))))
+         (output (copilot-cs--tail (copilot-cs--output-text job))))
     ;; Nothing more will arrive once the job is done; let the streamer go.
     (when (and rc (process-live-p process))
       (delete-process process))
@@ -403,7 +415,7 @@ session costs nothing but the time to poll again."
 (defun copilot-cs-output (&optional id)
   "Return the complete output of job ID, defaulting to the most recent job."
   (let ((job (copilot-cs--job id)))
-    (string-trim (copilot-cs--clean job (copilot-cs--text job)))))
+    (string-trim (copilot-cs--output-text job))))
 
 (defun copilot-cs-attach (id &optional wait)
   "Re-attach to job ID and stream its Codespace log from the beginning.
