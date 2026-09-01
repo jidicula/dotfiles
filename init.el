@@ -156,9 +156,14 @@ There are two things you can do about this warning:
 (setq backup-directory-alist `((".*" . ,temporary-file-directory))
       auto-save-file-name-transforms `((".*" ,temporary-file-directory t)))
 
+(defun my-straight-freeze-versions-after-clone (&rest _)
+  "Freeze Straight package versions after an interactive clone."
+  (unless noninteractive
+    (straight-freeze-versions)))
+
 (use-package straight
   ;; Freeze after installing new packages.
-  :hook (straight-vc-git-post-clone-hook . straight-freeze-versions)
+  :hook (straight-vc-git-post-clone-hook . my-straight-freeze-versions-after-clone)
   )
 
 (use-package tramp

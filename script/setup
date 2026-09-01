@@ -32,6 +32,7 @@ ln -sfv "$DOTFILESDIR/git-commit-message" "$HOME/.git-commit-message"
 ln -sfv "$DOTFILESDIR/gitconfig-personal" "$HOME/.gitconfig-personal"
 ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
+ln -sfv "$DOTFILESDIR/emacs-plus" "$HOME/.config/emacs-plus"
 
 if [[ $CODESPACES ]]; then
 	if [[ $CODESPACE_NAME != *dotfiles* ]]; then
@@ -115,7 +116,6 @@ elif [[ $OSTYPE == linux* ]]; then
 fi
 
 # Set up Emacs config
-ln -sfv "$DOTFILESDIR/emacs-plus" "$HOME/.config/emacs-plus"
 mkdir -p "$HOME/.emacs.d/straight"
 ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
 ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
