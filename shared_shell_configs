@@ -99,7 +99,8 @@ bell() {
 	printf '\a' >/dev/tty 2>/dev/null || printf '\a'
 }
 
-notify() {
+notify() (
+	set +x
 	bell
 	local msg
 	local result
@@ -118,7 +119,7 @@ notify() {
 		echo "Notify curl failed with $curl_exit and HTTP $result." >&2
 		return 10
 	fi
-}
+)
 
 # go
 export GOPATH="$HOME/go"
