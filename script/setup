@@ -160,8 +160,13 @@ if [[ $OSTYPE == darwin* ]]; then
 	ln -sfv "$HOMEBREW_PREFIX/bin/code" "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"
 	# Open Karabiner for the first time
 	open "/Applications/Karabiner-Elements.app" && sleep 60
-	killall "Karabiner-Elements"
-	ln -sfv "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
+	osascript -e 'tell application "Karabiner-Elements" to quit'
+	mkdir -p "$HOME/.config/karabiner"
+	if [[ -L "$HOME/.config/karabiner/karabiner.json" ]]; then
+		rm "$HOME/.config/karabiner/karabiner.json"
+	fi
+	install -m 600 "$DOTFILESDIR/karabiner.json" "$HOME/.config/karabiner/karabiner.json"
+	launchctl kickstart -k "gui/$(id -u)/org.pqrs.service.agent.Karabiner-Console-User-Server"
 
 	# Set up macOS system configs
 	chmod +x script/macos-setup
