@@ -27,12 +27,12 @@ chmod 700 "$HOME/.gnupg"
 # copy Git configs and templates
 ln -sfv "$DOTFILESDIR/gitconfig" "$HOME/.gitconfig"
 ln -sfv "$DOTFILESDIR/gitignore" "$HOME/.gitignore"
-ln -sfv "$DOTFILESDIR/git-templates" "$HOME/.git-templates"
+ln -sfnv "$DOTFILESDIR/git-templates" "$HOME/.git-templates"
 ln -sfv "$DOTFILESDIR/git-commit-message" "$HOME/.git-commit-message"
 ln -sfv "$DOTFILESDIR/gitconfig-personal" "$HOME/.gitconfig-personal"
 ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
-ln -sfv "$DOTFILESDIR/emacs-plus" "$HOME/.config/emacs-plus"
+ln -sfnv "$DOTFILESDIR/emacs-plus" "$HOME/.config/emacs-plus"
 
 if [[ $CODESPACES ]]; then
 	if [[ $CODESPACE_NAME != *dotfiles* ]]; then
@@ -118,7 +118,7 @@ fi
 # Set up Emacs config
 mkdir -p "$HOME/.emacs.d/straight"
 ln -sfv "$DOTFILESDIR/init.el" "$HOME/.emacs.d/init.el"
-ln -sfv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
+ln -sfnv "$DOTFILESDIR/straight/versions" "$HOME/.emacs.d/straight/versions"
 mkdir -p "$HOME/.emacs.d/transient"
 ln -sfv "$DOTFILESDIR/transient/values.el" "$HOME/.emacs.d/transient/values.el"
 echo "(load \"$HOME/.emacs.d/init.el\")" >>"$HOME/.emacs"
