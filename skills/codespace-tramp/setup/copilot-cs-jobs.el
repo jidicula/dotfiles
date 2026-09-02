@@ -97,6 +97,11 @@ the complete tool-call budget inside the Emacs event loop.")
 Written literally into the remote command line, so it may reference remote
 shell variables such as $HOME.")
 
+(defconst copilot-cs-login-git-command-regexp
+  (concat "\\(?:\\`\\|[;&|(\n]\\)[[:space:]]*git[[:space:]]+"
+          "\\(?:fetch\\|push\\|commit\\)\\_>")
+  "Git commands that require the Codespace login-shell environment.")
+
 ;;; Internals
 
 (defun copilot-cs--done-marker (id)
@@ -188,6 +193,16 @@ the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n
      "echo " (copilot-cs--ack-marker id) "; "
      "sleep 1; "
      "exec tail -c +1 -F " dir "/" id ".log")))
+
+(defun copilot-cs--login-shell-command (command)
+  "Return a login-shell wrapper that runs COMMAND in the current directory."
+  (format "bash -lc %s copilot-cs-login \"$(pwd -P)\" %s"
+          (shell-quote-argument "cd \"$1\" && exec sh -c \"$2\"")
+          (shell-quote-argument command)))
+
+(defun copilot-cs--login-required-p (command)
+  "Return non-nil when COMMAND contains a Git operation needing login state."
+  (string-match-p copilot-cs-login-git-command-regexp command))
 
 (defun copilot-cs--start (id command &optional label)
   "Run COMMAND, a remote shell string, streaming output into job ID's buffer.
@@ -387,6 +402,21 @@ Safe to call repeatedly.  Booting a `Shutdown' Codespace also happens here."
       (set-process-query-on-exit-flag process nil)))
   "warming")
 
+(defun copilot-cs--run (command label wait)
+  "Run COMMAND as a detached job described by LABEL, waiting briefly."
+  (let* ((id (copilot-cs--new-id))
+         (job (copilot-cs--start id (copilot-cs--launcher id command) label)))
+    (copilot-cs--report
+     (copilot-cs--settle job (or wait copilot-cs-default-wait)))))
+
+(defun copilot-cs-login-sh (command &optional wait)
+  "Run COMMAND with the Codespace login environment and report what happened.
+
+Use this for repository tools that fetch protected remote data. The login
+shell establishes the Codespace environment, then a non-interactive `sh' runs
+COMMAND from `copilot-cs-dir'."
+  (copilot-cs--run (copilot-cs--login-shell-command command) command wait))
+
 (defun copilot-cs-sh (command &optional wait)
   "Run COMMAND in the Codespace and report what happened.
 
@@ -394,13 +424,16 @@ COMMAND is a shell string, run by `sh' from `copilot-cs-dir'.  It is
 launched detached and its output streamed back, so this call cannot block
 the daemon no matter how long the command takes.
 
+Commands containing `git fetch', `git push', or `git commit' are routed
+through `copilot-cs-login-sh' automatically because Codespace credentials and
+commit signing require the login environment.
+
 Waits up to WAIT seconds (default `copilot-cs-default-wait', capped at
 `copilot-cs-max-wait') for it to finish. Short commands therefore return their
 output directly; longer ones return a job id to hand to `copilot-cs-poll'."
-  (let* ((id (copilot-cs--new-id))
-         (job (copilot-cs--start id (copilot-cs--launcher id command) command)))
-    (copilot-cs--report
-     (copilot-cs--settle job (or wait copilot-cs-default-wait)))))
+  (if (copilot-cs--login-required-p command)
+      (copilot-cs-login-sh command wait)
+    (copilot-cs--run command command wait)))
 
 (defun copilot-cs-poll (&optional id wait)
   "Report on job ID, defaulting to the most recent job.

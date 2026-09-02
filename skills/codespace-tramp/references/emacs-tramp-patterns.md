@@ -107,13 +107,13 @@ yet. This usually means the Codespace is connecting or Secretive is waiting for
 approval; approve the request and poll the same job instead of launching a
 duplicate.
 
-The command is a shell string run by a **non-login, non-interactive `sh`** from
-the directory given to `copilot-cs-use`. Prefer `sh` syntax over `bash -lc`:
-some Codespaces' login-shell setup fails silently, returning rc=1 with no output
-at all, and a login shell costs an extra process on every call.
+The command is normally a shell string run by a **non-login, non-interactive
+`sh`** from the directory given to `copilot-cs-use`. Prefer `sh` syntax over
+manual `bash -lc`: the runner automatically gives common Git operations the
+login environment they require.
 
-The one exception is commands that need the Codespace's login-shell
-environment, below.
+For other commands that need the Codespace's login environment, use
+`copilot-cs-login-sh` as described below.
 
 The runner routes SSH and out-of-band copies through `setup/copilot-ghcs`. The
 helper presents the active Secretive public-key stand-in in the base-plus-`.pub`
@@ -130,9 +130,9 @@ request.
 ### Commands that need the Codespace login environment
 
 `git push`, HTTPS `git fetch`, signed `git commit`, and repository commands that
-fetch authenticated remote data are where the non-login shell is the wrong
-default. Codespaces injects `GITHUB_SERVER_URL`, `GITHUB_API_URL`, and
-`CODESPACE_NAME` into **login shells only**, and several things depend on them:
+fetch authenticated remote data require Codespace login state. Codespaces
+injects `GITHUB_SERVER_URL`, `GITHUB_API_URL`, and `CODESPACE_NAME` into
+**login shells only**, and several things depend on them:
 
 - `/.codespaces/bin/gitcredential_github.sh` exits without emitting credentials
   unless **both** `GITHUB_TOKEN` and `GITHUB_SERVER_URL` are set, so git falls
@@ -157,17 +157,18 @@ theorising:
 (copilot-cs-sh "echo login=$(bash -lc env | wc -l) nonlogin=$(env | wc -l)")
 ```
 
-Wrap only these commands in a login shell, and `cd` explicitly — `bash -l` does
-not inherit the runner's directory:
+`copilot-cs-sh` recognizes direct and chained `git fetch`, `git push`, and
+`git commit` commands and routes them automatically:
 
 ```elisp
-(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && git push -u origin <branch>'")
+(copilot-cs-sh "git fetch origin main")
+(copilot-cs-sh "git commit -m 'Update configuration' && git push")
 ```
 
-The same pattern applies to an authenticated validation command:
+Use the explicit helper for other authenticated repository commands:
 
 ```elisp
-(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && <validation-command>'")
+(copilot-cs-login-sh "<validation-command>")
 ```
 
 Do not print, copy, or manually export a token. The login shell supplies the
@@ -177,7 +178,7 @@ To sign a commit that was already made unsigned, amend it through a login
 shell:
 
 ```elisp
-(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && git commit --amend --no-edit'")
+(copilot-cs-login-sh "git commit --amend --no-edit")
 ```
 
 Everything else stays on plain `sh`.
@@ -232,7 +233,7 @@ subsequent non-interactive invocations; `gh` then performs its supported
 prompt-free download:
 
 ```elisp
-(copilot-cs-sh "bash -lc 'cd /workspaces/<dir> && CI=1 gh copilot -- <copilot-arguments>'")
+(copilot-cs-login-sh "CI=1 gh copilot -- <copilot-arguments>")
 ```
 
 This installs the CLI in `gh`'s data directory inside the Codespace. It does
@@ -481,7 +482,7 @@ buffer's own report — `(copilot-cs-sh "git diff --stat")` is the cheap check.
 | Read a remote file | `copilot-cs-sh "cat ..."` | Not `find-file`/`insert-file-contents`. |
 | Write a remote file | `copilot-cs-put` | Base64, so no quoting or escaping issues. |
 | Stop a remote job | `copilot-cs-stop` | `kill-process`/`delete-process` are blocked. |
-| Push, or sign a commit | `copilot-cs-sh "bash -lc '…'"` | Needs a login shell; see above. |
+| Fetch, push, or sign a commit | `copilot-cs-sh "git …"` | Login environment is automatic. |
 | Read workflow/job logs | Local `gh run view ... -R "$NWO"` | Never through `copilot-cs-sh`. |
 | Copy a local file | `setup/copilot-ghcs cp ... remote:<path>` | Never raw `gh codespace cp`. |
 

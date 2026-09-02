@@ -569,15 +569,12 @@ check it out here (or confirm Step 4 already created the Codespace on it).
 - Revert any throwaway/exploratory edits and confirm a clean tree
   (`git checkout -- <file>` then `git status --porcelain`) unless the user asked
   to keep the changes — either in `instructions` or in conversation.
-- Wrap signed commits, pushes, authenticated fetches, and repository commands
-  that fetch protected remote data in a login shell
-  (`bash -lc 'cd <dir> && …'`). Codespaces' git credential and commit-signing
-  helpers, plus some repository tooling, read authentication environment
-  variables that only login shells get. On plain `sh`, a push can fail with
-  `could not read Username`, a commit can fail with
-  `unsupported protocol scheme ""`, and validation tooling can report that no
-  token exists. See the cookbook's **Commands that need the Codespace login
-  environment**.
+- `copilot-cs-sh` automatically routes `git fetch`, `git push`, and
+  `git commit` through the Codespace login environment. For repository commands
+  that fetch other protected remote data, call `copilot-cs-login-sh` directly.
+  Codespaces' credential and commit-signing helpers, plus some repository
+  tooling, require environment variables that only login shells get. See the
+  cookbook's **Commands that need the Codespace login environment**.
 - Run GitHub control-plane operations such as `gh pr`, `gh workflow`, and
   `gh run` with the operator's **local authenticated `gh`**, always passing
   `-R "$NWO"` (and the target branch, run, or job where needed). Do not send
@@ -701,13 +698,13 @@ Ask the user for the correct commands if none are supplied.
   empty result. Split the command or add command-specific diagnostics to find
   the failing step.
 - **Repository validation reports `No token found`:** if the command fetches
-  protected remote data, rerun that exact command as
-  `bash -lc 'cd <dir> && <command>'`. Do not print, export, or copy the token;
+  protected remote data, rerun it with
+  `(copilot-cs-login-sh "<command>")`. Do not print, export, or copy the token;
   the login shell supplies the environment the repository tool expects.
 - **`gh copilot` reports `Copilot CLI not installed`:** the runner has no TTY,
   so `gh` refuses its normal installation prompt. Prefix the command with
   `CI=1`, which tells `gh copilot` to download the CLI without prompting:
-  `bash -lc 'cd <dir> && CI=1 gh copilot -- <copilot-arguments>'`.
+  `(copilot-cs-login-sh "CI=1 gh copilot -- <copilot-arguments>")`.
 - **`gh workflow run` returns `Resource not accessible by integration`:** the
   Codespace integration token cannot dispatch that workflow. Run the command
   locally with the operator's authenticated CLI, including the repository and
@@ -721,16 +718,15 @@ Ask the user for the correct commands if none are supplied.
   `setup/copilot-ghcs cp "$CS_ID" <local-path> remote:/absolute/path` or
   `remote:relative-path`; the latter resolves below the remote user's home.
 - **`git push` fails with `could not read Username for 'https://github.com'`:**
-  you ran it on the runner's plain, non-login `sh`. Codespaces' credential
-  helper needs `GITHUB_SERVER_URL`, which only login shells get. Re-run as
-  `bash -lc 'cd <dir> && git push …'`. `GITHUB_TOKEN` being set is a red
-  herring — the missing piece is the URL, not the token.
+  the daemon predates automatic Git login routing, or the command used an
+  unrecognized Git wrapper. Current `copilot-cs-sh` routes direct and chained
+  `git fetch`, `git push`, and `git commit` commands automatically. Otherwise
+  use `(copilot-cs-login-sh "<command>")`.
 - **`git commit` fails with `gpg failed to sign the data` and
-  `unsupported protocol scheme ""`:** same root cause. Codespaces signs through
-  `/.codespaces/bin/gh-gpgsign`, which POSTs to
-  `$GITHUB_API_URL/vscs_internal/commit/sign`; with `GITHUB_API_URL` unset the
-  URL has no scheme. Commit via `bash -lc`, or sign after the fact with
-  `bash -lc 'cd <dir> && git commit --amend --no-edit'`.
+  `unsupported protocol scheme ""`:** same root cause. Current
+  `copilot-cs-sh` routes `git commit` through the login environment
+  automatically. On an older daemon, rebuild it with `/mcp` and amend through
+  `(copilot-cs-login-sh "git commit --amend --no-edit")`.
 - **Every command fails with `cannot cd to ...`:** `copilot-cs-use` was given a
   directory that does not exist in the Codespace. Re-discover it with
   `(copilot-cs-sh "ls -d /workspaces/*/")` from a directory that does exist.
