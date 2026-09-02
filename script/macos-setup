@@ -87,6 +87,10 @@ defaults write -g NSWindowShouldDragOnGesture YES
 #               Trackpad, mouse, keyboard, Bluetooth, and input               #
 ###############################################################################
 
+# Set mouse and trackpad tracking speeds
+defaults write NSGlobalDomain com.apple.mouse.scaling -float 1.5
+defaults write NSGlobalDomain com.apple.trackpad.scaling -float 2
+
 # Increase sound quality for Bluetooth headphones/headsets
 defaults write com.apple.BluetoothAudioAgent "Apple Bitpool Min (editable)" -int 80
 defaults write com.apple.BluetoothAudioAgent "Apple Bitpool Max (editable)" -int 80
