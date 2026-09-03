@@ -42,3 +42,5 @@
 # gitconfig-codespaces [include]s gitconfig-work, then overrides for Codespaces.
 [includeIf "gitdir:**/workspaces/**"]
     path = ~/.gitconfig-codespaces
+[url "git@github.com:github/"]
+	insteadOf = https://github.com/github/
