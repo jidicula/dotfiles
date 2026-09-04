@@ -22,7 +22,8 @@
 #         "command": "/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
 #         "args": [],
 #         "tools": ["eval-elisp"],
-#         "deferTools": "never"
+#         "deferTools": "never",
+#         "disableToolCache": true
 #       }
 #     }
 #   }
@@ -155,7 +156,9 @@ main() {
 		# wrapper on a slow tool call. Hand the daemon our pid so its liveness
 		# watch follows the new owner, and keep every job it is still running.
 		log "reusing Emacs daemon $ID"
-		emacsclient -s "$ID" -e "(setq copilot-mcp-parent-pid $$)" >/dev/null 2>&1 ||
+		emacsclient -s "$ID" -e \
+			"(setq copilot-mcp-parent-pid $$ copilot-mcp--orphaned-since nil)" \
+			>/dev/null 2>&1 ||
 			log "warning: could not refresh parent pid on daemon $ID"
 		;;
 	2)

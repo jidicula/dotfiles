@@ -231,13 +231,25 @@ Refreshed by the wrapper when a new client reattaches to an existing daemon.")
   (let ((raw (getenv "COPILOT_MCP_ORPHAN_GRACE")))
     (if (and raw (> (string-to-number raw) 0))
         (string-to-number raw)
-      900))
+      3600))
   "Seconds to keep running after the owning wrapper disappears.
 Long enough that a wrapper killed mid-session can be respawned and reattach
 without losing this daemon.  Override with COPILOT_MCP_ORPHAN_GRACE.")
 
 (defvar copilot-mcp--orphaned-since nil
   "When the owning wrapper was first seen to be gone, or nil if it is alive.")
+
+(defun copilot-mcp-runner-active-p ()
+  "Return non-nil while any known runner connection is still live."
+  (and (boundp 'copilot-cs--jobs)
+       (hash-table-p copilot-cs--jobs)
+       (catch 'active
+         (maphash
+          (lambda (_ job)
+            (when (process-live-p (plist-get job :process))
+              (throw 'active t)))
+          copilot-cs--jobs)
+         nil)))
 
 (defun copilot-mcp-watch-parent ()
   "Shut down once the owning wrapper has been gone for the full grace window."
@@ -248,7 +260,8 @@ without losing this daemon.  Override with COPILOT_MCP_ORPHAN_GRACE.")
       (setq copilot-mcp--orphaned-since (float-time)))
     (when (>= (- (float-time) copilot-mcp--orphaned-since)
               copilot-mcp-orphan-grace)
-      (kill-emacs 0))))
+      (unless (copilot-mcp-runner-active-p)
+        (kill-emacs 0)))))
 
 (run-with-timer copilot-mcp-parent-poll-interval
                 copilot-mcp-parent-poll-interval

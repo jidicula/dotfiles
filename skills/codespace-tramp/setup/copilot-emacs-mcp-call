@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Invoke eval-elisp through the dedicated Codespace MCP bridge."""
+
+import json
+import os
+import select
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+BRIDGE = Path(__file__).with_name("copilot-emacs-mcp")
+
+
+def fail(message):
+    print(f"[copilot-emacs-mcp-call] {message}", file=sys.stderr)
+    return 1
+
+
+def send(process, message):
+    process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+    process.stdin.flush()
+
+
+def read_response(process, request_id, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"timed out after {timeout:g}s waiting for response {request_id}"
+            )
+        ready, _, _ = select.select([process.stdout], [], [], remaining)
+        if not ready:
+            continue
+        line = process.stdout.readline()
+        if line == "":
+            raise RuntimeError(
+                f"bridge exited before response {request_id} "
+                f"(status {process.poll()})"
+            )
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"bridge returned invalid JSON: {error}") from error
+        if message.get("id") == request_id:
+            return message
+
+
+def print_tool_result(message):
+    if "error" in message:
+        return fail(f"MCP error: {json.dumps(message['error'], separators=(',', ':'))}")
+
+    result = message.get("result", {})
+    texts = [
+        item["text"]
+        for item in result.get("content", [])
+        if item.get("type") == "text" and "text" in item
+    ]
+    if texts:
+        print("\n".join(texts))
+    else:
+        print(json.dumps(result, separators=(",", ":")))
+    return 1 if result.get("isError") else 0
+
+
+def main():
+    if len(sys.argv) > 2:
+        return fail("usage: copilot-emacs-mcp-call [ELISP]")
+
+    expression = sys.argv[1] if len(sys.argv) == 2 else sys.stdin.read()
+    if not expression.strip():
+        return fail("an Elisp expression is required")
+
+    try:
+        timeout = float(os.environ.get("COPILOT_MCP_CALL_TIMEOUT", "30"))
+    except ValueError:
+        return fail("COPILOT_MCP_CALL_TIMEOUT must be a number")
+    if timeout <= 0:
+        return fail("COPILOT_MCP_CALL_TIMEOUT must be greater than zero")
+
+    try:
+        process = subprocess.Popen(
+            [str(BRIDGE)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+    except OSError as error:
+        return fail(f"could not start bridge: {error}")
+    try:
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "copilot-emacs-mcp-call",
+                        "version": "1",
+                    },
+                },
+            },
+        )
+        initialization = read_response(process, 1, timeout)
+        if "error" in initialization:
+            return fail(
+                "initialization failed: "
+                + json.dumps(initialization["error"], separators=(",", ":"))
+            )
+
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {},
+            },
+        )
+        send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "eval-elisp",
+                    "arguments": {"expression": expression},
+                },
+            },
+        )
+        return print_tool_result(read_response(process, 2, timeout))
+    except (BrokenPipeError, OSError, RuntimeError, TimeoutError) as error:
+        return fail(str(error))
+    finally:
+        if process.stdin:
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

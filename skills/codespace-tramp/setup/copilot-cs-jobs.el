@@ -197,7 +197,11 @@ the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n
 (defun copilot-cs--login-shell-command (command)
   "Return a login-shell wrapper that runs COMMAND in the current directory."
   (format "bash -lc %s copilot-cs-login \"$(pwd -P)\" %s"
-          (shell-quote-argument "cd \"$1\" && exec sh -c \"$2\"")
+          (shell-quote-argument
+           "cd \"$1\" && \
+if [ -f \"$HOME/.gitconfig-codespaces\" ]; then \
+export GIT_CONFIG_GLOBAL=\"$HOME/.gitconfig-codespaces\"; fi; \
+exec sh -c \"$2\"")
           (shell-quote-argument command)))
 
 (defun copilot-cs--login-required-p (command)
@@ -382,20 +386,17 @@ ended but the job keeps running in the Codespace; re-attach with \
 
 (defun copilot-cs-use (cs-id &optional dir)
   "Send subsequent commands to Codespace CS-ID, starting in DIR.
-Also starts warming the SSH connection in the background so the first real
-command is not the one paying for the handshake.  A nil CS-ID targets the
-local machine, which is useful for testing."
+A nil CS-ID targets the local machine, which is useful for testing."
   (setq copilot-cs-id (and cs-id (not (string-empty-p cs-id)) cs-id)
         copilot-cs-dir (or dir ".")
         copilot-cs-configured t)
-  (copilot-cs-warm)
-  (format "target: cs=%s dir=%s%s"
-          (or copilot-cs-id "<local -- THIS MACHINE>") copilot-cs-dir
-          (if copilot-cs-id " (warming connection in background)" "")))
+  (format "target: cs=%s dir=%s"
+          (or copilot-cs-id "<local -- THIS MACHINE>") copilot-cs-dir))
 
 (defun copilot-cs-warm ()
   "Start establishing the Codespace connection, without waiting for it.
-Safe to call repeatedly.  Booting a `Shutdown' Codespace also happens here."
+Safe to call repeatedly when no command is being launched concurrently.
+Booting a `Shutdown' Codespace also happens here."
   (when copilot-cs-id
     (let ((process (apply #'start-process "copilot-cs-warm" nil
                           (copilot-cs--argv "true"))))

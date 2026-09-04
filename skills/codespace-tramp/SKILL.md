@@ -93,6 +93,10 @@ each of these must be set up on the operator's machine:
     rebuilds it and reconnects on the same stdio transport, so a crash costs one
     failed tool call instead of the session. The replacement daemon starts with
     default state, so `copilot-cs-use` must be called again after one.
+  - `setup/copilot-emacs-mcp-call` — a protocol-aware fallback client for
+    `eval-elisp`. It keeps the stdio transport open until the matching JSON-RPC
+    response arrives, so Codespace work can continue if Copilot's in-memory
+    tool registry temporarily rejects or omits `emacs-codespace-eval-elisp`.
   - `setup/copilot-mcp-init.el` — the daemon's `emacs -Q` init: MCP server plus
     the TRAMP/`ghcs` configuration, and nothing else.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
@@ -108,7 +112,8 @@ each of these must be set up on the operator's machine:
         "command": "/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
         "args": [],
         "tools": ["eval-elisp"],
-        "deferTools": "never"
+        "deferTools": "never",
+        "disableToolCache": true
       }
     }
   }
@@ -116,7 +121,8 @@ each of these must be set up on the operator's machine:
 
   Keep the registration beneath `mcpServers`; a duplicate top-level entry is
   ignored. This workflow depends on its one narrow tool, so load it eagerly
-  instead of relying on deferred tool discovery.
+  instead of relying on deferred tool discovery, and discover it from the live
+  server on each CLI start instead of restoring a stale persisted snapshot.
 
   **Why a dedicated per-session daemon:** Emacs is single-threaded, so any
   synchronous remote operation blocks the entire instance. Sharing one daemon
@@ -134,8 +140,8 @@ each of these must be set up on the operator's machine:
   directory; adapt that block for a different package manager. TRAMP is
   configured for Emacs-native file access; commands go through `copilot-cs-sh`
   instead (see Step 5).
-- The **GitHub CLI** (`gh`) installed and authenticated, and **`socat`**
-  installed.
+- The **GitHub CLI** (`gh`) installed and authenticated, **`socat`** installed,
+  and **Python 3** available for the protocol-aware fallback client.
 - **Secretive** installed with its SSH agent enabled and at least one active
   identity. `setup/copilot-ghcs` uses Secretive's standard data directory by
   default. `COPILOT_SECRETIVE_AGENT_SOCKET` selects another socket
@@ -459,8 +465,8 @@ CS_ID=$(gh codespace list -R "$NWO" --json name,displayName \
 ```
 
 **Wait until the Codespace is `Available` before connecting.** A freshly created
-Codespace may still be provisioning, and a reused one may be `Shutdown` (the
-Step 5 pre-warm auto-starts it, but connecting before it is ready fails). Use a
+Codespace may still be provisioning, and a reused one may be `Shutdown`
+(connecting starts it, but it cannot serve commands until it is ready). Use a
 **self-terminating bounded poll** — not `watch`/`watchexec`, which run forever
 and, in `watch`'s case, need a TTY this shell does not have:
 
@@ -478,13 +484,16 @@ done
 
 Run this as one synchronous shell call with a long `initial_wait` (it returns as
 soon as the state is `Available`), or asynchronously and read once. To start a
-reused `Shutdown` Codespace, initiate a connection (the Step 5 pre-warm
-through `setup/copilot-ghcs` boots it), then poll for readiness as above.
+reused `Shutdown` Codespace after the required user confirmation, initiate one
+connection through `setup/copilot-ghcs`, then poll for readiness as above:
+
+```bash
+/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
+```
 
 ## Step 5 — Connect and make the changes
 
-Point the command runner at the Codespace. This also warms the SSH connection in
-the background, so the first real command does not pay for the handshake:
+Point the command runner at the Codespace:
 
 ```elisp
 (copilot-cs-use "<CS_ID>" "/workspaces/<dir>")
@@ -501,7 +510,9 @@ Discover the repo's working directory rather than assuming it — list
 `copilot-cs-use` is mandatory, not a convenience: the runner refuses to execute
 anything until a target has been chosen, because a runner with no target
 executes on the **operator's own machine**. Re-run it after any daemon restart,
-which resets it.
+which resets it. It deliberately does not start a second background warm-up
+connection: the first command opens the only Secretive signing request instead
+of racing two simultaneous SSH connections.
 
 If you intend to edit files as Emacs buffers over TRAMP rather than through
 `copilot-cs-put`, read the cookbook's **Using TRAMP directly** section first —
@@ -612,22 +623,35 @@ Ask the user for the correct commands if none are supplied.
 - **`Found 0 tools` for `emacs-codespace`:** this is local Copilot MCP tool
   discovery, not Codespace availability. Confirm the registration is beneath
   `mcpServers`, includes `"tools": ["eval-elisp"]` and
-  `"deferTools": "never"`, and has no duplicate top-level entry. Starting the
-  Codespace cannot repair tool discovery. Run `/mcp` or `/restart` after
-  changing the configuration.
-- **`emacs-codespace-*` tools still missing:** the MCP server may not have
-  connected. Confirm its entry points at an **absolute** path to
-  `setup/copilot-emacs-mcp` and that the file is executable, then run `/mcp` or
-  `/restart`. Copilot CLI can regenerate this configuration and revert
-  hand-edits, so reload after any change.
+  `"deferTools": "never"` plus `"disableToolCache": true`, and has no duplicate
+  top-level entry. Starting the Codespace cannot repair tool discovery. Run
+  `/mcp` after changing the configuration.
+- **`emacs-codespace-eval-elisp` is missing or rejected as nonexistent:** first
+  confirm `copilot mcp get emacs-codespace --json` reports the server enabled
+  with the configuration above. Use the protocol-aware fallback instead of
+  repeatedly restarting the session or piping a bare `tools/call` request,
+  which closes stdin before a long evaluation can answer:
+
+  ```bash
+  printf '%s' '(copilot-cs-status)' | \
+    /absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call
+  ```
+
+  The helper performs the MCP initialization handshake, keeps stdin open until
+  the matching response arrives, and prints the evaluated result. Copilot CLI
+  can regenerate MCP configuration and revert hand-edits, so recheck it if the
+  problem returns.
 - **`Transport closed` on every call:** the stdio bridge is gone. Copilot CLI
   kills it when a tool call overruns its budget, which is what running commands
   through blocking TRAMP primitives causes — use `copilot-cs-sh` instead. A
   daemon that merely *dies* no longer causes this: the bridge rebuilds it and
   reconnects by itself. `Transport closed` therefore means the **bridge**
   process itself was killed, which only `/mcp` or `/restart` can undo. The
-  daemon survives it for 15 minutes (`COPILOT_MCP_ORPHAN_GRACE`), so the
-  replacement bridge reattaches to the same one and its jobs are still there.
+  daemon survives it for one hour (`COPILOT_MCP_ORPHAN_GRACE`), and every
+  successful bridge reattachment resets that window, so a delayed Secretive
+  approval does not discard the selected target or known jobs. The watchdog
+  also refuses to stop the daemon while any runner connection is live,
+  including a job still waiting for Secretive approval.
   Any job already launched keeps running in the Codespace regardless — recover
   it with `(copilot-cs-attach "<job-id>")`.
 - **Daemon wedged on a brand-new Codespace:** if the first thing that hung was a
@@ -679,11 +703,13 @@ Ask the user for the correct commands if none are supplied.
 - **`sign_and_send_pubkey` reports an agent refusal or communication failure:**
   if the remote command then succeeds, the daemon predates the Secretive-only
   transport and fell back to another key; run `/mcp` or `/restart`. Current
-  versions either authenticate with Secretive or fail without fallback. Retry
-  Secretive authentication at most three times. After the third failure, stop
-  and prompt the human operator before trying again so they can return and
-  approve the signing request. Never create or select `~/.ssh/codespaces.auto`
-  or another on-disk private key as a workaround.
+  versions either authenticate with Secretive or fail without fallback.
+  `copilot-cs-use` no longer launches a concurrent warm-up connection, so the
+  first command creates one signing request rather than two competing requests.
+  Retry Secretive authentication at most three times. After the third failure,
+  stop and prompt the human operator before trying again so they can return and
+  approve the signing request. Never create or select
+  `~/.ssh/codespaces.auto` or another on-disk private key as a workaround.
 - **A short command reports `state=connecting` with no output:** no remote job
   has been acknowledged yet. The Codespace may still be connecting, but an
   unanswered Secretive request is the usual cause. Approve it, then poll the
@@ -722,6 +748,12 @@ Ask the user for the correct commands if none are supplied.
   unrecognized Git wrapper. Current `copilot-cs-sh` routes direct and chained
   `git fetch`, `git push`, and `git commit` commands automatically. Otherwise
   use `(copilot-cs-login-sh "<command>")`.
+- **`git push` fails with `Host key verification failed`:** a host-only global
+  Git rule rewrote the Codespace's HTTPS remote to SSH. Current login-routed
+  commands set `GIT_CONFIG_GLOBAL` to `~/.gitconfig-codespaces` when that file
+  exists, retaining the Codespace credential/signing helpers without importing
+  the host's URL rewrites. Rebuild an older daemon with `/mcp`, then retry the
+  unchanged HTTPS remote; do not weaken SSH host-key checking.
 - **`git commit` fails with `gpg failed to sign the data` and
   `unsupported protocol scheme ""`:** same root cause. Current
   `copilot-cs-sh` routes `git commit` through the login environment
@@ -730,8 +762,9 @@ Ask the user for the correct commands if none are supplied.
 - **Every command fails with `cannot cd to ...`:** `copilot-cs-use` was given a
   directory that does not exist in the Codespace. Re-discover it with
   `(copilot-cs-sh "ls -d /workspaces/*/")` from a directory that does exist.
-- **First command is slow:** the `gh codespace ssh` transport is warming up.
-  `copilot-cs-use` starts warming it in the background; a `Shutdown` Codespace
-  also has to boot first.
+- **First command is slow:** it establishes the single
+  `gh codespace ssh`/Secretive connection. `copilot-cs-use` intentionally does
+  not race it with a background warm-up; a `Shutdown` Codespace also has to boot
+  first.
 - **Codespace is `Shutdown`:** `gh` will start it on first connect, but it is
   billable — confirm with the user before starting a stopped Codespace.

@@ -33,6 +33,8 @@
 	process = git-lfs filter-process
 	required = true
 	clean = git-lfs clean -- %f
+[url "git@github.com:github/"]
+	insteadOf = https://github.com/github/
 [include]
     path = ~/.gitconfig-personal
 # Work repos + their worktrees. Anchored to ~/ so it won't match the
@@ -42,5 +44,3 @@
 # gitconfig-codespaces [include]s gitconfig-work, then overrides for Codespaces.
 [includeIf "gitdir:**/workspaces/**"]
     path = ~/.gitconfig-codespaces
-[url "git@github.com:github/"]
-	insteadOf = https://github.com/github/

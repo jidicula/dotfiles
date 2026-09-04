@@ -58,9 +58,10 @@ into a local buffer, so polling is instant.
 (copilot-cs-use "<CS_ID>" "/workspaces/<dir>")
 ```
 
-Returns immediately and starts warming the SSH connection in the background, so
-the first real command does not pay for the handshake. Call it again to switch
-Codespaces or directories.
+Returns immediately without opening SSH. Call it again to switch Codespaces or
+directories. The first real command creates the only Secretive signing request;
+an automatic background warm-up used to race that command with a second
+connection and could cause one of the concurrent requests to be refused.
 
 **Call this before anything else, and again after any daemon restart.** Until a
 target has been chosen the runner refuses to run at all:
@@ -127,6 +128,27 @@ Secretive authentication fails three times, stop and prompt the operator before
 trying again; they may be away from the computer and unable to approve the
 request.
 
+### Fallback when Copilot loses the MCP tool
+
+The MCP registration sets `"deferTools": "never"` and
+`"disableToolCache": true`, but an already-running Copilot process can still
+temporarily reject `emacs-codespace-eval-elisp` while listing it as available.
+Do not repeatedly restart or pipe a bare JSON-RPC request into the bridge: a
+long evaluation can still be running when the pipe closes stdin, which makes
+the bridge exit before the response arrives.
+
+Use the protocol-aware fallback client instead:
+
+```bash
+printf '%s' '(copilot-cs-status)' | \
+  /absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call
+```
+
+It performs the initialization handshake, keeps the bridge open until the
+matching response arrives, prints the evaluated result, and then disconnects
+cleanly. It uses the same `COPILOT_AGENT_SESSION_ID`, so repeated fallback calls
+reattach to the same daemon and retain its runner state.
+
 ### Commands that need the Codespace login environment
 
 `git push`, HTTPS `git fetch`, signed `git commit`, and repository commands that
@@ -164,6 +186,12 @@ theorising:
 (copilot-cs-sh "git fetch origin main")
 (copilot-cs-sh "git commit -m 'Update configuration' && git push")
 ```
+
+Those login-routed commands use `~/.gitconfig-codespaces` as the global Git
+configuration when it exists. That file retains the Codespace credential and
+signing helpers while excluding host-only URL rewrites such as converting
+`https://github.com/github/` to SSH. This keeps pushes on the credentialed HTTPS
+path and avoids weakening SSH host-key verification.
 
 Use the explicit helper for other authenticated repository commands:
 
@@ -265,6 +293,12 @@ all of it.
 output has died, replaying the log from the start. A dropped SSH session
 therefore costs nothing but the time to poll again — no output is lost, and
 there is no need to notice the drop or do anything about it.
+
+The daemon remains available for one hour after a bridge disappears, and every
+fallback or CLI reattachment resets that window. A delayed Secretive approval
+therefore does not erase the target and job table before the next poll. A live
+runner connection, including one still waiting for Secretive, suppresses orphan
+shutdown entirely until that connection finishes.
 
 If a command exits nonzero without writing anything, the runner records
 `command exited with status N without producing stdout or stderr`. This is a
