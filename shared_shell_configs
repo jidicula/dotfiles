@@ -47,7 +47,7 @@ export TK_SILENCE_DEPRECATION=1
 # Lazy-load version managers: defers eval until first use
 if command -v pyenv 1>/dev/null 2>&1; then
 	export PYENV_ROOT="$HOME/.pyenv"
-	export PATH="$PYENV_ROOT/bin:$PATH"
+	export PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
 	export ZSH_PYENV_VIRTUALENV=true
 	pyenv() {
 		unset -f pyenv
