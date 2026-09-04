@@ -561,24 +561,23 @@ There are two things you can do about this warning:
   (interactive)
   (eglot-code-actions nil nil "source.organizeImports" t))
 
-(defun my-ruby-eglot-contact (_interactive)
-  "Return Sorbet LSP for projects with sorbet/config, ruby-lsp otherwise."
-  (let* ((root (project-root (project-current)))
-         (sorbet-config (expand-file-name "sorbet/config" root)))
-    (if (file-exists-p sorbet-config)
-        '("bundle" "exec" "srb" "typecheck" "--lsp" "--cache-dir" "tmp/sorbet")
-      '("ruby-lsp"))))
-
 (use-package eglot
   :straight t
+  :init
+  (add-to-list
+   'load-path
+   (expand-file-name "skills/codespace-tramp/setup"
+                     (or (getenv "DOTFILESDIR") "~/dotfiles")))
   :hook
   ((before-save . my-eglot-organize-imports)
    (before-save . eglot-format-buffer)
+   (go-mode . eglot-ensure)
    (go-ts-mode . eglot-ensure)
    (python-ts-mode . eglot-ensure)
    (bash-ts-mode . eglot-ensure)
    (yaml-ts-mode . eglot-ensure)
    (dockerfile-ts-mode . eglot-ensure)
+   (ruby-mode . eglot-ensure)
    (ruby-ts-mode . eglot-ensure)
    (typescript-ts-mode . eglot-ensure)
    (tsx-ts-mode . eglot-ensure)
@@ -586,23 +585,7 @@ There are two things you can do about this warning:
    (swift-mode . eglot-ensure)
    )
   :config
-  (add-to-list 'eglot-server-programs '((ruby-mode ruby-ts-mode) . my-ruby-eglot-contact))
-  ;; Longer timeout for remote (Codespace) connections
-  (setq eglot-connect-timeout 60)
-  ;; Sorbet adds a non-standard `requestMethod' field to ResponseMessages
-  ;; (see sorbet/main/lsp/tools/make_lsp_types.cc). Emacs jsonrpc.el
-  ;; destructures incoming messages without `&allow-other-keys', so unknown
-  ;; keys raise: (error "Keyword argument :requestMethod not one of ...").
-  ;; Strip it before jsonrpc sees it.
-  (defun my-jsonrpc-strip-sorbet-keys (args)
-    "Remove Sorbet's non-standard `:requestMethod' from incoming messages."
-    (cl-destructuring-bind (conn foreign-message) args
-      (when (and (listp foreign-message)
-                 (plist-member foreign-message :requestMethod))
-        (cl-remf foreign-message :requestMethod))
-      (list conn foreign-message)))
-  (advice-add 'jsonrpc-connection-receive :filter-args
-              #'my-jsonrpc-strip-sorbet-keys)
+  (require 'copilot-cs-eglot)
   )
 
 (use-package eldoc-box

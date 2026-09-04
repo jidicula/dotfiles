@@ -128,6 +128,51 @@ Secretive authentication fails three times, stop and prompt the operator before
 trying again; they may be away from the computer and unable to approve the
 request.
 
+## Semantic code intelligence with Eglot
+
+`copilot-cs-eglot.el` provides Codespace-aware Eglot contacts for Ruby and Go.
+The source remains a `/ghcs:` TRAMP buffer, but the language server is launched
+as a local `copilot-ghcs` process whose stdin and stdout carry LSP JSON-RPC to
+the server inside the Codespace. This avoids Eglot's normal remote
+`make-process :file-handler t` path, which can synchronously block Emacs while
+TRAMP establishes the connection.
+
+Startup is asynchronous:
+
+```elisp
+(copilot-cs-eglot-start
+ "/ghcs:<CS_ID>:/workspaces/<dir>/path/to/file.go"
+ 'go-mode)
+(copilot-cs-eglot-status
+ "/ghcs:<CS_ID>:/workspaces/<dir>/path/to/file.go")
+```
+
+Wait for `state=ready` and `server=running`, then query the managed file:
+
+```elisp
+(copilot-cs-eglot-document-symbols "<remote-path>")
+(copilot-cs-eglot-hover "<remote-path>" 36 6)
+(copilot-cs-eglot-definition "<remote-path>" 37 15)
+(copilot-cs-eglot-references "<remote-path>" 36 6)
+(copilot-cs-eglot-diagnostics "<remote-path>")
+```
+
+Line numbers are one-based; columns are zero-based. Semantic calls have a
+12-second request deadline so one server request cannot consume the complete
+MCP budget.
+
+The configured servers are:
+
+| Modes | Local project | Codespace project |
+|---|---|---|
+| `go-mode`, `go-ts-mode` | `gopls` | `gopls` inside the Codespace |
+| `ruby-mode`, `ruby-ts-mode` with `sorbet/config` | `bundle exec srb typecheck --lsp --cache-dir tmp/sorbet` | The same command inside a login shell, adding `--disable-watchman` when Watchman is absent |
+| `ruby-mode`, `ruby-ts-mode` without `sorbet/config` | `ruby-lsp` | `ruby-lsp` inside a login shell |
+
+The same contacts are loaded by the operator's `init.el`, so visiting a
+Codespace file interactively and running Eglot uses the remote server transport
+without any Copilot-specific setup.
+
 ### Fallback when Copilot loses the MCP tool
 
 The MCP registration sets `"deferTools": "never"` and

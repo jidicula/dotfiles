@@ -2,8 +2,9 @@
 
 ;;; Commentary:
 
-;; Boots a minimal, disposable Emacs daemon that exposes the MCP server plus
-;; just enough TRAMP/codespaces machinery to drive a Codespace over `/ghcs:'.
+;; Boots a minimal, disposable Emacs daemon that exposes the MCP server,
+;; TRAMP/codespaces file access, detached command jobs, and Codespace-hosted
+;; Eglot language servers.
 ;;
 ;; Why: Emacs is single-threaded, so one synchronous TRAMP operation (a sync,
 ;; a reconnect) blocks the whole instance.  Sharing one daemon across several
@@ -197,6 +198,7 @@
 ;; non-blocking instead.  See that file's commentary.
 
 (require 'copilot-cs-jobs)
+(require 'copilot-cs-eglot)
 
 ;; Optional: point the runner at a Codespace up front, so the SSH handshake is
 ;; already paid for by the time the first command arrives.

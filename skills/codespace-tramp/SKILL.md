@@ -97,10 +97,14 @@ each of these must be set up on the operator's machine:
     `eval-elisp`. It keeps the stdio transport open until the matching JSON-RPC
     response arrives, so Codespace work can continue if Copilot's in-memory
     tool registry temporarily rejects or omits `emacs-codespace-eval-elisp`.
-  - `setup/copilot-mcp-init.el` — the daemon's `emacs -Q` init: MCP server plus
-    the TRAMP/`ghcs` configuration, and nothing else.
+  - `setup/copilot-mcp-init.el` — the daemon's `emacs -Q` init: MCP server,
+    TRAMP/`ghcs`, detached jobs, and Codespace-hosted Eglot.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
     is built on, loaded into the daemon at boot.
+  - `setup/copilot-cs-eglot.el` — shared Eglot configuration for the dedicated
+    daemon and interactive Emacs. It runs gopls, Sorbet, or Ruby LSP inside the
+    Codespace over a local Secretive-backed process instead of asking TRAMP to
+    start a blocking remote process.
 
   Register it in `~/.copilot/mcp-config.json`:
 
@@ -555,6 +559,45 @@ which resets it. It deliberately does not start a second background warm-up
 connection: the first command opens the only Secretive signing request instead
 of racing two simultaneous SSH connections.
 
+### Semantic code intelligence with Eglot
+
+For Ruby and Go repositories, prefer Eglot over text search when the task needs
+document symbols, hover information, definitions, references, or diagnostics.
+The language server runs inside the Codespace, so it sees the repository's
+dependencies and does not index the checkout on the operator's machine.
+
+Start Eglot with one representative source file. Startup is asynchronous so a
+large server cannot consume the MCP tool-call budget:
+
+```elisp
+(copilot-cs-eglot-start
+ "/ghcs:<CS_ID>:/workspaces/<dir>/path/to/file.rb"
+ 'ruby-mode)
+(copilot-cs-eglot-status
+ "/ghcs:<CS_ID>:/workspaces/<dir>/path/to/file.rb")
+```
+
+Poll `copilot-cs-eglot-status` until it reports `state=ready` and
+`server=running`. Then use the semantic helpers:
+
+```elisp
+(copilot-cs-eglot-document-symbols "<remote-path>")
+(copilot-cs-eglot-hover "<remote-path>" 12 4)
+(copilot-cs-eglot-definition "<remote-path>" 12 4)
+(copilot-cs-eglot-references "<remote-path>" 12 4)
+(copilot-cs-eglot-diagnostics "<remote-path>")
+```
+
+Lines are one-based and columns are zero-based. Ruby projects use Sorbet when
+`sorbet/config` exists and Ruby LSP otherwise; Go projects use gopls. The
+server executable must already be available in the Codespace. Remote Sorbet
+automatically disables Watchman when it is unavailable.
+
+The Eglot transport is the sole exception to the rule against direct remote
+processes. The preloaded helper launches a local `copilot-ghcs` process whose
+stdio is the LSP JSON-RPC stream; it does not call TRAMP's blocking
+`start-file-process` path.
+
 If you intend to edit files as Emacs buffers over TRAMP rather than through
 `copilot-cs-put`, read the cookbook's **Using TRAMP directly** section first —
 in particular the note on prompts, which are what turn a slow remote operation
@@ -578,7 +621,9 @@ daemon, and a command that outruns Copilot CLI's per-call budget takes down the
 whole session's transport, not just that call. On a large repository even
 `git status`, `git fetch`, or a repo-wide `grep` can blow past it, so this is
 the normal case rather than an edge case. `copilot-cs-sh` runs work detached and
-non-blocking, and its jobs survive a disconnect.
+non-blocking, and its jobs survive a disconnect. The preloaded
+`copilot-cs-eglot-*` helpers are safe because they create their SSH process
+locally and reserve its stdio exclusively for LSP traffic.
 
 `gh codespace ssh` remains useful internally as a **connection primitive** —
 pre-warming and booting a `Shutdown` Codespace — but never invoke it directly.

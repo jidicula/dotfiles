@@ -1,6 +1,6 @@
 # Codespace TRAMP
 
-`codespace-tramp` is a GitHub Copilot CLI skill that keeps work-repository changes, dependency installation, builds, and tests inside GitHub Codespaces. It drives each Codespace through a dedicated local Emacs daemon, the Model Context Protocol (MCP), and the `/ghcs:` TRAMP method.
+`codespace-tramp` is a GitHub Copilot CLI skill that keeps work-repository changes, dependency installation, language-server indexing, builds, and tests inside GitHub Codespaces. It drives each Codespace through a dedicated local Emacs daemon, the Model Context Protocol (MCP), Eglot, and the `/ghcs:` TRAMP method.
 
 The result is a stateful remote development session: Emacs preserves the selected Codespace, open buffers, running processes, and job metadata across Copilot turns, while commands continue running inside the Codespace even if SSH, MCP, or the Copilot session disconnects.
 
@@ -37,10 +37,10 @@ copilot-emacs-mcp
   | local Unix socket
   v
 per-session Emacs daemon
-  |                         \
-  | /ghcs: TRAMP             \ copilot-cs-* detached jobs
-  | file operations           \ through Secretive-backed SSH
-  v                            v
+  |                         |                         \
+  | /ghcs: TRAMP            | copilot-cs-* jobs       \ Eglot LSP JSON-RPC
+  | file operations         | through SSH              \ through SSH
+  v                         v                           v
 GitHub Codespace repository and development environment
 
 Local authenticated gh
@@ -58,6 +58,7 @@ The main design choices are:
 5. **Remote job persistence.** Scripts, logs, process ids, and exit status live under `~/.copilot-cs-jobs` in the Codespace. A job can be polled or reattached after a transport or session failure.
 6. **Secretive-only SSH authentication.** The transport pins the Secretive agent and identity with `IdentitiesOnly=yes`. It does not create or fall back to an on-disk private key.
 7. **Local GitHub control-plane operations.** The operator's authenticated local `gh` creates and inspects Codespaces and pull requests. Repository commands run remotely; local credentials are never copied into the Codespace.
+8. **Codespace-native language intelligence.** Eglot keeps source buffers local to Emacs while running gopls, Sorbet, or Ruby LSP inside the Codespace over a dedicated Secretive-backed stdio process. Definitions, references, hover information, document symbols, and diagnostics therefore use the repository's remote checkout and dependencies.
 
 ## Workflow
 
@@ -70,9 +71,10 @@ When invoked, the skill:
 5. For a new Codespace, ranks every available machine by CPU count, memory, and storage. It tries the largest machine first and falls back through each next-largest SKU if creation fails.
 6. Selects the repository's development-container configuration and waits for the Codespace to become available.
 7. Points the dedicated Emacs runner at the immutable Codespace id and the discovered repository directory under `/workspaces/`.
-8. Makes changes and runs builds, tests, linters, and other repository commands through detached `copilot-cs-*` jobs.
-9. Commits and pushes retained changes from the Codespace, then uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise.
-10. Leaves the Codespace running so its configured idle timeout can stop it.
+8. Uses Codespace-hosted Eglot servers for semantic navigation and diagnostics when working in Ruby or Go.
+9. Makes changes and runs builds, tests, linters, and other repository commands through detached `copilot-cs-*` jobs.
+10. Commits and pushes retained changes from the Codespace, then uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise.
+11. Leaves the Codespace running so its configured idle timeout can stop it.
 
 ## Requirements
 
@@ -89,7 +91,7 @@ The local machine needs:
 
 The supplied daemon init resolves Emacs packages from a `straight.el` `straight/build/` directory. Adapt the load-path setup in [`setup/copilot-mcp-init.el`](setup/copilot-mcp-init.el) when using another package manager.
 
-The target GitHub repository must permit Codespaces and expose at least one machine type and development-container configuration.
+The target GitHub repository must permit Codespaces and expose at least one machine type and development-container configuration. Semantic Ruby support requires Sorbet or Ruby LSP in the Codespace; semantic Go support requires gopls.
 
 ## Installation
 
@@ -132,6 +134,12 @@ The target GitHub repository must permit Codespaces and expose at least one mach
 
 5. If this skill is being shared, change the scope near the top of [`SKILL.md`](SKILL.md). The checked-in configuration intentionally refuses to activate outside `~/work/github/`.
 
+## Interactive Emacs
+
+This repository's [`init.el`](../../init.el) adds the skill's `setup/` directory to `load-path` and requires `copilot-cs-eglot` from the normal Eglot configuration. The same Ruby and Go contacts are therefore usable by a person visiting `/ghcs:` files: local files use ordinary local language servers, while Codespace files start the server inside that Codespace through Secretive-backed SSH.
+
+Both `go-mode`/`go-ts-mode` and `ruby-mode`/`ruby-ts-mode` call `eglot-ensure`. Ruby selects Sorbet when the project contains `sorbet/config`, otherwise Ruby LSP; Go selects gopls.
+
 ## Usage
 
 Ask Copilot CLI to perform repository work in a Codespace, for example:
@@ -161,6 +169,18 @@ The agent, rather than the user, drives the normal `copilot-cs-*` calls. For dia
 (copilot-cs-attach "job-id")
 ```
 
+For semantic code intelligence:
+
+```elisp
+(copilot-cs-eglot-start "<remote-path>" 'ruby-mode)
+(copilot-cs-eglot-status "<remote-path>")
+(copilot-cs-eglot-document-symbols "<remote-path>")
+(copilot-cs-eglot-hover "<remote-path>" 12 4)
+(copilot-cs-eglot-definition "<remote-path>" 12 4)
+(copilot-cs-eglot-references "<remote-path>" 12 4)
+(copilot-cs-eglot-diagnostics "<remote-path>")
+```
+
 See the [execution cookbook](references/emacs-tramp-patterns.md) for file editing, polling, login-shell commands, copies, and recovery procedures.
 
 ## Safety boundaries
@@ -173,6 +193,7 @@ The implementation deliberately fails closed:
 - Interactive Emacs prompts are inhibited because no person can answer a minibuffer prompt in the background daemon.
 - Secretive authentication failures do not fall back to another SSH identity.
 - Codespace Git commands use Codespace-specific credential and signing configuration rather than host-only Git URL rewrites.
+- Codespace Eglot servers are launched only through the Secretive-backed transport and receive repository paths with the TRAMP prefix removed.
 - GitHub API and pull-request operations use local `gh`; local credentials are not transferred into the Codespace.
 - Reusing an existing Codespace and starting a billable `Shutdown` Codespace retain their explicit confirmation gates. Machine sizing is the exception: the skill automatically tries available SKUs from largest to smallest.
 
@@ -197,6 +218,7 @@ The fallback client is protocol-aware: unlike piping one JSON-RPC line into the 
 | [`setup/copilot-emacs-mcp`](setup/copilot-emacs-mcp) | Per-session daemon launcher and resilient stdio-to-Unix-socket bridge |
 | [`setup/copilot-mcp-init.el`](setup/copilot-mcp-init.el) | Minimal `emacs -Q` configuration, MCP server, TRAMP guards, and daemon watchdog |
 | [`setup/copilot-cs-jobs.el`](setup/copilot-cs-jobs.el) | Non-blocking detached Codespace command runner and job registry |
+| [`setup/copilot-cs-eglot.el`](setup/copilot-cs-eglot.el) | Shared Eglot configuration, remote language-server transport, and semantic query helpers |
 | [`setup/copilot-ghcs`](setup/copilot-ghcs) | Secretive-only wrapper for Codespace SSH and copies |
 | [`setup/copilot-emacs-mcp-call`](setup/copilot-emacs-mcp-call) | Protocol-aware direct MCP fallback client |
 | [`setup/copilot-issues-lock`](setup/copilot-issues-lock) | Transactional lock for concurrent issue-log updates |
