@@ -38,6 +38,11 @@ ln -sfv "$DOTFILESDIR/git-commit-message" "$HOME/.git-commit-message"
 ln -sfv "$DOTFILESDIR/gitconfig-personal" "$HOME/.gitconfig-personal"
 ln -sfv "$DOTFILESDIR/gitconfig-work" "$HOME/.gitconfig-work"
 ln -sfv "$DOTFILESDIR/gitconfig-codespaces" "$HOME/.gitconfig-codespaces"
+if [[ -z ${CODESPACES:-} &&
+	( -L "$HOME/.gitconfig-local" ||
+		! "$DOTFILESDIR/gitconfig-local" -ef "$HOME/.gitconfig-local" ) ]]; then
+	ln -fnv "$DOTFILESDIR/gitconfig-local" "$HOME/.gitconfig-local" || exit
+fi
 ln -sfnv "$DOTFILESDIR/emacs-plus" "$HOME/.config/emacs-plus"
 
 if [[ $CODESPACES ]]; then

@@ -33,10 +33,9 @@
 	process = git-lfs filter-process
 	required = true
 	clean = git-lfs clean -- %f
-[url "git@github.com:github/"]
-	insteadOf = https://github.com/github/
 [include]
     path = ~/.gitconfig-personal
+    path = ~/.gitconfig-local
 # Work repos + their worktrees. Anchored to ~/ so it won't match the
 # "worktrees" component in personal-repo worktree gitdirs.
 [includeIf "gitdir:~/work*/**"]
