@@ -78,8 +78,38 @@ ssh_args=(
 	-o "IdentityAgent=$SECRETIVE_SOCKET"
 )
 
+warm_codespace() (
+	local attempt=1 rc=0 error_file
+	error_file=$(mktemp "${TMPDIR:-/tmp}/copilot-ghcs-warm.XXXXXX")
+	trap 'rm -f "$error_file"' EXIT
+
+	while :; do
+		if gh codespace ssh -c "$codespace" -- "${ssh_args[@]}" true \
+			2>"$error_file"; then
+			cat "$error_file" >&2
+			return 0
+		else
+			rc=$?
+		fi
+		cat "$error_file" >&2
+		if [[ $attempt -ge 3 ]] ||
+			! grep -Eq '^error getting ssh server details: failed to invoke SSH RPC: rpc error: code = (DeadlineExceeded|Unavailable) ' "$error_file"; then
+			return "$rc"
+		fi
+		log "Codespace SSH is still starting; retrying warm-up ($((attempt + 1))/3)"
+		sleep "$((attempt * 5))"
+		attempt=$((attempt + 1))
+	done
+)
+
 case "$mode" in
 ssh)
+	# Only the exact, side-effect-free warm-up is replayable. Never retry an
+	# arbitrary command, an interactive shell, a copy, or a signing refusal.
+	if [[ $# -eq 1 && "$1" == "true" ]]; then
+		warm_codespace
+		exit $?
+	fi
 	exec gh codespace ssh -c "$codespace" -- "${ssh_args[@]}" "$@"
 	;;
 cp)

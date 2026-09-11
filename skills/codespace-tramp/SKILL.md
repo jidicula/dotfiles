@@ -92,7 +92,9 @@ each of these must be set up on the operator's machine:
     **mid-session**: if the daemon dies while the session is running, the bridge
     rebuilds it and reconnects on the same stdio transport, so a crash costs one
     failed tool call instead of the session. The replacement daemon starts with
-    default state, so `copilot-cs-use` must be called again after one.
+    default state, so `copilot-cs-use` must be called again after one. Reattaching
+    to a healthy daemon reloads the runner from disk while retaining its target
+    and job registry, so reconnecting also picks up runner fixes.
   - `setup/copilot-emacs-mcp-call` — a protocol-aware fallback client for
     `eval-elisp`. It keeps the stdio transport open until the matching JSON-RPC
     response arrives, so Codespace work can continue if Copilot's in-memory
@@ -101,6 +103,9 @@ each of these must be set up on the operator's machine:
     TRAMP/`ghcs`, detached jobs, and Codespace-hosted Eglot.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
     is built on, loaded into the daemon at boot.
+  - `setup/copilot-cs-stop` — the shell cancellation helper shipped into the
+    Codespace by the runner. It stops a job's complete descendant tree without
+    terminating the supervisor that records its exit code.
   - `setup/copilot-cs-eglot.el` — shared Eglot configuration for the dedicated
     daemon and interactive Emacs. It runs gopls, Sorbet, or Ruby LSP inside the
     Codespace over a local Secretive-backed process instead of asking TRAMP to
@@ -536,6 +541,13 @@ connection through `setup/copilot-ghcs`, then poll for readiness as above:
 /absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
 ```
 
+For this exact `true` warm-up only, the transport retries an SSH RPC
+`DeadlineExceeded` or `Unavailable` startup error up to three total attempts,
+including a closed connection while reading the server preface. It waits five
+and then ten seconds between attempts. It does not retry signing refusals,
+other authentication errors, repository commands, interactive shells, or copies.
+Wait for the warm-up to finish rather than launching a competing connection.
+
 ## Step 5 — Connect and make the changes
 
 Point the command runner at the Codespace:
@@ -558,6 +570,14 @@ executes on the **operator's own machine**. Re-run it after any daemon restart,
 which resets it. It deliberately does not start a second background warm-up
 connection: the first command opens the only Secretive signing request instead
 of racing two simultaneous SSH connections.
+
+The minimal Codespace path in this dotfiles repository's `script/setup`
+installs missing Git LFS before returning: the shared Git config enables
+required LFS filters, which can run even during `git status`. For an older
+Codespace reporting `git-lfs: not found`, follow the cookbook's
+[Git LFS prerequisites](references/emacs-tramp-patterns.md#git-lfs-prerequisites).
+Install the missing dependency inside the Codespace; never disable required
+filters to make repository inspection succeed.
 
 ### Semantic code intelligence with Eglot
 
@@ -651,6 +671,14 @@ avoid literal quote characters in absolute destinations.
 Remote copy paths are restricted to simple path characters because expansion
 is unsafe for shell metacharacters. Use `copilot-cs-put` or TRAMP's inline
 transfer for a path containing spaces or metacharacters.
+
+This explicit copy path also applies to patches authored in this session's
+local `files/` directory. Do not read them with `insert-file-contents` inside an
+MCP invocation: local files remain outside the daemon's allowed scope.
+`copilot-cs-put` takes literal content, not a local file read. Follow the
+cookbook's [session-patch transfer workflow](references/emacs-tramp-patterns.md#transferring-session-patches),
+using a session-specific remote temporary path and waiting for the copy to
+succeed before applying the patch.
 
 The task itself comes from `instructions` and the issue, in that order of
 precedence. Before editing, restate in one line what you are about to change and
@@ -801,6 +829,13 @@ Ask the user for the correct commands if none are supplied.
   unanswered Secretive request is the usual cause. Approve it, then poll the
   same job id. Do not launch a replacement job while the original connection
   is still pending.
+- **A pending job later reports `state=failed`:** the connection ended without
+  an acknowledgement. Polling preserves the original error and does not
+  reconnect automatically. Its remote outcome is unconfirmed; do not assume
+  nothing ran or blindly launch a duplicate. Read `copilot-cs-output`, then, if
+  necessary, select the original Codespace and use `copilot-cs-attach` with
+  the same id to inspect the log and expected command effects. A missing log
+  alone does not establish whether a command ran.
 - **A command returns rc=1 with no output at all:** you used `bash -lc`. Some
   Codespaces' login shell setup breaks it silently. Use `sh` syntax, which is
   what `copilot-cs-sh` runs, except for commands that explicitly need the
@@ -829,17 +864,30 @@ Ask the user for the correct commands if none are supplied.
   result:** the raw command bypassed the workflow's required transport. Use
   `setup/copilot-ghcs cp "$CS_ID" <local-path> remote:/absolute/path` or
   `remote:relative-path`; the latter resolves below the remote user's home.
+- **MCP rejects a local session patch as a sensitive file:** this is the
+  intended Codespace-only file boundary. Transfer the artifact with
+  `setup/copilot-ghcs cp`, or pass content already available as a literal
+  string to `copilot-cs-put`. Do not read local artifacts through Emacs or
+  expand its file permissions. See the cookbook's session-patch workflow.
+- **`git status` reports `git-lfs: not found`:** Git LFS may be missing even
+  though the Codespace is available. Compare plain and login-shell
+  `git lfs version`; if both fail, install Git LFS inside the Codespace using
+  its package manager, then rerun the original command. The current minimal
+  dotfiles setup installs it before returning. Never disable the required
+  filters or skip LFS-managed files to hide this failure.
 - **`git push` fails with `could not read Username for 'https://github.com'`:**
   the daemon predates automatic Git login routing, or the command used an
   unrecognized Git wrapper. Current `copilot-cs-sh` routes direct and chained
   `git fetch`, `git push`, and `git commit` commands automatically. Otherwise
   use `(copilot-cs-login-sh "<command>")`.
 - **`git push` fails with `Host key verification failed`:** a host-only global
-  Git rule rewrote the Codespace's HTTPS remote to SSH. Current login-routed
-  commands set `GIT_CONFIG_GLOBAL` to `~/.gitconfig-codespaces` when that file
-  exists, retaining the Codespace credential/signing helpers without importing
-  the host's URL rewrites. Rebuild an older daemon with `/mcp`, then retry the
-  unchanged HTTPS remote; do not weaken SSH host-key checking.
+  Git rule may have rewritten the Codespace's HTTPS remote to SSH. This dotfiles
+  repository keeps that rewrite in `gitconfig-local`; `script/setup` hardlinks
+  it as `~/.gitconfig-local` only outside Codespaces. Check for an outdated
+  shared config or an unexpected local-only include in the Codespace. The runner
+  preserves normal global settings, and the `/workspaces/` conditional include
+  supplies Codespace credentials and signing. Fix the misplaced rewrite rather
+  than weakening SSH host-key checking.
 - **`git commit` fails with `gpg failed to sign the data` and
   `unsupported protocol scheme ""`:** same root cause. Current
   `copilot-cs-sh` routes `git commit` through the login environment
@@ -852,5 +900,17 @@ Ask the user for the correct commands if none are supplied.
   `gh codespace ssh`/Secretive connection. `copilot-cs-use` intentionally does
   not race it with a background warm-up; a `Shutdown` Codespace also has to boot
   first.
+- **Warm-up reports `failed to invoke SSH RPC` with `DeadlineExceeded` or
+  `Unavailable`:** the exact `copilot-ghcs ssh "$CS_ID" true` warm-up retries
+  these startup errors twice with backoff, including a closed server-preface
+  connection. If all three attempts fail, the final error is returned; inspect
+  Codespace availability before trying again. Arbitrary task commands are
+  never replayed automatically.
+- **Stopping a job leaves descendants running on an older daemon:** reconnect
+  `emacs-codespace` to reload the runner, then use `copilot-cs-stop`. The current
+  helper freezes the tree parent-first, sends `SIGTERM`, and escalates remaining
+  descendants to `SIGKILL` after five seconds. Poll the returned cancellation
+  job for success, and the original job for its exit code. A nonzero
+  cancellation result is a real failure, not confirmation that the job stopped.
 - **Codespace is `Shutdown`:** `gh` will start it on first connect, but it is
   billable — confirm with the user before starting a stopped Codespace.

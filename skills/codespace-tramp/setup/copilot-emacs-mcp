@@ -153,13 +153,16 @@ main() {
 	case $status in
 	0)
 		# Same session reconnecting, e.g. after Copilot CLI killed the previous
-		# wrapper on a slow tool call. Hand the daemon our pid so its liveness
-		# watch follows the new owner, and keep every job it is still running.
-		log "reusing Emacs daemon $ID"
+		# wrapper on a slow tool call. Reload runner definitions without
+		# resetting its defvar-backed target and job registry.
+		log "reusing Emacs daemon $ID and refreshing its runner"
 		emacsclient -s "$ID" -e \
-			"(setq copilot-mcp-parent-pid $$ copilot-mcp--orphaned-since nil)" \
-			>/dev/null 2>&1 ||
-			log "warning: could not refresh parent pid on daemon $ID"
+			"(progn
+			   (load (expand-file-name \"copilot-cs-jobs.el\" copilot-mcp-setup-dir)
+			         nil t t)
+			   (setq copilot-mcp-parent-pid $$ copilot-mcp--orphaned-since nil))" \
+			>/dev/null ||
+			die "could not refresh runner and parent pid on daemon $ID"
 		;;
 	2)
 		# Wedged, or listening on the wrong sockets: either way it will never

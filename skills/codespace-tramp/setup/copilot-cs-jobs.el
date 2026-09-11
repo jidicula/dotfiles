@@ -197,11 +197,7 @@ the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n
 (defun copilot-cs--login-shell-command (command)
   "Return a login-shell wrapper that runs COMMAND in the current directory."
   (format "bash -lc %s copilot-cs-login \"$(pwd -P)\" %s"
-          (shell-quote-argument
-           "cd \"$1\" && \
-if [ -f \"$HOME/.gitconfig-codespaces\" ]; then \
-export GIT_CONFIG_GLOBAL=\"$HOME/.gitconfig-codespaces\"; fi; \
-exec sh -c \"$2\"")
+          (shell-quote-argument "cd \"$1\" && exec sh -c \"$2\"")
           (shell-quote-argument command)))
 
 (defun copilot-cs--login-required-p (command)
@@ -266,6 +262,15 @@ output cannot be mistaken for it."
                           "$")
                   (copilot-cs--text job)))
 
+(defun copilot-cs--state (job)
+  "Return JOB's state without opening a connection or inferring its outcome."
+  (cond
+   ((copilot-cs--rc job) 'done)
+   ((process-live-p (plist-get job :process))
+    (if (copilot-cs--acked-p job) 'running 'connecting))
+   ((copilot-cs--acked-p job) 'detached)
+   (t 'failed)))
+
 (defun copilot-cs--clean (job text)
   "Strip the transport's own bookkeeping lines for JOB from TEXT."
   (let ((done (copilot-cs--done-marker (plist-get job :id)))
@@ -306,6 +311,18 @@ echo %s; exec tail -c +1 -F %s/%s.log"
           (copilot-cs--ack-marker id)
           copilot-cs-remote-dir id))
 
+(defun copilot-cs--stop-command (id)
+  "Return the remote command that cancels job ID's whole process tree."
+  (copilot-cs--check-id id)
+  (let ((script (with-temp-buffer
+                  (insert-file-contents
+                   (expand-file-name "copilot-cs-stop" copilot-cs-setup-dir))
+                  (buffer-string))))
+    (format "sh -c %s copilot-cs-stop %s %s"
+            (shell-quote-argument script)
+            copilot-cs-remote-dir
+            (shell-quote-argument id))))
+
 (defun copilot-cs--resume (job)
   "Start streaming JOB's log again after its local connection went away.
 The log is replayed from the beginning, so nothing said while we were not
@@ -322,13 +339,13 @@ listening is lost.  Returns the refreshed job plist."
     (plist-put fresh :started (plist-get job :started))))
 
 (defun copilot-cs--live (job)
-  "Return JOB, reconnecting first if its output stream has gone away.
-A dropped SSH connection, a restarted bridge, or a stopped stream leaves
-the job running with nobody listening; this picks it back up."
-  (if (or (copilot-cs--rc job)
-          (process-live-p (plist-get job :process)))
-      job
-    (copilot-cs--resume job)))
+  "Return JOB, reconnecting an acknowledged job whose stream has gone away.
+Without an acknowledgement, preserve the original connection failure instead
+of replacing it with an attach error. The command may have started before
+the connection failed, so its outcome remains unconfirmed."
+  (if (eq (copilot-cs--state job) 'detached)
+      (copilot-cs--resume job)
+    job))
 
 (defun copilot-cs--bounded-wait (seconds)
   "Return SECONDS constrained to the safe wait interval."
@@ -355,31 +372,32 @@ loop, so the daemon stays responsive."
   (let* ((id (plist-get job :id))
          (process (plist-get job :process))
          (rc (copilot-cs--rc job))
+         (state (copilot-cs--state job))
          (elapsed (- (float-time) (plist-get job :started)))
          (output (copilot-cs--tail (copilot-cs--output-text job))))
     ;; Nothing more will arrive once the job is done; let the streamer go.
     (when (and rc (process-live-p process))
       (delete-process process))
     (concat
-     (cond
-      (rc (format "job=%s state=done rc=%d elapsed=%.1fs" id rc elapsed))
-      ((and (process-live-p process) (not (copilot-cs--acked-p job)))
+     (pcase state
+      ('done (format "job=%s state=done rc=%d elapsed=%.1fs" id rc elapsed))
+      ('connecting
        (format "job=%s state=connecting elapsed=%.1fs -- waiting for the \
 Codespace connection or Secretive approval; no remote job has been \
 acknowledged yet; approve Secretive, then poll with \
 (copilot-cs-poll \"%s\")" id elapsed id))
-      ((process-live-p process)
+      ('running
        (format "job=%s state=running elapsed=%.1fs -- still going; \
 poll with (copilot-cs-poll \"%s\")" id elapsed id))
-      ;; Died before confirming the job was running: the Codespace was never
-      ;; reached, or the job it names is not there. Either way nothing is
-      ;; running out of sight, and the output below says which it was.
-      ((not (copilot-cs--acked-p job))
-       (format "job=%s state=failed elapsed=%.1fs -- could not start or \
-reach the job; nothing is running" id elapsed))
-      (t (format "job=%s state=detached elapsed=%.1fs -- the local stream \
-ended but the job keeps running in the Codespace; re-attach with \
-(copilot-cs-attach \"%s\")" id elapsed id)))
+      ('failed
+       (format "job=%s state=failed connection_rc=%d elapsed=%.1fs -- \
+connection ended without acknowledgement; remote outcome is unconfirmed; \
+original output is preserved; do not relaunch blindly"
+               id (process-exit-status process) elapsed))
+      ('detached
+       (format "job=%s state=detached elapsed=%.1fs -- the local stream \
+ended; remote outcome is unconfirmed; recover the log with \
+(copilot-cs-poll \"%s\")" id elapsed id)))
      "\n----\n" output)))
 
 ;;; Public API
@@ -440,8 +458,9 @@ output directly; longer ones return a job id to hand to `copilot-cs-poll'."
   "Report on job ID, defaulting to the most recent job.
 Waits up to WAIT seconds (default `copilot-cs-default-wait', capped at
 `copilot-cs-max-wait') for it to finish before reporting. If the connection
-carrying the job's output has died, this silently reconnects, so a dropped SSH
-session costs nothing but the time to poll again."
+carrying an acknowledged job's output has died, this reconnects to its log.
+An unacknowledged connection failure is preserved without reconnecting or
+replaying the command; its remote outcome remains unconfirmed."
   (copilot-cs--report
    (copilot-cs--settle (copilot-cs--live (copilot-cs--job id))
                        (or wait copilot-cs-default-wait))))
@@ -465,10 +484,10 @@ after a transport failure or in a later session."
 
 (defun copilot-cs-stop (&optional id)
   "Ask job ID to stop, defaulting to the most recent job.
-Signals the job itself but spares the wrapper watching it, so the wrapper
-still records an exit code and the job reports as finished rather than
-looking like it ran away.  The output stream is left connected, so that
-exit code arrives here rather than having to be chased down later."
+Signals the entire descendant tree but spares the wrapper recording its
+exit code.  After a grace period, kills descendants that ignored SIGTERM.
+The returned cancellation job reports failure if any descendants survive;
+poll the original job separately for its exit code."
   (let* ((job (copilot-cs--live (copilot-cs--job id)))
          (key (copilot-cs--check-id (plist-get job :id)))
          (rc (copilot-cs--rc job))
@@ -478,13 +497,7 @@ exit code arrives here rather than having to be chased down later."
          (copilot-cs-dir (plist-get job :dir)))
     (if rc
         (format "job=%s already finished with rc=%d; nothing to stop" key rc)
-      (copilot-cs-sh
-       (format "P=$(cat %s/%s.pid 2>/dev/null); \
-if [ -n \"$P\" ] && kill -0 \"$P\" 2>/dev/null; \
-then pkill -TERM -P \"$P\" 2>/dev/null; echo \"signalled job under $P\"; \
-else echo \"job is not running\"; fi"
-               copilot-cs-remote-dir key)
-       10))))
+      (copilot-cs-sh (copilot-cs--stop-command key) 10))))
 
 (defun copilot-cs-status ()
   "Summarize every job this daemon knows about."
@@ -498,8 +511,7 @@ else echo \"job is not running\"; fi"
                        id
                        (cond ((copilot-cs--rc job)
                               (format "rc=%d" (copilot-cs--rc job)))
-                             ((process-live-p (plist-get job :process)) "running")
-                             (t "detached"))
+                             (t (symbol-name (copilot-cs--state job))))
                        (- (float-time) (plist-get job :started))
                        (plist-get job :cmd))
                lines))
@@ -509,7 +521,8 @@ else echo \"job is not running\"; fi"
 (defun copilot-cs-put (path content)
   "Write CONTENT to PATH in the Codespace, relative to `copilot-cs-dir'.
 CONTENT is shipped base64-encoded, so it needs no escaping and may contain
-quotes, newlines, or anything else."
+quotes, newlines, or anything else. Pass literal text, not a local file read
+through MCP; use the explicit `copilot-ghcs cp' transport for local artifacts."
   (let ((b64 (base64-encode-string (encode-coding-string content 'utf-8) t))
         (quoted (shell-quote-argument path)))
     (copilot-cs-sh

@@ -46,6 +46,15 @@ fi
 ln -sfnv "$DOTFILESDIR/emacs-plus" "$HOME/.config/emacs-plus"
 
 if [[ $CODESPACES ]]; then
+	# Required LFS filters can run during status, before any checkout or fetch.
+	if ! command -v git-lfs >/dev/null 2>&1; then
+		if ! command -v apt-get >/dev/null 2>&1; then
+			printf '%s\n' 'Git config requires Git LFS; install git-lfs in this Codespace before rerunning setup.' >&2
+			exit 1
+		fi
+		sudo apt-get update &&
+			sudo apt-get install -y --no-install-recommends git-lfs || exit
+	fi
 	if [[ $CODESPACE_NAME != *dotfiles* ]]; then
 		echo "setup without dotfiles"
 		exit 0

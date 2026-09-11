@@ -1,0 +1,170 @@
+#!/bin/sh
+#
+# Cancel a runner job's descendants without killing its exit-code supervisor.
+
+set -eu
+
+die() { printf 'copilot-cs-stop: %s\n' "$*" >&2; exit 1; }
+
+[ "$#" -eq 2 ] || die "usage: copilot-cs-stop JOB_DIRECTORY JOB_ID"
+directory=$1
+job=$2
+case "$job" in
+	''|*[!A-Za-z0-9._-]*) die "invalid job id" ;;
+esac
+
+log="$directory/$job.log"
+finished() {
+	[ -f "$log" ] &&
+		awk -v marker="__COPILOT_CS_DONE_${job}__:" '
+			index($0, marker) == 1 && substr($0, length(marker) + 1) ~ /^[0-9]+$/ { found = 1 }
+			END { exit !found }' "$log"
+}
+
+if finished; then
+	printf 'job=%s already finished; nothing to stop\n' "$job"
+	exit 0
+fi
+[ -f "$directory/$job.pid" ] || die "job has no supervisor pid; poll its launch before stopping"
+root=$(sed -n '1p' "$directory/$job.pid")
+case "$root" in
+	''|*[!0-9]*|0|1) die "invalid supervisor pid" ;;
+esac
+
+identity() {
+	# Include birth time so an exited descendant's reused PID is not signalled.
+	if info=$(ps -p "$1" -o stat= -o lstart=); then
+		printf '%s\n' "$info" |
+			awk '$1 !~ /^Z/ { print $2, $3, $4, $5, $6 }'
+	fi
+}
+
+root_identity=$(identity "$root")
+[ -n "$root_identity" ] || die "job supervisor is not running; refusing to use a stale pid"
+root_command=$(ps -ww -p "$root" -o args=)
+case "$root_command" in
+	*"$job.sh"*) ;;
+	*) die "pid does not identify this job's supervisor; refusing to signal it" ;;
+esac
+
+lock="$directory/$job.stop-lock"
+mkdir "$lock" 2>/dev/null || die "another cancellation holds $lock"
+records="$lock/processes"
+: >"$records"
+tab=$(printf '\t')
+
+same_process() {
+	[ -n "$2" ] && [ "$(identity "$1")" = "$2" ]
+}
+
+signal_process() {
+	if same_process "$2" "$3"; then
+		if ! kill "-$1" "$2" 2>/dev/null && same_process "$2" "$3"; then
+			die "could not send $1 to descendant $2"
+		fi
+	fi
+}
+
+reverse_records() {
+	awk '{ record[NR] = $0 } END { for (i = NR; i > 0; i--) print record[i] }' "$records"
+}
+
+cleanup() {
+	# Never leave a job frozen if cancellation fails partway through.
+	reverse_records | while IFS="$tab" read -r pid birth; do
+		if same_process "$pid" "$birth"; then
+			kill -CONT "$pid" 2>/dev/null ||
+				printf 'copilot-cs-stop: could not resume descendant %s\n' "$pid" >&2
+		fi
+	done
+	if same_process "$root" "$root_identity"; then
+		kill -CONT "$root" 2>/dev/null ||
+			printf 'copilot-cs-stop: could not resume supervisor %s\n' "$root" >&2
+	fi
+	rm -f "$records" "$lock/snapshot" "$lock/tree"
+	rmdir "$lock"
+}
+trap cleanup 0
+trap 'exit 1' HUP INT TERM
+
+# Freeze the tree before signalling it. Otherwise a killed intermediate shell
+# can orphan grandchildren, or a still-running child can fork after the scan.
+# Parents must stop first: dash can finish a wait when its child is suspended.
+signal_process STOP "$root" "$root_identity"
+pass=0
+while :; do
+	same_process "$root" "$root_identity" ||
+		die "job supervisor exited while collecting descendants; poll the original job"
+	before=$(wc -l <"$records")
+	ps -e -o pid= -o ppid= -o lstart= -o stat= >"$lock/snapshot" ||
+		die "could not inspect the job process tree"
+	awk -v root="$root" '
+		{
+			parent[$1] = $2
+			birth[$1] = $3 " " $4 " " $5 " " $6 " " $7
+			state[$1] = $8
+		}
+		END {
+			for (pid in parent) {
+				ancestor = pid
+				distance = 0
+				while (ancestor in parent && ancestor != root && ancestor != parent[ancestor]) {
+					ancestor = parent[ancestor]
+					distance++
+				}
+				if (pid != root && ancestor == root && state[pid] !~ /^Z/) {
+					depth[pid] = distance
+					if (distance > maximum) maximum = distance
+				}
+			}
+			for (level = 1; level <= maximum; level++)
+				for (pid in depth)
+					if (depth[pid] == level)
+						printf "%s\t%s\n", pid, birth[pid]
+		}' "$lock/snapshot" >"$lock/tree"
+	while IFS="$tab" read -r pid birth; do
+		if ! grep -Fqx "$pid$tab$birth" "$records" && same_process "$pid" "$birth"; then
+			printf '%s\t%s\n' "$pid" "$birth" >>"$records"
+			signal_process STOP "$pid" "$birth"
+		fi
+	done <"$lock/tree"
+	after=$(wc -l <"$records")
+	[ "$after" -ne "$before" ] || break
+	pass=$((pass + 1))
+	[ "$pass" -lt 10 ] || die "job process tree did not stabilise"
+done
+
+[ -s "$records" ] || die "job has no live descendants; poll the original job"
+while IFS="$tab" read -r pid birth; do
+	signal_process TERM "$pid" "$birth"
+done <"$records"
+reverse_records | while IFS="$tab" read -r pid birth; do
+	signal_process CONT "$pid" "$birth"
+done
+
+survivors() {
+	while IFS="$tab" read -r pid birth; do
+		if same_process "$pid" "$birth"; then
+			return 0
+		fi
+	done <"$records"
+	return 1
+}
+
+wait_for_exit() {
+	attempt=0
+	while survivors; do
+		[ "$attempt" -lt 5 ] || return 1
+		sleep 1
+		attempt=$((attempt + 1))
+	done
+}
+
+if ! wait_for_exit; then
+	printf 'job=%s escalating to SIGKILL for remaining descendants\n' "$job"
+	while IFS="$tab" read -r pid birth; do
+		signal_process KILL "$pid" "$birth"
+	done <"$records"
+	wait_for_exit || die "job descendants are still running after SIGKILL"
+fi
+printf 'job=%s stopped; no live descendants remain\n' "$job"

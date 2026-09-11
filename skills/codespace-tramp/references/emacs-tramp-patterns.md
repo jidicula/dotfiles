@@ -63,8 +63,15 @@ directories. The first real command creates the only Secretive signing request;
 an automatic background warm-up used to race that command with a second
 connection and could cause one of the concurrent requests to be refused.
 
-**Call this before anything else, and again after any daemon restart.** Until a
-target has been chosen the runner refuses to run at all:
+For an explicitly approved Codespace restart, warm up with
+`setup/copilot-ghcs ssh "<CS_ID>" true`. Only this exact no-op command retries
+SSH RPC `DeadlineExceeded` and `Unavailable` startup errors, including a closed
+connection while reading the server preface: at most three attempts, separated
+by five and ten seconds. Signing failures and arbitrary repository commands are
+not retried. Do not start another connection while the warm-up is pending.
+
+**Call `copilot-cs-use` before any runner commands, and again after any daemon
+restart.** Until a target has been chosen the runner refuses to run at all:
 
 ```
 copilot-cs: no target selected -- call (copilot-cs-use CS-ID DIR) first
@@ -232,11 +239,19 @@ theorising:
 (copilot-cs-sh "git commit -m 'Update configuration' && git push")
 ```
 
-Those login-routed commands use `~/.gitconfig-codespaces` as the global Git
-configuration when it exists. That file retains the Codespace credential and
-signing helpers while excluding host-only URL rewrites such as converting
-`https://github.com/github/` to SSH. This keeps pushes on the credentialed HTTPS
-path and avoids weakening SSH host-key verification.
+Login-routed commands retain Git's normal configuration; the runner does not
+replace it with a `GIT_CONFIG_GLOBAL` override. This dotfiles repository keeps
+the HTTPS-to-SSH rewrite in `gitconfig-local`, which `script/setup` hardlinks to
+`~/.gitconfig-local` only outside Codespaces. The shared `gitconfig` includes
+that optional file; Git ignores the missing include in Codespaces. The existing
+`/workspaces/` conditional include still supplies Codespace credentials and
+signing, while shared preferences remain available.
+
+Update the shared `gitconfig` in existing Codespaces before reconnecting
+`emacs-codespace` with `/mcp` to refresh the runner. Otherwise an older
+Codespace's unconditional rewrite would become active again when the runner's
+global-config override is removed. The reload preserves the selected target
+and the job registry even when the bridge reuses an existing daemon.
 
 Use the explicit helper for other authenticated repository commands:
 
@@ -255,6 +270,36 @@ shell:
 ```
 
 Everything else stays on plain `sh`.
+
+### Git LFS prerequisites
+
+The shared Git config enables required LFS filters. Even `git status` and
+`git diff` can invoke them, so a missing `git-lfs` binary is a real dependency
+failure, not a reason to disable the filters or skip the affected files.
+
+The minimal Codespace path in this dotfiles repository's `script/setup` installs
+missing Git LFS with `apt-get` before its early return. Existing installations
+are left alone. Package failures stop setup; images without `apt-get` get an
+explicit installation error rather than a successful but incomplete setup.
+
+For an older Codespace reporting `git-lfs: not found`, compare availability:
+
+```elisp
+(copilot-cs-sh "git lfs version")
+(copilot-cs-login-sh "git lfs version")
+```
+
+If only the login environment finds it, use `copilot-cs-login-sh` for the
+LFS-dependent Git command. If neither finds it, install it **inside the
+Codespace**, using the image's package manager. On Debian or Ubuntu:
+
+```elisp
+(copilot-cs-sh "sudo apt-get update && sudo apt-get install -y --no-install-recommends git-lfs && git lfs version")
+```
+
+Then rerun the original Git command with the required filters intact. Do not
+install work dependencies on the operator's machine or bypass LFS to obtain a
+successful status result.
 
 ### GitHub control-plane operations use local `gh`
 
@@ -294,8 +339,36 @@ setup/copilot-ghcs cp "$CS_ID" \
   /local/path/baseline.txt remote:baseline.txt
 ```
 
-For paths containing spaces or shell metacharacters, use `copilot-cs-put` or
-TRAMP's inline transfer instead.
+For **remote** paths containing spaces or shell metacharacters, use
+`copilot-cs-put` with literal content or TRAMP's inline transfer instead. Local
+paths may contain spaces when passed as a quoted argument.
+
+### Transferring session patches
+
+An agent-authored file in the local session's `files/` directory is still a
+local file. The Emacs MCP evaluator deliberately cannot read it, even inside
+`with-temp-buffer` or as an argument to `copilot-cs-put`. Do not weaken the
+Codespace-only file guard or retry that local read through Emacs.
+
+Transfer an existing patch with the explicit local copy tool instead:
+
+```bash
+/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+  "$HOME/.copilot/session-state/$COPILOT_AGENT_SESSION_ID/files/change.patch" \
+  "remote:/tmp/copilot-$COPILOT_AGENT_SESSION_ID-change.patch"
+```
+
+Use this session's artifact and a session-specific remote path. Wait for the
+copy to exit successfully before applying it. Select the target checkout, then
+use the same concrete session id and remote path in the runner:
+
+```elisp
+(copilot-cs-sh "git apply --check /tmp/copilot-<session-id>-change.patch && git apply /tmp/copilot-<session-id>-change.patch && git diff --stat")
+```
+
+For small text already available in the conversation, passing a literal string
+to `copilot-cs-put` is also supported. Its second argument is the content, not a
+filename or an Emacs expression that reads a local artifact.
 
 ### Running `gh copilot` without a TTY
 
@@ -325,7 +398,9 @@ Wait values above 15 seconds are clamped. Repeated short polls leave enough
 time for MCP request and response overhead while the detached job continues
 unaffected in the Codespace.
 
-Repeat until the state is `done`. Then read everything:
+Repeat while the state is `connecting`, `running`, or `detached`. Stop on
+`done` or `failed`; a failed connection needs the recovery decision below, not
+an endless polling loop. Read the complete output with:
 
 ```elisp
 (copilot-cs-output)
@@ -334,10 +409,10 @@ Repeat until the state is `done`. Then read everything:
 Reports include only the tail of the output; `copilot-cs-output` always returns
 all of it.
 
-`copilot-cs-poll` reconnects on its own if the connection carrying a job's
-output has died, replaying the log from the start. A dropped SSH session
-therefore costs nothing but the time to poll again — no output is lost, and
-there is no need to notice the drop or do anything about it.
+`copilot-cs-poll` reconnects on its own if the connection carrying an
+**acknowledged** job's output has died, replaying the log from the start in the
+job's original Codespace, even if the selected target has changed. It attaches
+to the log; it never replays the command.
 
 The daemon remains available for one hour after a bridge disappears, and every
 fallback or CLI reattachment resets that window. A delayed Secretive approval
@@ -350,8 +425,19 @@ If a command exits nonzero without writing anything, the runner records
 real silent failure rather than lost output; split the command or add
 command-specific diagnostics to identify the failing step.
 
-A job that reports `state=failed` never started, so nothing is running; the
-output below the status line says why.
+`state=failed` means the connection ended without an acknowledgement. The
+original output and connection exit status remain available; repeated polling
+does not open another connection or replace the error with a missing-log
+message. `copilot-cs-status` uses the same states, so it does not mislabel these
+jobs as running or detached.
+
+**The remote outcome is unconfirmed, not necessarily "nothing is running".**
+The connection could have failed after starting the command but before its
+acknowledgement arrived. Read the original error first. If the outcome is
+ambiguous, select the original Codespace and use `copilot-cs-attach` with the
+same job id to inspect its log and check the command's expected effects before
+deciding whether to run it again. A missing log alone is not proof that a
+command never ran. Authentication retries still obey the three-failure limit.
 
 ### Other job operations
 
@@ -368,10 +454,19 @@ back up, including the exit code. Within a session `copilot-cs-poll` already
 does this for you; reach for `copilot-cs-attach` when the job id came from an
 *earlier* session.
 
-`copilot-cs-stop` signals the job but leaves the wrapper watching it alive, so a
-stopped job reports a real exit code (`rc=143`) rather than looking like it ran
-away. It refuses to signal a job that has already finished, since the recorded
-pid may by then belong to something else.
+`copilot-cs-stop` freezes the supervisor and all descendants parent-first before
+sending `SIGTERM` to the descendants. Suspending parents first keeps shell
+`wait` calls from treating a stopped child as a completed command. Processes
+that ignore `SIGTERM` receive `SIGKILL` after five seconds. The supervisor is
+resumed rather than terminated, so it records the command's actual exit code,
+usually `rc=143` or `rc=137`.
+
+Cancellation itself is a runner job: poll its returned id to confirm success,
+then poll the original job for its exit code. Surviving descendants produce a
+nonzero cancellation result. The helper checks the persisted completion marker,
+supervisor identity, and descendant start times before signalling; completed
+jobs and stale or unrelated PIDs are not treated as live cancellation targets.
+Failed cancellation resumes processes it suspended.
 
 ## Searching the repository
 
@@ -424,6 +519,10 @@ newlines, `$`, and backticks need no escaping and arrive byte-for-byte:
 (copilot-cs-put "relative/path/to/file" "line 1\nline 2\n")
 ```
 
+For an existing local artifact, use the
+[session-patch transfer workflow](#transferring-session-patches), not a local
+`insert-file-contents` call inside MCP.
+
 Missing parent directories are created. For small, targeted edits `sed` is
 usually less work than rewriting the whole file:
 
@@ -461,7 +560,8 @@ narrows *every* path the daemon may touch to
 `/ghcs:<CS_ID>:/workspaces/…`.
 
 Anything else is reported as a sensitive file and refused — including paths on
-the operator's own machine, and paths **inside** the Codespace but outside the
+the operator's own machine (including this session's authored artifacts), and
+paths **inside** the Codespace but outside the
 working tree, such as the Codespace's `~/.ssh` or `/etc/passwd`. Because the
 same check covers both arguments of `copy-file` and `rename-file`, it also
 blocks copying a Codespace file out to the local disk.
