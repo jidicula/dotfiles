@@ -19,7 +19,7 @@
 
 (server-start)
 
-(message (format "%s" file-name-handler-alist))
+(message "%s" file-name-handler-alist)
 (setq file-name-handler-alist nil)
 
 ;; confirm before quitting
