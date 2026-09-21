@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SECRETIVE_DATA_DIR="${COPILOT_SECRETIVE_DATA_DIR:-$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data}"
 SECRETIVE_SOCKET="${COPILOT_SECRETIVE_AGENT_SOCKET:-${COPILOT_SECRETIVE_SOCKET:-$SECRETIVE_DATA_DIR/socket.ssh}}"
 SECRETIVE_PUBLIC_KEYS_DIR="${COPILOT_SECRETIVE_PUBLIC_KEYS_DIR:-$SECRETIVE_DATA_DIR/PublicKeys}"
-SECRETIVE_STANDIN="${COPILOT_SECRETIVE_STANDIN:-$HOME/.ssh/secretive-codespaces}"
+SECRETIVE_STANDIN="${COPILOT_SECRETIVE_STANDIN:-$HOME/.ssh/secretive-stormbreaker-github-sep-2026}"
 
 log() { printf '[copilot-ghcs] %s\n' "$*" >&2; }
 die() { log "$*"; exit 1; }

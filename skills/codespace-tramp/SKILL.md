@@ -171,7 +171,11 @@ each of these must be set up on the operator's machine:
   default. `COPILOT_SECRETIVE_AGENT_SOCKET` selects another socket
   (`COPILOT_SECRETIVE_SOCKET` remains a compatibility alias), and the other
   `COPILOT_SECRETIVE_*` variables support a different data directory or an
-  explicitly selected public-key stand-in.
+  explicitly selected public-key stand-in. The default alias base is
+  `~/.ssh/secretive-stormbreaker-github-sep-2026`; it and its `.pub` sibling
+  both point to the selected Secretive-managed public key. The work Git
+  configuration uses the `.pub` alias for signing. `COPILOT_SECRETIVE_STANDIN`
+  overrides the transport's base alias path.
 
 Assume these work; diagnose only when a call fails. See the **Troubleshooting**
 section and `references/emacs-tramp-patterns.md` for the execution cookbook.

@@ -4,7 +4,7 @@
 	# in Codespaces.
     name = "Johanan"
     email = "jidicula@github.com"
-	signingkey = "~/.ssh/secretive-codespaces.pub"
+	signingkey = "~/.ssh/secretive-stormbreaker-github-sep-2026.pub"
 [gpg]
 	format = "ssh"
 [gpg "ssh"]

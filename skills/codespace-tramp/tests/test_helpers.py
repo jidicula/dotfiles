@@ -539,6 +539,31 @@ class ApiConnectionTests(WarmupTests):
 
 
 class ConnectionSafetyTests(SecretiveTransportTestCase):
+    def test_default_identity_matches_the_work_signing_alias(self):
+        self.env.pop("COPILOT_SECRETIVE_STANDIN")
+        self.env["FAKE_GH_FAILURES"] = "0"
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        setting = self.run_command(
+            ["git", "config", "--file", str(DOTFILES / "gitconfig-work"),
+             "--path", "--get", "user.signingkey"]
+        )
+        self.assertEqual(setting.returncode, 0, setting.stderr)
+        public = Path(setting.stdout.strip())
+        self.assertEqual(
+            public, self.root / ".ssh" / "secretive-stormbreaker-github-sep-2026.pub",
+        )
+        standin = public.with_suffix("")
+        for path in (standin, public):
+            self.assertTrue(path.is_symlink())
+            self.assertEqual(
+                path.resolve(), Path(self.env["COPILOT_SECRETIVE_PUBLIC_KEY"]).resolve(),
+            )
+        arguments = self.recorded_calls()[0]
+        self.assertEqual(arguments[arguments.index("-i") + 1], str(standin))
+        for name in ("secretive-codespaces", "secretive-codespaces.pub"):
+            self.assertFalse(os.path.lexists(self.root / ".ssh" / name))
+
     def test_waiting_connection_cannot_replace_an_active_identity(self):
         self.env["FAKE_GH_FAILURES"] = "0"
         result = self.invoke("ssh", "test-codespace", "first")
