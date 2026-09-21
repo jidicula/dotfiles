@@ -4,11 +4,15 @@ Run with: python3 -m unittest discover -s skills/codespace-tramp/tests -v
 Only Python's standard library, Emacs, Git, and system shell tools are used.
 """
 
+import fcntl
+import importlib.machinery
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shlex
 import shutil
+import select
 import signal
 import socket
 import subprocess
@@ -16,6 +20,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 SETUP = Path(__file__).resolve().parents[1] / "setup"
@@ -28,6 +33,10 @@ UNAVAILABLE_ERROR = (
     "error getting ssh server details: failed to invoke SSH RPC: "
     "rpc error: code = Unavailable desc = connection error: "
     'desc = "error reading server preface: use of closed network connection"'
+)
+REFRESH_ERROR = (
+    'getting full codespace details: error making request: Get '
+    '"https://api.github.com/user/codespaces/test-codespace?internal=true&refresh=true": '
 )
 
 
@@ -54,6 +63,12 @@ class HelperTestCase(unittest.TestCase):
         listener = socket.socket(socket.AF_UNIX)
         self.addCleanup(listener.close)
         listener.bind(str(path))
+
+    def load_script(self, name):
+        loader = importlib.machinery.SourceFileLoader(name, str(SETUP / name))
+        module = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+        loader.exec_module(module)
+        return module
 
     def run_command(self, argv, timeout=20):
         return subprocess.run(
@@ -200,6 +215,17 @@ class GitConfigurationTests(HelperTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "diff3")
 
+    def test_automatic_tag_signing_is_local_only(self):
+        self.install()
+        self.initialize_repo()
+        self.assertEqual(self.git("config", "--get", "tag.gpgsign"), "true")
+        self.local_config.unlink()
+        self.assertEqual(self.git("config", "--get", "commit.gpgsign"), "true")
+        self.git("-c", "commit.gpgsign=false", "commit", "--quiet",
+                 "--allow-empty", "-m", "fixture")
+        self.git("tag", "-a", "fixture", "-m", "ordinary annotation")
+        self.assertNotIn("BEGIN PGP SIGNATURE", self.git("cat-file", "tag", "fixture"))
+
 
 class CodespaceDependencyTests(HelperTestCase):
     def setUp(self):
@@ -327,6 +353,10 @@ path = Path(os.environ["FAKE_GH_CALLS"])
 calls = path.read_text().splitlines() if path.exists() else []
 calls.append(json.dumps(sys.argv[1:]))
 path.write_text("\\n".join(calls) + "\\n")
+if os.environ.get("FAKE_GH_AUTHENTICATED"):
+    print('Authenticated to localhost ([127.0.0.1]:1234) using "publickey".', file=sys.stderr, flush=True)
+if os.environ.get("FAKE_GH_STDOUT"):
+    print(os.environ["FAKE_GH_STDOUT"], flush=True)
 if len(calls) <= int(os.environ["FAKE_GH_FAILURES"]):
     print(os.environ["FAKE_GH_ERROR"], file=sys.stderr)
     sys.exit(1)
@@ -355,6 +385,9 @@ class WarmupTests(SecretiveTransportTestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0], calls[1])
         self.assertIn("IdentitiesOnly=yes", calls[0])
+        self.assertIn("PreferredAuthentications=publickey", calls[0])
+        self.assertIn("BatchMode=yes", calls[0])
+        self.assertEqual(calls[0][calls[0].index("-F") + 1], "/dev/null")
         self.assertIn(
             f"IdentityAgent={self.env['COPILOT_SECRETIVE_AGENT_SOCKET']}", calls[0]
         )
@@ -396,6 +429,9 @@ class WarmupTests(SecretiveTransportTestCase):
         self.assertFalse(self.sleeps.exists())
 
     def test_repository_command_is_never_replayed(self):
+        self.env["FAKE_GH_ERROR"] = (
+            self.rpc_error + "\nshell closed: exit status 1"
+        )
         result = self.invoke("ssh", "test-codespace", "true; git push")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(len(self.recorded_calls()), 1)
@@ -406,13 +442,851 @@ class WarmupTests(SecretiveTransportTestCase):
         self.assertEqual(len(self.recorded_calls()), 1)
 
     def test_copy_is_never_replayed(self):
+        self.env["FAKE_GH_ERROR"] = "scp: Connection closed\nshell closed: exit status 1"
         result = self.invoke("cp", "test-codespace", "local-file", "remote:/tmp/file")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(len(self.recorded_calls()), 1)
 
+    def test_first_task_recovers_before_ssh_dispatch(self):
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.recorded_calls()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(calls[0][-1], "run-once")
+        self.assertEqual(self.sleeps.read_text().splitlines(), ["5"])
+
+    def test_copy_recovers_before_scp_dispatch(self):
+        result = self.invoke("cp", "test-codespace", "local-file", "remote:/tmp/file")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.recorded_calls()), 2)
+
 
 class UnavailableWarmupTests(WarmupTests):
     rpc_error = UNAVAILABLE_ERROR
+
+
+class ApiConnectionTests(WarmupTests):
+    rpc_error = (
+        "error connecting to api.github.com\n"
+        "check your internet connection or https://githubstatus.com"
+    )
+
+    def test_metadata_get_retries_without_secretive_or_mutating_flags(self):
+        result = self.run_command(
+            [sys.executable, str(SETUP / "copilot-gh-retry"), "get",
+             "repos/example/project/codespaces/machines", "--jq", ".machines"]
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.recorded_calls()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], [
+            "api", "--method", "GET", "repos/example/project/codespaces/machines",
+            "--jq", ".machines",
+        ])
+        self.assertEqual(calls[0], calls[1])
+
+    def test_metadata_get_rejects_mutating_method_override(self):
+        result = self.run_command(
+            [sys.executable, str(SETUP / "copilot-gh-retry"), "get",
+             "repos/example/project", "--method", "POST"]
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.calls.exists())
+
+    def test_http_errors_are_not_retried(self):
+        for status in (401, 403, 404, 410):
+            with self.subTest(status=status):
+                self.env["FAKE_GH_ERROR"] = f"gh: unavailable (HTTP {status})"
+                self.env["FAKE_GH_FAILURES"] = "100"
+                before = len(self.recorded_calls()) if self.calls.exists() else 0
+                result = self.run_command(
+                    [sys.executable, str(SETUP / "copilot-gh-retry"), "get", "user"]
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(len(self.recorded_calls()), before + 1)
+
+    def test_metadata_get_retries_tls_timeout_and_eof_without_replaying_connect(self):
+        for diagnostic in ("net/http: TLS handshake timeout", "unexpected EOF"):
+            error = f'Get "https://api.github.com/user/codespaces": {diagnostic}'
+            with self.subTest(error=error):
+                self.calls.unlink(missing_ok=True)
+                self.env["FAKE_GH_ERROR"] = error
+                result = self.run_command(
+                    [sys.executable, str(SETUP / "copilot-gh-retry"),
+                     "get", "user/codespaces"]
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(self.recorded_calls()), 2)
+                self.calls.unlink()
+                result = self.invoke("ssh", "test-codespace", "run-once")
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(len(self.recorded_calls()), 1)
+
+    def test_codespace_refresh_retries_before_ssh_and_copy_dispatch(self):
+        for diagnostic in ("net/http: TLS handshake timeout", "unexpected EOF"):
+            for arguments in (
+                ("ssh", "test-codespace", "run-once"),
+                ("cp", "test-codespace", "local-file", "remote:/tmp/file"),
+            ):
+                with self.subTest(diagnostic=diagnostic, mode=arguments[0]):
+                    self.calls.unlink(missing_ok=True)
+                    self.env["FAKE_GH_ERROR"] = REFRESH_ERROR + diagnostic
+                    result = self.invoke(*arguments)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(len(self.recorded_calls()), 2)
+                    self.assertEqual(*self.recorded_calls())
+
+
+class ConnectionSafetyTests(SecretiveTransportTestCase):
+    def test_waiting_connection_cannot_replace_an_active_identity(self):
+        self.env["FAKE_GH_FAILURES"] = "0"
+        result = self.invoke("ssh", "test-codespace", "first")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        standin = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
+        original = os.readlink(standin)
+        second_key = self.root / "second-public.pub"
+        second_key.write_text("second public-key fixture\n")
+        environment = dict(self.env, COPILOT_SECRETIVE_PUBLIC_KEY=str(second_key))
+        helper = self.load_script("copilot-gh-retry")
+        process = None
+        try:
+            with helper.ConnectionGate(standin.parent / "copilot-ghcs-connect.lock"):
+                process = subprocess.Popen(
+                    ["bash", str(SETUP / "copilot-ghcs"), "ssh", "test-codespace", "second"],
+                    env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                ready, _, _ = select.select([process.stderr], [], [], 5)
+                self.assertTrue(ready, "second connection did not reach the signing gate")
+                self.assertIn(b"waiting for another Secretive", process.stderr.readline())
+                self.assertEqual(os.readlink(standin), original)
+                self.assertEqual(os.readlink(str(standin) + ".pub"), original)
+            _, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, error)
+            self.assertEqual(os.readlink(standin), str(second_key.resolve()))
+            self.assertEqual(os.readlink(str(standin) + ".pub"), str(second_key.resolve()))
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=10)
+
+    def test_reusing_an_identity_does_not_recreate_its_links(self):
+        self.env["FAKE_GH_FAILURES"] = "0"
+        self.assertEqual(self.invoke("ssh", "test-codespace", "first").returncode, 0)
+        standin = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
+        public = Path(str(standin) + ".pub")
+        inodes = (standin.lstat().st_ino, public.lstat().st_ino)
+        result = self.invoke("ssh", "test-codespace", "second")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((standin.lstat().st_ino, public.lstat().st_ino), inodes)
+
+    def test_existing_regular_identity_is_not_overwritten(self):
+        standin = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
+        standin.parent.mkdir()
+        standin.symlink_to(self.env["COPILOT_SECRETIVE_PUBLIC_KEY"])
+        public = Path(str(standin) + ".pub")
+        public.write_text("unrelated owned fixture\n")
+        previous = os.readlink(standin)
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to replace non-symlink", result.stderr)
+        self.assertEqual(public.read_text(), "unrelated owned fixture\n")
+        self.assertEqual(os.readlink(standin), previous)
+        self.assertFalse(self.calls.exists())
+
+    def test_public_standin_permission_warning_is_not_retried(self):
+        self.env["FAKE_GH_ERROR"] = (
+            "WARNING: UNPROTECTED PRIVATE KEY FILE!\n"
+            "Permissions 0644 for 'secretive-codespaces' are too open\n"
+            "Load key secretive-codespaces: bad permissions\n"
+            "shell closed: exit status 255"
+        )
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(len(self.recorded_calls()), 1)
+        self.assertIn("bad permissions", result.stderr)
+        self.assertFalse(self.sleeps.exists())
+
+    def test_acknowledged_or_partial_output_is_never_replayed(self):
+        for output in (b"__COPILOT_CS_ACK_job-fixture__\n", b"_", b"payload"):
+            with self.subTest(output=output):
+                self.calls.unlink(missing_ok=True)
+                self.executable(
+                    "gh",
+                    f"""import os, sys
+from pathlib import Path
+Path(os.environ["FAKE_GH_CALLS"]).write_text("called\\n")
+os.write(1, {output!r})
+print(os.environ["FAKE_GH_ERROR"], file=sys.stderr)
+sys.exit(17)
+""",
+                )
+                result = self.invoke("ssh", "test-codespace", "run-once")
+                self.assertEqual(result.returncode, 17)
+                self.assertEqual(result.stdout.encode(), output)
+                self.assertFalse(self.sleeps.exists())
+
+    def test_only_complete_known_predispatch_errors_are_retried(self):
+        helper = self.load_script("copilot-gh-retry")
+        for error in (
+            DEADLINE_ERROR, UNAVAILABLE_ERROR, ApiConnectionTests.rpc_error,
+            REFRESH_ERROR + "net/http: TLS handshake timeout",
+            REFRESH_ERROR + "unexpected EOF",
+        ):
+            with self.subTest(error=error):
+                self.assertTrue(helper.startup_failure(error.encode(), False))
+                self.assertFalse(helper.startup_failure(error.encode(), True))
+                self.assertFalse(helper.startup_failure(
+                    (error + "\nshell closed: exit status 1").encode(), False
+                ))
+                self.assertFalse(helper.startup_failure(
+                    (error + "\ntunnel closed: EOF").encode(), False
+                ))
+                self.assertFalse(helper.startup_failure(
+                    ("remote task printed:\n" + error).encode(), False
+                ))
+        self.assertFalse(helper.startup_failure(b"", False))
+        self.assertFalse(helper.startup_failure(
+            b"Permission denied (publickey,password)", False
+        ))
+        self.assertFalse(helper.startup_failure(
+            b"error connecting to use.rel.tunnels.api.visualstudio.com", False
+        ))
+
+    def test_read_only_get_still_rejects_partial_or_unrecognized_errors(self):
+        helper = self.load_script("copilot-gh-retry")
+        error = b'Get "https://api.github.com/user/codespaces": unexpected EOF'
+        self.assertTrue(helper.startup_failure(error, False, api_get=True))
+        self.assertFalse(helper.startup_failure(error, True, api_get=True))
+        self.assertFalse(helper.startup_failure(
+            error + b"\nshell closed: exit status 1", False, api_get=True
+        ))
+        self.assertFalse(helper.startup_failure(
+            b'Get "https://example.invalid/path": unexpected EOF', False, api_get=True
+        ))
+        self.assertFalse(helper.startup_failure(
+            b'Post "https://api.github.com/user/codespaces": unexpected EOF',
+            False, api_get=True
+        ))
+
+    def test_connection_gate_times_out_without_running_gh(self):
+        helper = self.load_script("copilot-gh-retry")
+        path = self.root / "connection.lock"
+        with helper.ConnectionGate(path):
+            second = helper.ConnectionGate(path)
+            with mock.patch.object(helper.time, "monotonic", side_effect=[0, 121]):
+                with self.assertRaisesRegex(TimeoutError, "setup deadline"):
+                    second.__enter__()
+            self.assertIsNone(second.fd)
+        self.assertFalse(self.calls.exists())
+
+    def test_connection_gate_releases_after_failure(self):
+        self.env["FAKE_GH_ERROR"] = "sign_and_send_pubkey: agent refused operation"
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 1)
+        lock = self.root / "ssh" / "copilot-ghcs-connect.lock"
+        with lock.open("rb") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.assertFalse(self.sleeps.exists())
+
+    def test_streaming_releases_gate_before_job_completion(self):
+        self.executable(
+            "gh",
+            """import os, time
+from pathlib import Path
+print("__COPILOT_CS_ACK_job-fixture__", flush=True)
+while not Path(os.environ["FAKE_GH_CALLS"]).exists():
+    time.sleep(0.01)
+print("completed", flush=True)
+""",
+        )
+        process = subprocess.Popen(
+            ["bash", str(SETUP / "copilot-ghcs"), "ssh", "test-codespace", "run-once"],
+            env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            ready, _, _ = select.select([process.stdout], [], [], 5)
+            self.assertTrue(ready, "runner acknowledgement was buffered")
+            self.assertEqual(process.stdout.readline(), b"__COPILOT_CS_ACK_job-fixture__\n")
+            with (self.root / "ssh" / "copilot-ghcs-connect.lock").open("rb") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertIsNone(process.poll(), "fixture exited before the gate check")
+            self.calls.touch()
+            output, error = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, error)
+            self.assertEqual(output, b"completed\n")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.communicate(timeout=10)
+
+    def test_terminating_transport_stops_its_local_children(self):
+        child_pid = self.root / "ssh-child.pid"
+        self.env["FAKE_CHILD_PID"] = str(child_pid)
+        self.executable(
+            "gh",
+            """import os, subprocess, sys, time
+from pathlib import Path
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+Path(os.environ["FAKE_CHILD_PID"]).write_text(str(child.pid))
+print("__COPILOT_CS_ACK_job-fixture__", flush=True)
+child.wait()
+""",
+        )
+        process = subprocess.Popen(
+            ["bash", str(SETUP / "copilot-ghcs"), "ssh", "test-codespace", "run-once"],
+            env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            ready, _, _ = select.select([process.stdout], [], [], 5)
+            self.assertTrue(ready)
+            self.assertEqual(process.stdout.readline(), b"__COPILOT_CS_ACK_job-fixture__\n")
+            pid = int(child_pid.read_text())
+            process.terminate()
+            _, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 143, error)
+            deadline = time.monotonic() + 2
+            while JobCancellationTests.live(pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(JobCancellationTests.live(pid), "SSH child survived the stream")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.communicate(timeout=10)
+            if child_pid.exists():
+                pid = int(child_pid.read_text())
+                if JobCancellationTests.live(pid):
+                    os.kill(pid, signal.SIGKILL)
+
+
+class IdentityDiscoveryTests(SecretiveTransportTestCase):
+    def setUp(self):
+        super().setUp()
+        self.public_key = Path(self.env.pop("COPILOT_SECRETIVE_PUBLIC_KEY"))
+        self.agent_calls = self.root / "agent-calls"
+        self.gate_path = (
+            Path(self.env["COPILOT_SECRETIVE_STANDIN"]).parent
+            / "copilot-ghcs-connect.lock"
+        )
+        self.env.update(
+            COPILOT_SECRETIVE_PUBLIC_KEYS_DIR=str(self.public_key.parent),
+            FAKE_AGENT_CALLS=str(self.agent_calls),
+            FAKE_AGENT_PUBLIC_KEY=self.public_key.read_text(),
+            FAKE_GH_FAILURES="0",
+        )
+        self.executable(
+            "ssh-add",
+            """import os, sys, time
+from pathlib import Path
+assert sys.argv[1:] == ["-L"]
+assert os.environ["SSH_AUTH_SOCK"] == os.environ["COPILOT_SECRETIVE_AGENT_SOCKET"]
+Path(os.environ["FAKE_AGENT_CALLS"]).write_text("queried\\n")
+time.sleep(float(os.environ.get("FAKE_AGENT_DELAY", "0")))
+if os.environ.get("FAKE_AGENT_ERROR"):
+    print(os.environ["FAKE_AGENT_ERROR"], file=sys.stderr)
+    sys.exit(2)
+print(os.environ["FAKE_AGENT_PUBLIC_KEY"], end="")
+""",
+        )
+
+    def test_discovered_identity_is_pinned_without_changing_its_files(self):
+        before = self.public_key.stat()
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.agent_calls.read_text(), "queried\n")
+        self.assertEqual(len(self.recorded_calls()), 1)
+        standin = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
+        self.assertEqual(standin.resolve(), self.public_key.resolve())
+        self.assertEqual(Path(str(standin) + ".pub").resolve(), self.public_key.resolve())
+        after = self.public_key.stat()
+        self.assertEqual((before.st_ino, before.st_mtime_ns, before.st_mode),
+                         (after.st_ino, after.st_mtime_ns, after.st_mode))
+
+    def test_identity_discovery_waits_for_the_signing_gate(self):
+        helper = self.load_script("copilot-gh-retry")
+        self.gate_path.parent.mkdir()
+        process = None
+        try:
+            with helper.ConnectionGate(self.gate_path):
+                process = subprocess.Popen(
+                    ["bash", str(SETUP / "copilot-ghcs"), "ssh", "test-codespace", "run-once"],
+                    env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                ready, _, _ = select.select([process.stderr], [], [], 5)
+                self.assertTrue(ready, "connection did not queue at the signing gate")
+                self.assertIn(b"waiting for another Secretive", process.stderr.readline())
+                self.assertFalse(self.agent_calls.exists())
+            _, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, error)
+            self.assertTrue(self.agent_calls.exists())
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=10)
+
+    def test_identity_discovery_is_inside_the_startup_deadline(self):
+        self.executable(
+            "python3",
+            """import os, sys
+arguments = sys.argv[1:]
+assert arguments[1] == "connect"
+arguments[2:2] = ["--startup-timeout", "0.25"]
+os.execv(sys.executable, [sys.executable, *arguments])
+""",
+        )
+        self.env["FAKE_AGENT_DELAY"] = "2"
+        started = time.monotonic()
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertIn("identity discovery", result.stderr)
+        self.assertIn("no SSH/SCP command was dispatched", result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertFalse(self.sleeps.exists())
+        with self.gate_path.open("rb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_paused_authentication_does_not_query_the_agent(self):
+        self.gate_path.parent.mkdir()
+        self.gate_path.write_text("3")
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertFalse(self.agent_calls.exists())
+        self.assertFalse(self.calls.exists())
+
+    def test_identity_discovery_failure_preserves_the_agent_diagnostic(self):
+        self.env["FAKE_AGENT_ERROR"] = "Error connecting to agent: Connection refused"
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(self.env["FAKE_AGENT_ERROR"], result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertFalse(self.sleeps.exists())
+
+    def test_identity_discovery_uses_only_the_remaining_startup_budget(self):
+        helper = self.load_script("copilot-gh-retry")
+        completed = subprocess.CompletedProcess(
+            ["ssh-add", "-L"], 0, self.public_key.read_bytes(),
+        )
+        with mock.patch.object(helper.time, "monotonic", return_value=20.25), \
+                mock.patch.object(helper.subprocess, "run", return_value=completed) as run:
+            result = helper.discover_identity(
+                self.env["COPILOT_SECRETIVE_AGENT_SOCKET"],
+                self.env["COPILOT_SECRETIVE_PUBLIC_KEYS_DIR"], 21,
+            )
+        self.assertEqual(Path(result), self.public_key)
+        self.assertEqual(run.call_args.kwargs["timeout"], 0.75)
+        self.assertEqual(run.call_args.kwargs["env"]["SSH_AUTH_SOCK"],
+                         self.env["COPILOT_SECRETIVE_AGENT_SOCKET"])
+
+    def test_unknown_identity_does_not_fall_back_to_another_key(self):
+        self.env["FAKE_AGENT_PUBLIC_KEY"] = "a different identity\n"
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("public-key stand-in could not be found", result.stderr)
+        self.assertFalse(self.calls.exists())
+
+
+class AuthenticationLimitTests(SecretiveTransportTestCase):
+    def setUp(self):
+        super().setUp()
+        self.env["FAKE_GH_FAILURES"] = "20"
+        self.env["FAKE_GH_ERROR"] = "sign_and_send_pubkey: agent refused operation"
+        self.gate_path = (
+            Path(self.env["COPILOT_SECRETIVE_STANDIN"]).parent
+            / "copilot-ghcs-connect.lock"
+        )
+
+    def test_queued_connections_stop_after_three_refusals(self):
+        helper = self.load_script("copilot-gh-retry")
+        self.gate_path.parent.mkdir()
+        processes = []
+        try:
+            with helper.ConnectionGate(self.gate_path):
+                for index in range(4):
+                    process = subprocess.Popen(
+                        ["bash", str(SETUP / "copilot-ghcs"),
+                         "ssh", f"codespace-{index}", "run-once"],
+                        env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    )
+                    processes.append(process)
+                    ready, _, _ = select.select([process.stderr], [], [], 5)
+                    self.assertTrue(ready, "connection did not queue at the signing gate")
+                    self.assertIn(b"waiting for another Secretive", process.stderr.readline())
+            errors = [process.communicate(timeout=10)[1] for process in processes]
+            self.assertEqual(len(self.recorded_calls()), 3)
+            self.assertEqual(sorted(process.returncode for process in processes), [1, 1, 1, 75])
+            self.assertTrue(any(b"operator approval" in error for error in errors))
+            self.assertEqual(self.gate_path.read_text(), "3")
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=10)
+
+    def test_copies_and_commands_share_the_refusal_limit(self):
+        for mode, arguments in (
+            ("ssh", ("run-once",)),
+            ("cp", ("fixture", "remote:/tmp/fixture")),
+            ("ssh", ("run-once",)),
+        ):
+            result = self.invoke(mode, "test-codespace", *arguments)
+            self.assertEqual(result.returncode, 1, result.stderr)
+        for mode, arguments in (
+            ("cp", ("fixture", "remote:/tmp/fixture")),
+            ("ssh-sign", ("run-once",)),
+            ("ssh", ("--job-id", "job-fixture", "run-once")),
+        ):
+            result = self.invoke(mode, "other-codespace", *arguments)
+            self.assertEqual(result.returncode, 75, result.stderr)
+            self.assertIn("operator approval", result.stderr)
+        self.assertEqual(len(self.recorded_calls()), 3)
+        self.assertFalse(self.sleeps.exists())
+
+    def test_communication_failures_count_toward_the_same_limit(self):
+        self.env["FAKE_GH_ERROR"] = (
+            'sign_and_send_pubkey: signing failed for ECDSA "fixture" from agent: '
+            "communication with agent failed"
+        )
+        for _ in range(3):
+            self.assertEqual(self.invoke("ssh", "test-codespace", "run-once").returncode, 1)
+        self.assertEqual(self.invoke("ssh", "test-codespace", "blocked").returncode, 75)
+        self.assertEqual(len(self.recorded_calls()), 3)
+
+    def test_approved_resume_does_not_replay_commands_or_require_an_agent(self):
+        for _ in range(3):
+            self.assertEqual(self.invoke("ssh", "test-codespace", "run-once").returncode, 1)
+        inode = self.gate_path.stat().st_ino
+        refused = self.invoke("resume-auth")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(self.gate_path.read_text(), "3")
+        self.env["COPILOT_SECRETIVE_AGENT_SOCKET"] = str(self.root / "absent.sock")
+        resumed = self.invoke("resume-auth", "--operator-approved")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertIn("not replayed", resumed.stderr)
+        self.assertEqual(self.gate_path.read_text(), "0")
+        self.assertEqual(self.gate_path.stat().st_ino, inode)
+        self.assertEqual(len(self.recorded_calls()), 3)
+        self.env["COPILOT_SECRETIVE_AGENT_SOCKET"] = str(self.root / "agent.sock")
+        result = self.invoke("ssh", "test-codespace", "new-command")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(len(self.recorded_calls()), 4)
+        self.assertEqual(self.gate_path.read_text(), "1")
+
+    def test_approved_resume_waits_for_the_existing_gate(self):
+        helper = self.load_script("copilot-gh-retry")
+        self.gate_path.parent.mkdir()
+        self.gate_path.write_text("3")
+        process = None
+        try:
+            with helper.ConnectionGate(self.gate_path, allow_paused=True):
+                process = subprocess.Popen(
+                    ["bash", str(SETUP / "copilot-ghcs"),
+                     "resume-auth", "--operator-approved"],
+                    env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                ready, _, _ = select.select([process.stderr], [], [], 5)
+                self.assertTrue(ready, "resume did not queue at the signing gate")
+                self.assertIn(b"waiting for another Secretive", process.stderr.readline())
+                self.assertEqual(self.gate_path.read_text(), "3")
+            _, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, error)
+            self.assertEqual(self.gate_path.read_text(), "0")
+            self.assertFalse(self.calls.exists())
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=10)
+
+    def test_successful_connection_resets_previous_refusals(self):
+        self.assertEqual(self.invoke("ssh", "test-codespace", "first").returncode, 1)
+        self.env["FAKE_GH_FAILURES"] = "0"
+        self.assertEqual(self.invoke("ssh", "test-codespace", "success").returncode, 0)
+        self.assertEqual(self.gate_path.read_text(), "0")
+        self.env["FAKE_GH_FAILURES"] = "20"
+        for _ in range(3):
+            self.assertEqual(self.invoke("ssh", "test-codespace", "next").returncode, 1)
+        self.assertEqual(self.invoke("ssh", "test-codespace", "blocked").returncode, 75)
+        self.assertEqual(len(self.recorded_calls()), 5)
+
+    def test_remote_signing_errors_do_not_count_as_connection_refusals(self):
+        self.assertEqual(self.invoke("ssh", "test-codespace", "first").returncode, 1)
+        self.env["FAKE_GH_AUTHENTICATED"] = "1"
+        for _ in range(4):
+            self.assertEqual(self.invoke("ssh", "test-codespace", "remote-command").returncode, 1)
+        self.assertEqual(self.gate_path.read_text(), "0")
+        self.assertEqual(len(self.recorded_calls()), 5)
+
+    def test_remote_output_resets_previous_connection_refusals(self):
+        self.assertEqual(self.invoke("ssh", "test-codespace", "first").returncode, 1)
+        self.env["FAKE_GH_STDOUT"] = "remote output"
+        self.assertEqual(self.invoke("ssh", "test-codespace", "remote-command").returncode, 1)
+        self.assertEqual(self.gate_path.read_text(), "0")
+
+    def test_an_older_authenticated_stream_cannot_clear_later_refusals(self):
+        helper = self.load_script("copilot-gh-retry")
+        self.gate_path.parent.mkdir()
+        with helper.ConnectionGate(self.gate_path) as older:
+            older.authenticated()
+            for _ in range(3):
+                self.assertEqual(self.invoke("ssh", "test-codespace", "run-once").returncode, 1)
+            older.authenticated()
+            older.refused()
+        self.assertEqual(self.gate_path.read_text(), "3")
+        self.assertEqual(self.invoke("ssh", "test-codespace", "blocked").returncode, 75)
+        self.assertEqual(len(self.recorded_calls()), 3)
+
+    def test_protocol_and_permission_errors_do_not_count_as_refusals(self):
+        for error in (
+            "Agent returned SSH_AGENT_FAILURE",
+            "HTTP 403: Must have admin rights to Repository",
+            "WARNING: UNPROTECTED PRIVATE KEY FILE!",
+        ):
+            with self.subTest(error=error):
+                self.env["FAKE_GH_ERROR"] = error
+                for _ in range(4):
+                    self.assertEqual(self.invoke("ssh", "test-codespace", "run-once").returncode, 1)
+        self.assertEqual(len(self.recorded_calls()), 12)
+
+    def test_corrupt_refusal_state_fails_closed_until_approved_resume(self):
+        self.gate_path.parent.mkdir()
+        self.gate_path.write_text("invalid state")
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn("invalid authentication state", result.stderr)
+        self.assertFalse(self.calls.exists())
+        self.assertEqual(self.gate_path.read_text(), "invalid state")
+        resumed = self.invoke("resume-auth", "--operator-approved")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(self.gate_path.read_text(), "0")
+
+
+class ConnectionDeadlineTests(SecretiveTransportTestCase):
+    def command(self, mode="ssh", marker=None):
+        arguments = [
+            sys.executable, str(SETUP / "copilot-gh-retry"), "connect",
+            "--lock", str(self.root / "connection.lock"),
+            "--startup-timeout", "0.5",
+        ]
+        if marker is not None:
+            arguments.extend(["--ack-marker", marker])
+        return [*arguments, "--", "gh", "codespace", mode, "-c", "test-codespace"]
+
+    def test_unacknowledged_connection_is_bounded_and_never_replayed(self):
+        marker = "__COPILOT_CS_ACK_job-fixture__"
+        for output in (
+            "",
+            "partial command output\n",
+            marker[:-1] + "\n",
+            "prefix " + marker + "\n",
+            "__COPILOT_CS_ACK_other-job__\n",
+        ):
+            with self.subTest(output=output):
+                self.executable(
+                    "gh",
+                    f"""import os, sys, time
+from pathlib import Path
+Path(os.environ["FAKE_GH_CALLS"]).write_text("called\\n")
+print('Authenticated to localhost ([127.0.0.1]:1234) using "publickey".', file=sys.stderr, flush=True)
+sys.stdout.write({output!r})
+sys.stdout.flush()
+time.sleep(30)
+""",
+                )
+                started = time.monotonic()
+                result = self.run_command(self.command(marker=marker), timeout=5)
+                self.assertEqual(result.returncode, 124, result.stderr)
+                self.assertLess(time.monotonic() - started, 2)
+                self.assertIn("remote outcome is unconfirmed", result.stderr)
+                self.assertNotIn("retrying (", result.stderr)
+                self.assertEqual(result.stdout, output)
+                self.assertEqual(self.calls.read_text(), "called\n")
+                with (self.root / "connection.lock").open("rb") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_fragmented_exact_ack_keeps_a_long_running_job_alive(self):
+        self.executable(
+            "gh",
+            """import os, time
+os.write(1, b"__COPILOT_CS_ACK_")
+time.sleep(0.05)
+os.write(1, b"job-fixture__\\r\\n")
+time.sleep(0.7)
+print("completed", flush=True)
+""",
+        )
+        result = self.run_command(self.command(marker="__COPILOT_CS_ACK_job-fixture__"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("completed", result.stdout)
+
+    def test_quiet_authenticated_copy_releases_gate_without_limiting_transfer_time(self):
+        self.executable(
+            "gh",
+            """import os, sys, time
+from pathlib import Path
+sys.stderr.write('Authenticated to localhost ([127.0.0.1]:1234) ')
+sys.stderr.flush()
+time.sleep(0.05)
+sys.stderr.write('using "publickey".\\n')
+sys.stderr.flush()
+while not Path(os.environ["FAKE_GH_CALLS"]).exists():
+    time.sleep(0.01)
+""",
+        )
+        process = subprocess.Popen(
+            self.command(mode="cp"), env=self.env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            ready, _, _ = select.select([process.stderr], [], [], 5)
+            self.assertTrue(ready)
+            self.assertIn(b'using "publickey".', process.stderr.readline())
+            time.sleep(0.7)
+            self.assertIsNone(process.poll(), "connection timeout killed an authenticated copy")
+            with (self.root / "connection.lock").open("rb") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.calls.touch()
+            output, error = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, error)
+            self.assertEqual(output, b"")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.communicate(timeout=10)
+
+    def test_no_authentication_or_closed_output_cannot_wait_forever(self):
+        for body in (
+            "import time\ntime.sleep(30)\n",
+            "import os, time\nos.close(1)\nos.close(2)\ntime.sleep(30)\n",
+        ):
+            with self.subTest(body=body):
+                self.executable("gh", body)
+                started = time.monotonic()
+                result = self.run_command(self.command(mode="cp"), timeout=5)
+                self.assertEqual(result.returncode, 124, result.stderr)
+                self.assertLess(time.monotonic() - started, 2)
+                self.assertNotIn("retrying (", result.stderr)
+
+    def test_wrapper_forwards_ack_requirement_and_transport_keepalives(self):
+        self.env["FAKE_GH_FAILURES"] = "0"
+        result = self.invoke("ssh", "test-codespace", "--job-id", "job-fixture", "command")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.recorded_calls()
+        self.assertNotIn("--job-id", calls[0])
+        for option in ("LogLevel=VERBOSE", "ServerAliveInterval=15", "ServerAliveCountMax=3"):
+            self.assertIn(option, calls[0])
+        self.assertEqual(calls[0][-1], "command")
+
+    def test_invalid_timeout_is_rejected_before_dispatch(self):
+        for value in ("0", "-1", "nan", "inf"):
+            with self.subTest(value=value):
+                arguments = self.command()
+                arguments[arguments.index("--startup-timeout") + 1] = value
+                result = self.run_command(arguments)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("finite and greater than zero", result.stderr)
+                self.assertFalse(self.calls.exists())
+
+    def test_queue_wait_uses_the_same_startup_budget(self):
+        helper = self.load_script("copilot-gh-retry")
+        with helper.ConnectionGate(self.root / "connection.lock"):
+            started = time.monotonic()
+            result = self.run_command(self.command(), timeout=5)
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIn("connection gate remained busy", result.stderr)
+        self.assertFalse(self.calls.exists())
+
+    def test_timeout_stops_a_child_even_after_gh_has_exited(self):
+        pid_file = self.root / "orphaned-ssh.pid"
+        self.env["FAKE_CHILD_PID"] = str(pid_file)
+        self.executable(
+            "gh",
+            """import os, subprocess, sys
+from pathlib import Path
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+Path(os.environ["FAKE_CHILD_PID"]).write_text(str(child.pid))
+""",
+        )
+        try:
+            result = self.run_command(self.command(), timeout=5)
+            self.assertEqual(result.returncode, 124, result.stderr)
+            self.assertFalse(JobCancellationTests.live(int(pid_file.read_text())))
+        finally:
+            if pid_file.exists():
+                pid = int(pid_file.read_text())
+                if JobCancellationTests.live(pid):
+                    os.kill(pid, signal.SIGKILL)
+
+
+class McpFallbackTests(HelperTestCase):
+    def setUp(self):
+        super().setUp()
+        self.client = self.bin / "copilot-emacs-mcp-call"
+        shutil.copyfile(SETUP / "copilot-emacs-mcp-call", self.client)
+        self.env["COPILOT_MCP_CALL_TIMEOUT"] = "1"
+
+    def invoke(self, expression="(copilot-cs-status)"):
+        return self.run_command([sys.executable, str(self.client), expression])
+
+    def test_handshake_and_coalesced_notifications_preserve_the_response(self):
+        self.executable(
+            "copilot-emacs-mcp",
+            """import json, os, sys
+initialization = json.loads(sys.stdin.readline())
+assert initialization["method"] == "initialize"
+notification = {"jsonrpc": "2.0", "method": "notifications/message", "params": {}}
+def respond(identifier, result):
+    response = {"jsonrpc": "2.0", "id": identifier, "result": result}
+    os.write(1, (json.dumps(notification) + "\\n" + json.dumps(response) + "\\n").encode())
+respond(1, {"protocolVersion": "2024-11-05", "capabilities": {}})
+assert json.loads(sys.stdin.readline())["method"] == "notifications/initialized"
+call = json.loads(sys.stdin.readline())
+assert call["method"] == "tools/call"
+assert call["params"] == {"name": "eval-elisp", "arguments": {"expression": "(copilot-cs-status)"}}
+respond(2, {"content": [{"type": "text", "text": "fixture jobs"}]})
+sys.stdin.read()
+""",
+        )
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "fixture jobs")
+
+    def test_partial_frame_obeys_timeout(self):
+        self.env["COPILOT_MCP_CALL_TIMEOUT"] = "0.2"
+        self.executable(
+            "copilot-emacs-mcp",
+            """import os, sys, time
+sys.stdin.readline()
+os.write(1, b'{"jsonrpc":')
+time.sleep(10)
+""",
+        )
+        started = time.monotonic()
+        result = self.invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("timed out after 0.2s", result.stderr)
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_nonfinite_timeout_is_rejected_before_starting_bridge(self):
+        for value in ("NaN", "inf", "-inf", "0"):
+            with self.subTest(value=value):
+                self.env["COPILOT_MCP_CALL_TIMEOUT"] = value
+                result = self.invoke()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("finite and greater than zero", result.stderr)
+
+    def test_tool_error_is_not_reported_as_success(self):
+        helper = self.load_script("copilot-emacs-mcp-call")
+        with mock.patch("builtins.print") as output:
+            self.assertEqual(helper.print_tool_result({
+                "result": {"isError": True, "content": [
+                    {"type": "text", "text": "fixture security denial"}
+                ]}
+            }), 1)
+            output.assert_called_once_with("fixture security denial")
 
 
 class CopyTests(SecretiveTransportTestCase):
@@ -445,7 +1319,279 @@ class CopyTests(SecretiveTransportTestCase):
         self.assertFalse(self.calls.exists())
 
 
+class SshSigningTests(SecretiveTransportTestCase):
+    def setUp(self):
+        super().setUp()
+        Path(self.env["COPILOT_SECRETIVE_PUBLIC_KEY"]).write_text(
+            "ssh-ed25519 AAAA public-only-fixture\n"
+        )
+        self.env["FAKE_GH_FAILURES"] = "0"
+
+    def test_forwarding_and_public_key_export_require_explicit_mode(self):
+        result = self.invoke("ssh", "test-codespace", "ordinary")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ordinary = self.recorded_calls()[-1]
+        self.assertNotIn("-A", ordinary)
+        self.assertNotIn("COPILOT_CS_SIGNING_KEY", ordinary[-1])
+        result = self.invoke("ssh-sign", "test-codespace", "git-fixture")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        signing = self.recorded_calls()[-1]
+        self.assertIn("-A", signing)
+        self.assertIn("IdentityAgent=" + self.env["COPILOT_SECRETIVE_AGENT_SOCKET"], signing)
+        self.assertIn("COPILOT_CS_SIGNING_KEY='ssh-ed25519 AAAA'", signing[-1])
+        self.assertIn('COPILOT_CS_SIGNING_SOCKET="$SSH_AUTH_SOCK"', signing[-1])
+        self.assertTrue(signing[-1].endswith("; git-fixture"))
+        result = self.invoke("cp", "test-codespace", "fixture", "remote:/tmp/fixture")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("-A", self.recorded_calls()[-1])
+
+    def test_signing_mode_rejects_non_public_data_before_connecting(self):
+        Path(self.env["COPILOT_SECRETIVE_PUBLIC_KEY"]).write_text(
+            "not a public key\n"
+        )
+        result = self.invoke("ssh-sign", "test-codespace", "git-fixture")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("single OpenSSH public-key line", result.stderr)
+        self.assertFalse(self.calls.exists())
+
+    def test_signing_mode_rejects_interactive_invocations(self):
+        for arguments in ((), ("-t", "git-fixture")):
+            with self.subTest(arguments=arguments):
+                result = self.invoke("ssh-sign", "test-codespace", *arguments)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.calls.exists())
+
+
 class JobStateTests(HelperTestCase):
+    def test_job_transport_requires_the_matching_acknowledgement(self):
+        self.emacs(
+            """(progn
+              (copilot-cs-use "fixture-codespace" "/workspaces/fixture")
+              (unless (equal (cdr (copilot-cs--argv "launcher" nil "job-fixture"))
+                             '("ssh" "fixture-codespace" "--job-id" "job-fixture" "launcher"))
+                (error "Job connection has no acknowledgement deadline"))
+              (unless (equal (cdr (copilot-cs--argv "server"))
+                             '("ssh" "fixture-codespace" "server"))
+                (error "Generic server connection expects a runner acknowledgement")))"""
+        )
+
+    def test_job_id_extraction_preserves_the_complete_suffix(self):
+        self.emacs(
+            """(unless
+                 (equal (copilot-cs-job-id
+                         "job=job-142226-182-af1f state=done rc=0 elapsed=1.0s")
+                        "job-142226-182-af1f")
+               (error "The job id was truncated"))"""
+        )
+
+    def test_job_id_extraction_rejects_non_reports(self):
+        self.emacs(
+            """(dolist (report '(nil "" "job-142226-182-af1f" "job=../unsafe state=done"))
+                (let ((rejected nil))
+                  (condition-case nil (copilot-cs-job-id report)
+                    (error (setq rejected t)))
+                  (unless rejected (error "Invalid report accepted: %S" report))))"""
+        )
+
+    def test_ssh_signing_is_per_invocation_and_keeps_arguments_quoted(self):
+        self.emacs(
+            """(progn
+              (require 'cl-lib)
+              (copilot-cs-use "fixture-codespace" "/workspaces/fixture")
+              (let (seen)
+                (cl-letf (((symbol-function 'copilot-cs--run)
+                           (lambda (command label wait &optional ssh-signing)
+                             (setq seen (list command label wait ssh-signing)))))
+                  (copilot-cs-ssh-git '("cherry-pick" "--" "ref;not-a-command") 0))
+                (unless (and (nth 3 seen)
+                             (string-match-p "gpg.format" (car seen))
+                             (equal (cadr seen)
+                                    (concat "git (Secretive SSH signing) cherry-pick -- "
+                                            (shell-quote-argument "ref;not-a-command")))
+                             (equal (nth 1 (copilot-cs--argv "ordinary")) "ssh")
+                             (equal (nth 1 (copilot-cs--argv "signed" t)) "ssh-sign"))
+                  (error "Signing escaped its invocation or lost quoting"))))"""
+        )
+
+    def test_ssh_signing_requires_codespace_and_argument_list(self):
+        self.emacs(
+            """(progn
+              (copilot-cs-use nil ".")
+              (let ((rejected nil))
+                (condition-case nil (copilot-cs-ssh-git '("commit"))
+                  (error (setq rejected t)))
+                (unless rejected (error "Local signing was accepted")))
+              (copilot-cs-use "fixture-codespace" "/workspaces/fixture")
+              (dolist (args '(nil "commit" (commit)))
+                (let ((rejected nil))
+                  (condition-case nil (copilot-cs-ssh-git args)
+                    (error (setq rejected t)))
+                  (unless rejected (error "Invalid arguments accepted: %S" args)))))"""
+        )
+
+    def test_command_deadline_is_separate_from_poll_wait(self):
+        self.emacs(
+            """(progn
+              (require 'cl-lib)
+              (let (seen)
+                (cl-letf (((symbol-function 'copilot-cs--run)
+                           (lambda (command _label wait &optional _sign)
+                             (setq seen (list command wait)))))
+                  (copilot-cs-timed-sh "git --no-pager log --no-decorate -5" 20 0))
+                (unless (and (string-match-p
+                               "timeout --verbose --kill-after=5s 20s env COPILOT_CS_LOGIN_DIR="
+                               (car seen))
+                             (string-match-p "bash -lc" (car seen))
+                             (equal (cadr seen) 0))
+                  (error "Command deadline became a polling wait"))))"""
+        )
+
+    def test_invalid_command_deadlines_are_rejected(self):
+        self.emacs(
+            """(dolist (seconds '(nil 0 -1 1.5 "20"))
+                (let ((rejected nil))
+                  (condition-case nil (copilot-cs-timed-sh "true" seconds)
+                    (error (setq rejected t)))
+                  (unless rejected (error "Invalid deadline accepted: %S" seconds))))"""
+        )
+
+    def test_interrupt_uses_the_supported_scoped_cancellation(self):
+        self.emacs(
+            """(unless (eq (indirect-function 'copilot-cs-interrupt)
+                           (indirect-function 'copilot-cs-stop))
+                 (error "Interrupt did not use scoped job cancellation"))"""
+        )
+
+    def test_reentrant_commands_keep_their_own_default_output(self):
+        self.emacs(
+            f"""(progn
+              (copilot-cs-use nil {json.dumps(str(self.root))})
+              (let (nested-output)
+                (run-at-time 0.2 nil
+                  (lambda ()
+                    (copilot-cs-sh "printf nested" 3)
+                    (setq nested-output (copilot-cs-output))))
+                (let* ((report (copilot-cs-sh "sleep 1; printf outer" 5))
+                       (output (copilot-cs-output)))
+                  (unless (and (string-match-p "state=done rc=0" report)
+                               (equal output "outer")
+                               (equal nested-output "nested"))
+                    (error "Crossed job outputs: outer=%S nested=%S"
+                           output nested-output)))))"""
+        )
+
+    def test_reentrant_waits_share_the_outer_deadline(self):
+        self.check_job(
+            """(let ((started (float-time))
+                     (nested-reports nil))
+                (dotimes (index 3)
+                  (run-at-time (+ 0.025 (* index 0.025)) nil
+                    (lambda ()
+                      (push (copilot-cs-poll id 2) nested-reports))))
+                (copilot-cs-poll id 0.25)
+                (unless (and (= (length nested-reports) 3)
+                             (< (- (float-time) started) 1))
+                  (error "Nested waits exceeded the outer deadline: %.2fs, %S"
+                         (- (float-time) started) nested-reports)))""",
+            live=True,
+        )
+
+    def test_zero_wait_never_starts_another_event_loop_wait(self):
+        self.check_job(
+            """(cl-letf (((symbol-function 'accept-process-output)
+                         (lambda (_process seconds &optional _millis just-one)
+                           (unless (and (zerop seconds) (integerp just-one))
+                             (error "Zero wait serviced other calls or timers")))))
+                (copilot-cs-poll id 0))""",
+            live=True,
+        )
+
+    def test_poll_restores_its_named_job_as_default_output(self):
+        self.check_job(
+            """(let ((copilot-cs--last-id "different-job"))
+                (copilot-cs-poll id 0)
+                (unless (equal (copilot-cs-output) "this job")
+                  (error "Poll left the default pointing at another job")))""",
+            output="this job\n__COPILOT_CS_DONE_job-state-fixture__:0\n",
+        )
+
+    def test_commit_producing_git_commands_get_login_state(self):
+        self.emacs(
+            """(dolist (command '("git cherry-pick original" "git cherry-pick --continue"
+                                 "git revert HEAD" "git rebase origin/main"
+                                 "git merge feature" "git am change.patch"
+                                 "git pull --ff-only" "true && git commit -m update"))
+                (unless (copilot-cs--login-required-p command)
+                  (error "Missing login state for %s" command)))"""
+        )
+
+    def test_login_profiles_do_not_receive_command_arguments(self):
+        workdir = self.root / "work dir's checkout"
+        workdir.mkdir()
+        self.executable(
+            "bash",
+            """import os, sys
+assert sys.argv[1] == "-lc"
+if len(sys.argv) != 4:
+    print("login profile received command arguments", file=sys.stderr)
+    sys.exit(71)
+os.chdir(os.environ["HOME"])
+os.execv("/bin/sh", ["sh", "-c", sys.argv[2], sys.argv[3]])
+""",
+        )
+        payload = "literal 'quotes'; $(not-a-command)"
+        command = f"pwd; printf '%s\\n' {shlex.quote(payload)}; exit 23"
+        expressions = (
+            f"(copilot-cs--login-shell-command {json.dumps(command)})",
+            f"""(progn
+                  (require 'copilot-cs-eglot)
+                  (copilot-cs-eglot--login-command
+                    {json.dumps(str(workdir))} {json.dumps(command)}))""",
+        )
+        for expression in expressions:
+            with self.subTest(expression=expression):
+                wrapper = self.emacs(f"(princ {expression})")
+                result = self.run_command(
+                    ["sh", "-c", f"cd {shlex.quote(str(workdir))} && {wrapper}"]
+                )
+                self.assertEqual(result.returncode, 23, result.stderr)
+                lines = result.stdout.splitlines()
+                self.assertEqual(Path(lines[0]).resolve(), workdir.resolve())
+                self.assertEqual(lines[1:], [payload])
+
+    def test_remote_tty_wrapper_preserves_workdir_and_failure(self):
+        calls = self.root / "script-calls"
+        self.env["FAKE_SCRIPT_CALLS"] = str(calls)
+        self.executable("stty", "raise SystemExit(0)\n")
+        self.executable(
+            "script",
+            """import json, os, sys
+from pathlib import Path
+Path(os.environ["FAKE_SCRIPT_CALLS"]).write_text(json.dumps(sys.argv[1:]))
+assert os.environ["SHELL"] == "/bin/sh"
+command = sys.argv[sys.argv.index("-c") + 1]
+os.execv("/bin/sh", ["sh", "-c", command])
+""",
+        )
+        wrapper = self.emacs(
+            '(princ (copilot-cs--tty-shell-command "pwd; exit 23"))'
+        )
+        result = self.run_command(["/bin/sh", "-c", wrapper])
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assertEqual(Path(result.stdout.strip()).resolve(), self.root.resolve())
+        arguments = json.loads(calls.read_text())
+        self.assertIn("-e", arguments)
+        self.assertIn("-q", arguments)
+        self.assertIn("stty -onlcr", arguments[arguments.index("-c") + 1])
+        self.assertEqual(arguments[-1], "/dev/null")
+
+    def test_missing_remote_tty_tool_is_an_explicit_failure(self):
+        wrapper = self.emacs('(princ (copilot-cs--tty-shell-command "true"))')
+        self.env["PATH"] = str(self.bin)
+        result = self.run_command(["/bin/sh", "-c", wrapper])
+        self.assertEqual(result.returncode, 127)
+        self.assertIn("requires util-linux script", result.stderr)
+
     def check_job(self, body, output="", live=False):
         self.emacs(
             f"""(progn
@@ -583,6 +1729,44 @@ class JobStateTests(HelperTestCase):
         )
 
 
+class JobEnvironmentTests(HelperTestCase):
+    def run_locale_job(self, codespace="fixture-codespace"):
+        command = 'printf "locale=%s|%s|%s\\\\n" "${LANG-}" "${LC_ALL-}" "${LC_CTYPE-}"'
+        locale = "\n".join(
+            f'(setenv "{name}" {json.dumps(self.env[name]) if name in self.env else "nil"})'
+            for name in ("LANG", "LC_ALL", "LC_CTYPE")
+        )
+        return self.emacs(
+            f"""(progn
+              (require 'cl-lib)
+              {locale}
+              (copilot-cs-use {json.dumps(codespace) if codespace else "nil"}
+                              {json.dumps(str(self.root))})
+              (let ((copilot-cs-remote-dir
+                     (shell-quote-argument {json.dumps(str(self.root))})))
+                (cl-letf (((symbol-function 'copilot-cs--argv)
+                           (lambda (command &optional _sign _id)
+                             (list "sh" "-c" command))))
+                  (princ (copilot-cs-sh {json.dumps(command)} 3)))))"""
+        )
+
+    def test_codespace_defaults_an_unset_or_empty_lang_to_utf8(self):
+        self.env.pop("LC_ALL")
+        for value in (None, ""):
+            with self.subTest(lang=value):
+                if value is not None:
+                    self.env["LANG"] = value
+                self.assertIn("locale=C.UTF-8||", self.run_locale_job())
+
+    def test_codespace_preserves_explicit_locale_settings(self):
+        self.env.update({"LANG": "en_US.UTF-8", "LC_ALL": "C", "LC_CTYPE": "C"})
+        self.assertIn("locale=en_US.UTF-8|C|C", self.run_locale_job())
+
+    def test_local_jobs_do_not_change_the_operator_locale(self):
+        self.env.pop("LC_ALL")
+        self.assertIn("locale=||", self.run_locale_job(codespace=None))
+
+
 class DaemonReuseTests(HelperTestCase):
     def setUp(self):
         super().setUp()
@@ -631,18 +1815,25 @@ Path(os.environ["FAKE_SERVED"]).touch()
         self.env["PATH"] = os.environ["PATH"]
         self.emacs(
             f"""(progn
+              (require 'copilot-cs-eglot)
               (setq copilot-mcp-setup-dir {json.dumps(str(SETUP))}
                     copilot-cs-id "original-codespace"
                     copilot-cs-dir "/workspaces/original"
                     copilot-cs-configured t)
               (puthash "original-job" '(:id "original-job") copilot-cs--jobs)
+              (puthash "original-server" '(:state ready) copilot-cs-eglot--states)
               (fset 'copilot-cs--login-shell-command (lambda (_) "stale"))
+              (fset 'copilot-cs-eglot--login-command (lambda (_root _command) "stale"))
               {refresh}
               (unless (and (equal copilot-cs-id "original-codespace")
                            (equal copilot-cs-dir "/workspaces/original")
                            copilot-cs-configured
                            (gethash "original-job" copilot-cs--jobs)
+                           (equal (gethash "original-server" copilot-cs-eglot--states)
+                                  '(:state ready))
                            (string-prefix-p "bash -lc "
+                             (copilot-cs-eglot--login-command "/workspaces/example" "server"))
+                           (string-prefix-p "env COPILOT_CS_LOGIN_DIR="
                              (copilot-cs--login-shell-command "git push")))
                 (error "Runner refresh lost state or retained stale code")))"""
         )

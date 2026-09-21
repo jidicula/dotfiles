@@ -52,7 +52,7 @@ Local authenticated gh
 The main design choices are:
 
 1. **One disposable Emacs daemon per Copilot session.** A blocked or crashed session cannot affect another session or the operator's interactive Emacs.
-2. **MCP as the local control channel.** Copilot invokes one narrow `eval-elisp` tool. MCP uses JSON-RPC to initialize the connection, issue tool calls, correlate responses by request id, and return errors.
+2. **MCP as the local control channel.** The canonical `copilot-emacs-mcp-call` client invokes the daemon's narrow `eval-elisp` tool directly, without depending on Copilot CLI's MCP tool registry. MCP uses JSON-RPC to initialize the connection, correlate responses by request id, and return errors.
 3. **TRAMP for guarded file access, not arbitrary remote commands.** The daemon understands `/ghcs:` paths and allows edits only beneath `/workspaces/` in a Codespace.
 4. **A non-blocking command runner.** `copilot-cs-sh` starts SSH in a local child process, launches the remote work under `nohup` and `setsid`, and streams output into an Emacs buffer. MCP polling reads that local buffer instead of waiting synchronously on SSH.
 5. **Remote job persistence.** Scripts, logs, process ids, and exit status live under `~/.copilot-cs-jobs` in the Codespace. A job can be polled or reattached after a transport or session failure.
@@ -69,7 +69,7 @@ When invoked, the skill:
 3. Derives recognizable session and Codespace names from the repository and reference.
 4. Offers to reuse a matching Codespace or create a separately named one.
 5. For a new Codespace, ranks every available machine by CPU count, memory, and storage. It tries the largest machine first and falls back through each next-largest SKU if creation fails.
-6. Selects the repository's development-container configuration and waits for the Codespace to become available.
+6. Selects the development-container configuration, obtains its required repository-permission approval, and waits for the Codespace to become available. It never silently opts out of permissions needed by dependency bootstrap.
 7. Points the dedicated Emacs runner at the immutable Codespace id and the discovered repository directory under `/workspaces/`.
 8. Uses Codespace-hosted Eglot servers for semantic navigation and diagnostics when working in Ruby or Go.
 9. Makes changes and runs builds, tests, linters, and other repository commands through detached `copilot-cs-*` jobs.
@@ -84,7 +84,7 @@ The local machine needs:
 - an authenticated [GitHub CLI](https://cli.github.com/);
 - Emacs and `emacsclient`;
 - [`socat`](http://www.dest-unreach.org/socat/);
-- Python 3 for the fallback MCP client;
+- Python 3 for the connection wrapper and direct MCP client;
 - [Secretive](https://github.com/maxgoedjen/secretive) with its SSH agent enabled and an active identity;
 - [`patrickt/codespaces.el`](https://github.com/patrickt/codespaces.el) for the `/ghcs:` TRAMP method; and
 - an Emacs MCP server package providing `mcp-server` and `mcp-server-security`.
@@ -101,7 +101,7 @@ The target GitHub repository must permit Codespaces and expose at least one mach
    export COPILOT_SKILLS_DIRS="$HOME/dotfiles/skills"
    ```
 
-2. Register the per-session MCP bridge in `~/.copilot/mcp-config.json`, using the absolute path on the local machine:
+2. The direct client starts or reuses the per-session daemon without requiring a Copilot MCP registration. If you also want the native MCP tool available, optionally register the bridge in `~/.copilot/mcp-config.json`:
 
    ```json
    {
@@ -118,7 +118,7 @@ The target GitHub repository must permit Codespaces and expose at least one mach
    }
    ```
 
-   Eager discovery and disabled tool caching prevent Copilot CLI from restoring a stale MCP tool snapshot.
+   Eager discovery and disabled tool caching reduce stale snapshots, but the canonical direct client does not depend on this optional registration.
 
 3. Ensure these helper programs are executable:
 
@@ -127,10 +127,11 @@ The target GitHub repository must permit Codespaces and expose at least one mach
      setup/copilot-emacs-mcp \
      setup/copilot-emacs-mcp-call \
      setup/copilot-ghcs \
+     setup/copilot-gh-retry \
      setup/copilot-issues-lock
    ```
 
-4. Reload MCP with `/mcp` or restart Copilot CLI. The registered tool should be named `emacs-codespace-eval-elisp`.
+4. Invoke `setup/copilot-emacs-mcp-call '(copilot-cs-status)'` to connect. If using the optional registration, reload MCP with `/mcp`; its tool is named `emacs-codespace-eval-elisp`.
 
 5. If this skill is being shared, change the scope near the top of [`SKILL.md`](SKILL.md). The checked-in configuration intentionally refuses to activate outside `~/work/github/`.
 
@@ -192,27 +193,39 @@ The implementation deliberately fails closed:
 - MCP file edits are restricted to `/workspaces/` inside a `/ghcs:` remote.
 - Interactive Emacs prompts are inhibited because no person can answer a minibuffer prompt in the background daemon.
 - Secretive authentication failures do not fall back to another SSH identity.
-- Git retains shared global defaults and conditionally includes Codespace credentials and signing. Host-only URL rewrites live in `gitconfig-local`, which `script/setup` hardlinks as `~/.gitconfig-local` only outside Codespaces.
+- Agent forwarding is opt-in through `copilot-cs-ssh-git`, requires operator approval, and signs with the selected public key without exporting a private key or changing global Git configuration. This preserves authors the Codespace API signer cannot sign for.
+- Git retains shared global defaults and conditionally includes Codespace credentials and commit signing. Host-only URL rewrites and automatic tag signing live in `gitconfig-local`, which `script/setup` hardlinks as `~/.gitconfig-local` only outside Codespaces. Synthetic test tags no longer inherit a requirement for the operator's unavailable signing key.
 - Minimal Codespace setup installs missing Git LFS before returning, so the shared configuration's required filters work even for `git status`. It does not disable filters to hide a missing dependency.
 - Local session artifacts use the explicit Secretive-backed copy transport. They do not gain access through Emacs' Codespace-only file guard; see the [session-patch workflow](references/emacs-tramp-patterns.md#transferring-session-patches).
 - Codespace Eglot servers are launched only through the Secretive-backed transport and receive repository paths with the TRAMP prefix removed.
 - GitHub API and pull-request operations use local `gh`; local credentials are not transferred into the Codespace.
+- Repository readiness must be rechecked after a base-branch refresh. Skipped hooks, expired coverage artifacts, and dry-run test listings are not successful validation. A Codespace signer rejecting a preserved author is not permission to silently change authorship.
+- Remote jobs default an unset or empty `LANG` to `C.UTF-8`; explicit `LANG`, `LC_ALL`, and `LC_CTYPE` settings retain their normal precedence. Local test-mode jobs do not change the operator's locale.
+- Login setup receives no command arguments, preventing sourced version managers such as NVS from treating a Git operation or Eglot server launch as a runtime request. Both launch paths preserve the working directory, quoting, and exit status without bypassing login profiles.
 - Reusing an existing Codespace and starting a billable `Shutdown` Codespace retain their explicit confirmation gates. Machine sizing is the exception: the skill automatically tries available SKUs from largest to smallest.
 
 ## Recovery model
 
 The workflow is designed so a transport failure does not automatically discard the work:
 
-- `copilot-emacs-mcp` reuses a healthy daemon for the same Copilot session and replaces a wedged daemon when necessary. Reattachment reloads the runner definitions without resetting the selected target or existing jobs, so reconnect `emacs-codespace` after updating the skill to pick up runner fixes.
+- `copilot-emacs-mcp` reuses a healthy daemon for the same Copilot session and replaces a wedged daemon when necessary. Each direct-client invocation reloads the runner and Eglot helpers without resetting the selected target, existing jobs, or tracked Eglot state. Reload the optional native MCP registration after updating the skill if using that route instead.
 - A daemon remains available for a grace period after its bridge disappears, and a live runner connection prevents the orphan watchdog from stopping it.
 - Remote jobs remain detached in the Codespace independently of the daemon.
 - `copilot-cs-attach` reconnects the local runner to an existing remote job.
 - Polling automatically reconnects only acknowledged jobs, using their original Codespace. A connection that ends before acknowledgement keeps its original diagnostics and an explicitly unconfirmed remote outcome; it is not silently replaced with a missing-log error or retried as a new command.
-- The exact `copilot-ghcs ssh "<CS_ID>" true` warm-up retries SSH RPC `DeadlineExceeded` and `Unavailable` startup failures at most twice, with five- and ten-second backoff. This includes a closed connection while reading the server preface. Authentication failures, repository commands, interactive shells, and copies are never replayed.
+- `copilot-ghcs` retries complete, known API/SSH startup failures at most twice, with five- and ten-second backoff, including on the first task and before a copy. It requires proof that `gh` failed before dispatch and no stdout; missing acknowledgement alone is never enough. Remote command/transfer failures, authentication refusals, and interactive shells are never replayed.
+- A shared advisory gate covers Secretive identity discovery, public-key link preparation, and SSH handshakes until OpenSSH confirms public-key authentication, remote output arrives, or the connection exits. Links are replaced atomically only when necessary; queued connections cannot replace an active identity or contact the agent while another handshake holds the gate. Authenticated copies no longer monopolise the gate until transfer completion.
+- Three consecutive pre-authentication signing refusals pause new and already queued connections across sessions and Codespaces sharing that gate. They fail before SSH/SCP dispatch with status 75; already authenticated work continues. After explicit operator approval, `setup/copilot-ghcs resume-auth --operator-approved` clears the refusal count without replaying any command or changing credentials.
+- Queueing, `ssh-add -L` identity discovery, connection setup, and safe retries share one 120-second startup budget. Runner connections must receive their exact acknowledgement within it. Discovery timeouts report that no SSH/SCP command was dispatched; later timeouts preserve an unconfirmed remote outcome and never replay the command. Acknowledged jobs and authenticated copies have no arbitrary runtime limit. SSH keepalives detect an unresponsive server after approximately 45 seconds, but cannot diagnose a stalled application on an otherwise responsive server.
+- Returning job reports restore their own default output id after re-entrant waits, so immediate parallel reads cannot substitute another invocation's output. Explicit ids remain required across separate MCP calls.
+- Re-entrant waits share the earliest active deadline, so queued MCP requests cannot extend an outer call past its wait budget. A zero-second wait drains only its own stream without servicing another request or timer.
+- `copilot-cs-tty-sh` supplies a remote PTY for non-interactive terminal-only hooks, preserves their exit status, and keeps the local SSH stream a pipe.
+- `copilot-cs-timed-sh` adds an explicit remote deadline for bounded diagnostics without changing the default lifetime of builds. `copilot-cs-interrupt` is a compatibility name for scoped cancellation, not a Git abort operation.
+- `copilot-cs-job-id` extracts the complete id from a returned report so callers need not retype or truncate its suffix. Genuine daemon replacement still uses the existing remote-log reattachment workflow.
 - `copilot-cs-stop` cancels the full descendant tree, escalates processes that ignore `SIGTERM`, and preserves the supervisor's exit-code reporting. Its cancellation job reports failure if descendants remain alive.
-- `copilot-emacs-mcp-call` performs the MCP initialization and `tools/call` JSON-RPC exchange directly when Copilot's in-memory tool registry rejects or omits `emacs-codespace-eval-elisp`.
+- `copilot-emacs-mcp-call` is the canonical entrypoint, performing the MCP initialization and `tools/call` exchange without depending on Copilot's in-memory native-tool registry.
 
-The fallback client is protocol-aware: unlike piping one JSON-RPC line into the bridge, it keeps stdin open until the matching response arrives.
+The direct client is protocol-aware: unlike piping one JSON-RPC line into the bridge, it keeps stdin open until the matching response arrives. Its bounded byte-stream reader handles coalesced notifications and incomplete frames. It never automatically resubmits an evaluation; a timed-out mutation must be checked through the job registry first.
 
 ## Components
 
@@ -226,7 +239,8 @@ The fallback client is protocol-aware: unlike piping one JSON-RPC line into the 
 | [`setup/copilot-cs-stop`](setup/copilot-cs-stop) | Scoped process-tree cancellation, escalation, and stale-PID protection |
 | [`setup/copilot-cs-eglot.el`](setup/copilot-cs-eglot.el) | Shared Eglot configuration, remote language-server transport, and semantic query helpers |
 | [`setup/copilot-ghcs`](setup/copilot-ghcs) | Secretive-only wrapper for Codespace SSH and copies |
-| [`setup/copilot-emacs-mcp-call`](setup/copilot-emacs-mcp-call) | Protocol-aware direct MCP fallback client |
+| [`setup/copilot-gh-retry`](setup/copilot-gh-retry) | Pre-dispatch retries, shared signing gate, and strictly GET-only API discovery |
+| [`setup/copilot-emacs-mcp-call`](setup/copilot-emacs-mcp-call) | Canonical, protocol-aware direct MCP client |
 | [`setup/copilot-issues-lock`](setup/copilot-issues-lock) | Transactional lock for concurrent issue-log updates |
 | [`ISSUES.md`](ISSUES.md) | Durable symptom reports and resolutions for workflow failures |
 
@@ -238,7 +252,7 @@ Run the local regression cases with the existing Python, Emacs, Git, and shell t
 python3 -m unittest discover -s skills/codespace-tramp/tests -v
 ```
 
-The cases cover local-only Git config hardlinks, Codespace Git defaults and LFS installation, warm-up retry boundaries, explicit artifact-copy arguments, pre-acknowledgement failures and job states, state-preserving daemon refresh, nested process cancellation, escalation, and failure cleanup. Package installation, authentication, and bridge subprocesses use isolated fixtures; cancellation runs against disposable local jobs.
+The cases cover local-only Git config and tag signing, Codespace Git defaults and LFS installation, pre-dispatch retry boundaries, gated identity preparation, opt-in forwarding, exact job ids, deadlines, MCP framing, re-entrant output isolation, remote PTYs, daemon refresh, and process-tree cancellation. Package installation, authentication, and bridge subprocesses use isolated fixtures; cancellation runs against disposable local jobs.
 
 ## Reporting problems
 

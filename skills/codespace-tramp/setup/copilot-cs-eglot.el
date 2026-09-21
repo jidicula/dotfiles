@@ -59,11 +59,12 @@
           . ,(concat prefix "/workspaces/" (match-string 1 local) "/"))))))
 
 (defun copilot-cs-eglot--login-command (root command)
-  "Return a login-shell wrapper that runs COMMAND from remote ROOT."
-  (format "bash -lc %s copilot-cs-eglot %s %s"
-          (shell-quote-argument "cd \"$1\" && exec sh -c \"$2\"")
-          (shell-quote-argument root)
-          (shell-quote-argument command)))
+  "Run COMMAND from remote ROOT without exposing arguments to login profiles."
+  (format "bash -lc %s copilot-cs-eglot"
+          (shell-quote-argument
+           (format "cd %s && exec sh -c %s"
+                   (shell-quote-argument root)
+                   (shell-quote-argument command)))))
 
 (defun copilot-cs-eglot--remote-command (root command login)
   "Return a remote shell command for COMMAND in ROOT.

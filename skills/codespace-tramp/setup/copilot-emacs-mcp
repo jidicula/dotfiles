@@ -153,16 +153,18 @@ main() {
 	case $status in
 	0)
 		# Same session reconnecting, e.g. after Copilot CLI killed the previous
-		# wrapper on a slow tool call. Reload runner definitions without
-		# resetting its defvar-backed target and job registry.
-		log "reusing Emacs daemon $ID and refreshing its runner"
+		# wrapper on a slow tool call. Reload helpers without resetting
+		# their defvar-backed target, jobs, or Eglot state.
+		log "reusing Emacs daemon $ID and refreshing its runner and Eglot helpers"
 		emacsclient -s "$ID" -e \
 			"(progn
 			   (load (expand-file-name \"copilot-cs-jobs.el\" copilot-mcp-setup-dir)
 			         nil t t)
+			   (load (expand-file-name \"copilot-cs-eglot.el\" copilot-mcp-setup-dir)
+			         nil t t)
 			   (setq copilot-mcp-parent-pid $$ copilot-mcp--orphaned-since nil))" \
 			>/dev/null ||
-			die "could not refresh runner and parent pid on daemon $ID"
+			die "could not refresh runner, Eglot helpers, and parent pid on daemon $ID"
 		;;
 	2)
 		# Wedged, or listening on the wrong sockets: either way it will never

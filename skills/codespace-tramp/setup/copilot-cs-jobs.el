@@ -99,7 +99,7 @@ shell variables such as $HOME.")
 
 (defconst copilot-cs-login-git-command-regexp
   (concat "\\(?:\\`\\|[;&|(\n]\\)[[:space:]]*git[[:space:]]+"
-          "\\(?:fetch\\|push\\|commit\\)\\_>")
+          "\\(?:fetch\\|push\\|commit\\|pull\\|cherry-pick\\|revert\\|merge\\|rebase\\|am\\)\\_>")
   "Git commands that require the Codespace login-shell environment.")
 
 ;;; Internals
@@ -119,7 +119,10 @@ finished job."
   "Job id -> plist of (:id :cmd :cs :dir :buffer :process :started).")
 
 (defvar copilot-cs--last-id nil
-  "Id of the most recently launched job, used when callers omit one.")
+  "Id of the most recently returned job, used when callers omit one.")
+
+(defvar copilot-cs--wait-deadline nil
+  "Earliest deadline of runner waits active on the Emacs call stack.")
 
 (defvar copilot-cs--counter 0)
 
@@ -139,7 +142,7 @@ concurrent sessions share one job directory inside the Codespace."
       id
     (error "Invalid job id `%s'" id)))
 
-(defun copilot-cs--argv (command)
+(defun copilot-cs--argv (command &optional ssh-signing job-id)
   "Return an argv list that runs COMMAND, a shell string, on the target.
 With `copilot-cs-id' set that is a Codespace over `gh codespace ssh';
 otherwise it runs locally."
@@ -150,7 +153,11 @@ first; pass nil as CS-ID only if you really mean to run on this machine"))
       ;; The wrapper pins Secretive and refuses disk-key fallback. A signing
       ;; failure therefore fails this connection instead of printing an agent
       ;; error and then succeeding with an unrelated identity.
-      (list copilot-cs-ghcs-program "ssh" copilot-cs-id command)
+      (append (list copilot-cs-ghcs-program
+                    (if ssh-signing "ssh-sign" "ssh")
+                    copilot-cs-id)
+              (when job-id (list "--job-id" (copilot-cs--check-id job-id)))
+              (list command))
     (list "sh" "-c" command)))
 
 (defun copilot-cs--launcher (id command)
@@ -167,9 +174,11 @@ over this same connection."
   (let* ((workdir (or copilot-cs-dir "."))
          ;; The shell's own `cd' error already names the directory, so this
          ;; message interpolates nothing and has no quoting surface at all.
-         (script (format "cd %s || { printf '%%s\\n' 'copilot-cs: cannot enter \
+         (script (concat
+                  (when copilot-cs-id "export LANG=\"${LANG:-C.UTF-8}\"\n")
+                  (format "cd %s || { printf '%%s\\n' 'copilot-cs: cannot enter \
 the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n"
-                         (shell-quote-argument workdir) command))
+                          (shell-quote-argument workdir) command)))
          (b64 (base64-encode-string (encode-coding-string script 'utf-8) t))
          (dir copilot-cs-remote-dir))
     (concat
@@ -196,19 +205,29 @@ the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n
 
 (defun copilot-cs--login-shell-command (command)
   "Return a login-shell wrapper that runs COMMAND in the current directory."
-  (format "bash -lc %s copilot-cs-login \"$(pwd -P)\" %s"
-          (shell-quote-argument "cd \"$1\" && exec sh -c \"$2\"")
-          (shell-quote-argument command)))
+  ;; Sourced profiles can interpret the login shell's arguments as commands.
+  (format "env COPILOT_CS_LOGIN_DIR=\"$(pwd -P)\" bash -lc %s copilot-cs-login"
+          (shell-quote-argument
+           (concat "cd \"$COPILOT_CS_LOGIN_DIR\" && unset COPILOT_CS_LOGIN_DIR "
+                   "&& exec sh -c " (shell-quote-argument command)))))
 
 (defun copilot-cs--login-required-p (command)
   "Return non-nil when COMMAND contains a Git operation needing login state."
   (string-match-p copilot-cs-login-git-command-regexp command))
 
-(defun copilot-cs--start (id command &optional label)
+(defun copilot-cs--tty-shell-command (command)
+  "Wrap non-interactive COMMAND in a remote PTY with its exit status intact."
+  (format "command -v script >/dev/null 2>&1 || { \
+printf '%%s\\n' 'copilot-cs: remote PTY requires util-linux script in the Codespace' >&2; \
+exit 127; }; SHELL=/bin/sh script -q -e -c %s /dev/null </dev/null"
+          (shell-quote-argument
+           (concat "stty -onlcr && " (copilot-cs--login-shell-command command)))))
+
+(defun copilot-cs--start (id command &optional label ssh-signing)
   "Run COMMAND, a remote shell string, streaming output into job ID's buffer.
 LABEL describes the job in status reports.  Returns the job plist."
   (let* ((buffer (generate-new-buffer (format " *copilot-cs-%s*" id)))
-         (argv (copilot-cs--argv command))
+         (argv (copilot-cs--argv command ssh-signing id))
          ;; Pipes, not a pty. A pty would make this process a session leader,
          ;; so killing the stream would signal its whole process group and
          ;; take the detached job down with it -- exactly what detaching is
@@ -333,6 +352,7 @@ listening is lost.  Returns the refreshed job plist."
          ;; daemon happens to be pointing now.
          (copilot-cs-id (plist-get job :cs))
          (copilot-cs-dir (plist-get job :dir))
+         (copilot-cs-configured (or copilot-cs-configured (not (null copilot-cs-id))))
          (fresh (copilot-cs--start id (copilot-cs--attach-command id)
                                    (plist-get job :cmd))))
     (when (buffer-live-p stale) (kill-buffer stale))
@@ -356,15 +376,21 @@ the connection failed, so its outcome remains unconfirmed."
 (defun copilot-cs--settle (job seconds)
   "Let JOB run briefly, returning early once it finishes.
 SECONDS is capped at `copilot-cs-max-wait'. Waits by running the Emacs event
-loop, so the daemon stays responsive."
-  (let ((deadline (+ (float-time) (copilot-cs--bounded-wait seconds)))
-        (process (plist-get job :process)))
+loop, so the daemon stays responsive. Re-entrant calls share the earliest
+active deadline instead of extending the caller's wait."
+  (let* ((deadline (+ (float-time) (copilot-cs--bounded-wait seconds)))
+         (copilot-cs--wait-deadline
+          (if copilot-cs--wait-deadline
+              (min deadline copilot-cs--wait-deadline)
+            deadline))
+         (process (plist-get job :process)))
     (while (and (null (copilot-cs--rc job))
                 (process-live-p process)
-                (< (float-time) deadline))
-      (accept-process-output nil 0.2))
-    ;; The exit marker can arrive in the same chunk that ends the stream.
-    (accept-process-output nil 0.1)
+                (< (float-time) copilot-cs--wait-deadline))
+      (accept-process-output
+       nil (min 0.2 (max 0 (- copilot-cs--wait-deadline (float-time))))))
+    ;; Drain only this stream; another request or timer must not extend a wait.
+    (accept-process-output process 0 nil 1)
     job))
 
 (defun copilot-cs--report (job)
@@ -378,6 +404,9 @@ loop, so the daemon stays responsive."
     ;; Nothing more will arrive once the job is done; let the streamer go.
     (when (and rc (process-live-p process))
       (delete-process process))
+    ;; Waiting services other MCP calls, which may launch and finish jobs.
+    ;; Restore this result's id before its caller reads the default output.
+    (setq copilot-cs--last-id id)
     (concat
      (pcase state
       ('done (format "job=%s state=done rc=%d elapsed=%.1fs" id rc elapsed))
@@ -421,10 +450,11 @@ Booting a `Shutdown' Codespace also happens here."
       (set-process-query-on-exit-flag process nil)))
   "warming")
 
-(defun copilot-cs--run (command label wait)
+(defun copilot-cs--run (command label wait &optional ssh-signing)
   "Run COMMAND as a detached job described by LABEL, waiting briefly."
   (let* ((id (copilot-cs--new-id))
-         (job (copilot-cs--start id (copilot-cs--launcher id command) label)))
+         (job (copilot-cs--start id (copilot-cs--launcher id command)
+                                 label ssh-signing)))
     (copilot-cs--report
      (copilot-cs--settle job (or wait copilot-cs-default-wait)))))
 
@@ -436,6 +466,52 @@ shell establishes the Codespace environment, then a non-interactive `sh' runs
 COMMAND from `copilot-cs-dir'."
   (copilot-cs--run (copilot-cs--login-shell-command command) command wait))
 
+(defun copilot-cs-tty-sh (command &optional wait)
+  "Run non-interactive COMMAND in a Codespace PTY with login state.
+Use for hooks that require a terminal. The PTY is inside the detached remote
+job, never on the local SSH stream. Input is EOF; interactive prompts are not
+supported. Requires util-linux `script' and preserves the command's exit code."
+  (copilot-cs--run (copilot-cs--tty-shell-command command) command wait))
+
+(defun copilot-cs-timed-sh (command seconds &optional wait)
+  "Run COMMAND with login state and an explicit remote deadline of SECONDS.
+SECONDS must be a positive integer. GNU timeout sends SIGTERM at the deadline
+and SIGKILL after another five seconds. Its nonzero exit status is preserved;
+the remote deadline is independent of WAIT, the bounded MCP polling wait."
+  (unless (and (integerp seconds) (> seconds 0))
+    (error "copilot-cs: command deadline must be a positive integer"))
+  (copilot-cs--run
+   (format "command -v timeout >/dev/null 2>&1 || { \
+printf '%%s\\n' 'copilot-cs: a command deadline requires GNU timeout in the Codespace' >&2; \
+exit 127; }; timeout --verbose --kill-after=5s %ds %s"
+           seconds (copilot-cs--login-shell-command command))
+   command wait))
+
+(defun copilot-cs-ssh-git (arguments &optional wait)
+  "Run Git ARGUMENTS with explicitly approved Secretive SSH-agent forwarding.
+ARGUMENTS is a nonempty list of strings. Git signs with the transport's pinned
+public key, preserving original authors. Configuration overrides apply only
+to this Git invocation; ordinary jobs and copies never forward the agent.
+Requires operator approval of agent access from the Codespace, a registered
+SSH signing public key, and Git with SSH-signing support."
+  (unless (and copilot-cs-configured copilot-cs-id)
+    (error "copilot-cs: SSH signing requires an explicitly selected Codespace"))
+  (unless (and (consp arguments) (proper-list-p arguments)
+               (seq-every-p #'stringp arguments))
+    (error "copilot-cs: Git arguments must be a nonempty list of strings"))
+  (let* ((args (mapconcat #'shell-quote-argument arguments " "))
+         (command
+          (concat
+           "test -S \"${COPILOT_CS_SIGNING_SOCKET:-}\" && "
+           "test -n \"${COPILOT_CS_SIGNING_KEY:-}\" || { "
+           "printf '%s\\n' 'copilot-cs: forwarded Secretive signing identity is unavailable' >&2; "
+           "exit 127; }; "
+           "SSH_AUTH_SOCK=\"$COPILOT_CS_SIGNING_SOCKET\" exec git "
+           "-c gpg.format=ssh -c gpg.ssh.program=ssh-keygen "
+           "-c user.signingkey=\"key::$COPILOT_CS_SIGNING_KEY\" " args)))
+    (copilot-cs--run (copilot-cs--login-shell-command command)
+                    (concat "git (Secretive SSH signing) " args) wait t)))
+
 (defun copilot-cs-sh (command &optional wait)
   "Run COMMAND in the Codespace and report what happened.
 
@@ -443,9 +519,9 @@ COMMAND is a shell string, run by `sh' from `copilot-cs-dir'.  It is
 launched detached and its output streamed back, so this call cannot block
 the daemon no matter how long the command takes.
 
-Commands containing `git fetch', `git push', or `git commit' are routed
-through `copilot-cs-login-sh' automatically because Codespace credentials and
-commit signing require the login environment.
+Commands containing credentialed or commit-producing Git operations are routed
+through `copilot-cs-login-sh' automatically. This includes fetch, push, commit,
+pull, cherry-pick, revert, merge, rebase, and am.
 
 Waits up to WAIT seconds (default `copilot-cs-default-wait', capped at
 `copilot-cs-max-wait') for it to finish. Short commands therefore return their
@@ -464,6 +540,13 @@ replaying the command; its remote outcome remains unconfirmed."
   (copilot-cs--report
    (copilot-cs--settle (copilot-cs--live (copilot-cs--job id))
                        (or wait copilot-cs-default-wait))))
+
+(defun copilot-cs-job-id (report)
+  "Extract the exact job id from REPORT without manually retyping it."
+  (unless (and (stringp report)
+               (string-match "\\`job=\\([^[:space:]]+\\)" report))
+    (error "copilot-cs: expected a runner report beginning with job="))
+  (copilot-cs--check-id (match-string 1 report)))
 
 (defun copilot-cs-output (&optional id)
   "Return the complete output of job ID, defaulting to the most recent job."
@@ -494,10 +577,16 @@ poll the original job separately for its exit code."
          ;; Pid files outlive the jobs that wrote them, so signalling a job
          ;; that already finished could hit whatever inherited its pid.
          (copilot-cs-id (plist-get job :cs))
-         (copilot-cs-dir (plist-get job :dir)))
+         (copilot-cs-dir (plist-get job :dir))
+         (copilot-cs-configured (or copilot-cs-configured (not (null copilot-cs-id)))))
     (if rc
         (format "job=%s already finished with rc=%d; nothing to stop" key rc)
       (copilot-cs-sh (copilot-cs--stop-command key) 10))))
+
+(defalias 'copilot-cs-interrupt #'copilot-cs-stop
+  "Cancel job ID using the same scoped cancellation as `copilot-cs-stop'.
+This compatibility name sends SIGTERM, escalating to SIGKILL if needed; it
+does not send a terminal Ctrl-C or abort an in-progress Git sequencer.")
 
 (defun copilot-cs-status ()
   "Summarize every job this daemon knows about."

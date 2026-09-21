@@ -24,6 +24,16 @@ Make changes, run tests/builds, and install dependencies for a repository
 **persistent local Emacs** through the `emacs-codespace` MCP server, which gives
 this session its own dedicated Emacs daemon.
 
+Use `setup/copilot-emacs-mcp-call` as the canonical invocation path for this
+skill. It speaks MCP directly to the dedicated daemon, without depending on
+Copilot CLI's sometimes-unstable registry of MCP tool methods. The Elisp
+examples below are submitted through that client:
+
+```bash
+/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call \
+  '(copilot-cs-status)'
+```
+
 Emacs owns the state: its processes and buffers persist across turns, so a build
 started in one turn can be read in a later one. The commands themselves run
 detached inside the Codespace, so they survive a dropped connection or even the
@@ -74,9 +84,8 @@ esac
 This skill drives a specific local toolchain. If you are sharing it, note that
 each of these must be set up on the operator's machine:
 
-- A **per-session Emacs MCP server** registered as **`emacs-codespace`**, which
-  you invoke through the `emacs-codespace-eval-elisp` tool. The `setup/`
-  directory in this skill provides it:
+- A **per-session Emacs MCP daemon**, invoked through the protocol-aware
+  `setup/copilot-emacs-mcp-call` client. The `setup/` directory provides it:
   - `setup/copilot-ghcs` — the sole SSH/copy transport for this workflow. It
     resolves the active Secretive public-key stand-in, presents it in the
     two-path shape `gh` requires, pins the Secretive agent socket, and enables
@@ -85,17 +94,17 @@ each of these must be set up on the operator's machine:
     `codespaces.auto` key.
   - `setup/copilot-issues-lock` — serializes updates to `ISSUES.md` across
     concurrent Copilot sessions that share the same worktree and Git index.
-  - `setup/copilot-emacs-mcp` — an stdio bridge that Copilot CLI spawns once per
-    session. It boots a throwaway Emacs daemon keyed on
+  - `setup/copilot-emacs-mcp` — an stdio bridge used by the direct MCP client
+    or an optional Copilot MCP registration. It boots a daemon keyed on
     `COPILOT_AGENT_SESSION_ID`, reuses it for the rest of the session, and
     replaces it automatically if it ever stops responding — including
     **mid-session**: if the daemon dies while the session is running, the bridge
     rebuilds it and reconnects on the same stdio transport, so a crash costs one
     failed tool call instead of the session. The replacement daemon starts with
     default state, so `copilot-cs-use` must be called again after one. Reattaching
-    to a healthy daemon reloads the runner from disk while retaining its target
-    and job registry, so reconnecting also picks up runner fixes.
-  - `setup/copilot-emacs-mcp-call` — a protocol-aware fallback client for
+    to a healthy daemon reloads the runner and Eglot helpers from disk while
+    retaining the target, job registry, and tracked Eglot state.
+  - `setup/copilot-emacs-mcp-call` — the canonical protocol-aware client for
     `eval-elisp`. It keeps the stdio transport open until the matching JSON-RPC
     response arrives, so Codespace work can continue if Copilot's in-memory
     tool registry temporarily rejects or omits `emacs-codespace-eval-elisp`.
@@ -103,6 +112,9 @@ each of these must be set up on the operator's machine:
     TRAMP/`ghcs`, detached jobs, and Codespace-hosted Eglot.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
     is built on, loaded into the daemon at boot.
+  - `setup/copilot-gh-retry` — bounded pre-dispatch connection retries and a
+    shared Secretive signing gate, used by `copilot-ghcs`; its `get` command
+    also supports strictly read-only GitHub API discovery.
   - `setup/copilot-cs-stop` — the shell cancellation helper shipped into the
     Codespace by the runner. It stops a job's complete descendant tree without
     terminating the supervisor that records its exit code.
@@ -111,7 +123,7 @@ each of these must be set up on the operator's machine:
     Codespace over a local Secretive-backed process instead of asking TRAMP to
     start a blocking remote process.
 
-  Register it in `~/.copilot/mcp-config.json`:
+  An optional native-tool registration in `~/.copilot/mcp-config.json` is:
 
   ```json
   {
@@ -129,9 +141,10 @@ each of these must be set up on the operator's machine:
   ```
 
   Keep the registration beneath `mcpServers`; a duplicate top-level entry is
-  ignored. This workflow depends on its one narrow tool, so load it eagerly
-  instead of relying on deferred tool discovery, and discover it from the live
-  server on each CLI start instead of restoring a stale persisted snapshot.
+  ignored. If using this optional registration, eager discovery avoids some
+  stale snapshots, but the workflow does not depend on that registry being
+  healthy. Do not switch to the operator's interactive Emacs when a method
+  disappears.
 
   **Why a dedicated per-session daemon:** Emacs is single-threaded, so any
   synchronous remote operation blocks the entire instance. Sharing one daemon
@@ -150,7 +163,9 @@ each of these must be set up on the operator's machine:
   configured for Emacs-native file access; commands go through `copilot-cs-sh`
   instead (see Step 5).
 - The **GitHub CLI** (`gh`) installed and authenticated, **`socat`** installed,
-  and **Python 3** available for the protocol-aware fallback client.
+  and **Python 3** available for the connection wrapper and protocol-aware
+  direct client. Remote PTY commands additionally need util-linux `script`
+  inside the Codespace.
 - **Secretive** installed with its SSH agent enabled and at least one active
   identity. `setup/copilot-ghcs` uses Secretive's standard data directory by
   default. `COPILOT_SECRETIVE_AGENT_SOCKET` selects another socket
@@ -394,7 +409,10 @@ Scope the lookup to the **provided repo** with `-R` and match on display name:
 
 ```bash
 EXISTING=$(gh codespace list -R "$NWO" --json name,displayName,state \
-  -q ".[] | select(.displayName==\"$CS_NAME\")")
+  -q ".[] | select(.displayName==\"$CS_NAME\")") || {
+  echo "Codespace discovery failed; do not interpret this as no match" >&2
+  exit 1
+}
 ```
 
 - **No match:** proceed to Step 4 (create).
@@ -407,9 +425,12 @@ EXISTING=$(gh codespace list -R "$NWO" --json name,displayName,state \
   To compute the next free suffix when they choose option 2:
 
   ```bash
+  DISPLAY_NAMES=$(gh codespace list -R "$NWO" --json displayName \
+    -q '.[].displayName') || { echo "could not check existing names" >&2; exit 1; }
   N=2
-  while gh codespace list -R "$NWO" --json displayName -q '.[].displayName' \
-        | grep -qx "${CS_NAME}-${N}"; do N=$((N+1)); done
+  while printf '%s\n' "$DISPLAY_NAMES" | grep -qx "${CS_NAME}-${N}"; do
+    N=$((N+1))
+  done
   CS_NAME="${CS_NAME}-${N}"
   ```
 
@@ -418,11 +439,14 @@ EXISTING=$(gh codespace list -R "$NWO" --json name,displayName,state \
 **Automatically try the available machine types (SKUs) from largest to
 smallest.** Rank machines by CPU count, then memory, then storage. Start with
 the highest-ranked result without prompting the user, and fall back to each
-next-largest SKU if creation reports `no machines` or any other error:
+next-largest SKU if creation fails. Required
+permission approval and the account's running-Codespace limit are not SKU
+failures; stop for the operator instead:
 
 ```bash
 # Append ?ref=<branch> for a non-default branch.
-MACHINES=$(gh api "/repos/$NWO/codespaces/machines" \
+MACHINES=$(/absolute/path/to/skills/codespace-tramp/setup/copilot-gh-retry \
+  get "/repos/$NWO/codespaces/machines" \
   --jq '
     .machines
     | sort_by([(.cpus // 0), (.memory_in_bytes // 0), (.storage_in_bytes // 0)])
@@ -442,6 +466,13 @@ The discovery request must return the ordered candidates before fallback is
 possible. If that request itself fails or returns an empty list, stop and report
 that no SKU could be selected; never use an implicit machine default.
 
+The `get` helper uses the local CLI's stored authentication and retries only a
+connection failure, with at most three attempts and five-/ten-second backoff.
+It never changes the HTTP method, retries authorization failures, or treats an
+error as an empty response. Use it for repository metadata as well when API
+connectivity is intermittent. Do not retry creation or other mutations through
+this helper.
+
 Next, pick the dev container config. A repo may define several, and when it
 does `gh codespace create` tries to **prompt** for one — which fails outright
 here, because this shell has no TTY:
@@ -450,13 +481,14 @@ here, because this shell has no TTY:
 failed to prompt: no terminal
 ```
 
-That message is generic: it is also what you get when the branch is ambiguous
-or the Codespace requests extra permissions. Pre-answer **all three** prompts
-rather than guessing which one fired — pass `-b`, `--default-permissions`, and
-`--devcontainer-path` every time. List the available configs first:
+Pre-answer branch, machine, and devcontainer selection with `-b`, `-m`, and
+`--devcontainer-path`. Do **not** add `--default-permissions` to suppress a
+permission prompt: that opts out of the extra repository access the
+devcontainer needs and can break dependency bootstrap. List the configs first:
 
 ```bash
-gh api "/repos/$NWO/codespaces/devcontainers?ref=$BRANCH" \
+/absolute/path/to/skills/codespace-tramp/setup/copilot-gh-retry \
+  get "/repos/$NWO/codespaces/devcontainers?ref=$BRANCH" \
   --jq '.devcontainers[] | "\(.path)\t\(.display_name)"'
 ```
 
@@ -476,17 +508,29 @@ CREATED=
 while IFS= read -r MACHINE; do
   [ -n "$MACHINE" ] || continue
   echo "trying Codespace machine: $MACHINE"
-  if gh codespace create -R "$NWO" -d "$CS_NAME" -m "$MACHINE" \
-       -b "$BRANCH" --devcontainer-path "$DEVCONTAINER" \
-       --default-permissions; then
+  if CREATE_OUTPUT=$(gh codespace create -R "$NWO" -d "$CS_NAME" -m "$MACHINE" \
+       -b "$BRANCH" --devcontainer-path "$DEVCONTAINER" 2>&1); then
+    printf '%s\n' "$CREATE_OUTPUT"
     CREATED=1
     break
   fi
+  printf '%s\n' "$CREATE_OUTPUT" >&2
+  case "$CREATE_OUTPUT" in
+    *"too many codespaces running"*)
+      echo "Stop for the operator to choose which Codespace may be stopped; changing SKU cannot free a running slot." >&2
+      exit 1 ;;
+    *"additional permissions"*)
+      echo "Stop for the operator's GitHub permission approval; do not opt out or try another SKU." >&2
+      exit 1 ;;
+  esac
 
   # Avoid creating a duplicate if the API created the Codespace but gh failed
   # while waiting for or printing the response.
   CS_ID=$(gh codespace list -R "$NWO" --json name,displayName \
-    -q ".[] | select(.displayName==\"$CS_NAME\") | .name")
+    -q ".[] | select(.displayName==\"$CS_NAME\") | .name") || {
+    echo "creation outcome is unconfirmed; discovery failed, so do not create another Codespace" >&2
+    exit 1
+  }
   if [ -n "$CS_ID" ]; then
     CREATED=1
     break
@@ -499,9 +543,23 @@ EOF
   echo "Codespace creation failed for every available machine SKU" >&2
   exit 1
 }
-# the branch is fixed at creation time, so -b must be right up front — a
-# Codespace cannot be moved to another branch afterwards
+# Start from the requested branch. Later Git branch changes happen in the Codespace.
 ```
+
+When `gh` prints an authorisation URL, have the operator review the requested
+repository access there. Confirm the server's state, not just that the page
+was opened, before retrying creation:
+
+```bash
+gh api "repos/$NWO/codespaces/permissions_check?ref=$BRANCH&devcontainer_path=$DEVCONTAINER" \
+  --jq '.accepted'
+```
+
+Continue only when it is `true`. Use the same authenticated account and
+selected ref/configuration. Browser automation still requires explicit
+permission. An existing Codespace created without these grants cannot acquire
+them merely by rebuilding; use a newly authorised Codespace if needed. Never
+create or copy a PAT as a workaround.
 
 `gh codespace create` prints the Codespace **`name`** (id) on stdout as its
 last line, so you can capture it directly instead of re-deriving it below.
@@ -511,7 +569,8 @@ uses to address the Codespace:
 
 ```bash
 CS_ID=$(gh codespace list -R "$NWO" --json name,displayName \
-  -q ".[] | select(.displayName==\"$CS_NAME\") | .name")
+  -q ".[] | select(.displayName==\"$CS_NAME\") | .name") || exit 1
+[ -n "$CS_ID" ] || { echo "could not resolve the Codespace id" >&2; exit 1; }
 ```
 
 **Wait until the Codespace is `Available` before connecting.** A freshly created
@@ -524,7 +583,10 @@ and, in `watch`'s case, need a TTY this shell does not have:
 state=""
 for i in $(seq 1 60); do            # ~5 min cap (60 × 5s)
   state=$(gh codespace list -R "$NWO" --json name,state \
-    -q ".[] | select(.name==\"$CS_ID\") | .state")
+    -q ".[] | select(.name==\"$CS_ID\") | .state") || {
+    echo "could not read Codespace state; stop and check connectivity" >&2
+    exit 1
+  }
   echo "codespace $CS_ID: ${state:-unknown}"
   [ "$state" = "Available" ] && break
   sleep 5
@@ -541,12 +603,49 @@ connection through `setup/copilot-ghcs`, then poll for readiness as above:
 /absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
 ```
 
-For this exact `true` warm-up only, the transport retries an SSH RPC
-`DeadlineExceeded` or `Unavailable` startup error up to three total attempts,
-including a closed connection while reading the server preface. It waits five
-and then ten seconds between attempts. It does not retry signing refusals,
-other authentication errors, repository commands, interactive shells, or copies.
-Wait for the warm-up to finish rather than launching a competing connection.
+If starting or creating reports `too many codespaces running`, list running
+Codespaces across all repositories and ask which, if any, the operator wants
+stopped. Approval to start this Codespace is not approval to stop another.
+Do not delete a Codespace, choose one to stop automatically, or cycle through
+machine sizes to evade this account-wide limit. After an explicitly approved
+stop, recheck the target state before retrying its start.
+
+`Available` does not guarantee that the SSH RPC is ready. The transport now
+handles the first task and later copies as well as an explicit warm-up: it
+retries only complete, known `gh` diagnostics proving that API/SSH setup failed
+**before ssh or scp was dispatched**. Those include SSH RPC `DeadlineExceeded`,
+`Unavailable`, `error connecting to api.github.com`, and the complete
+Codespace-details refresh diagnostic ending in a TLS handshake timeout or
+unexpected EOF. The strictly GET-only discovery helper also handles those two
+raw GitHub API GET errors. There are at most three attempts with five-/ten-second
+backoff. Any stdout, a remote exit or tunnel error, an authentication failure,
+or an unrecognized error prevents retry.
+An unacknowledged job alone is never sufficient evidence to replay it.
+
+The shared signing gate serialises identity discovery and handshakes until
+OpenSSH's local verbose diagnostic confirms public-key authentication, remote output arrives, or the
+connection exits. A quiet authenticated copy therefore does not block another
+connection until its entire transfer completes.
+
+The gate also persists consecutive pre-authentication signing refusals. After
+three, new and already queued connections stop before SSH/SCP dispatch with
+status 75, including copies, runner attachments, and Eglot launches. Existing
+authenticated streams continue. Prompt the operator; only after explicit
+approval run `setup/copilot-ghcs resume-auth --operator-approved`. This resets
+the shared refusal count, not credentials, and does not replay failed jobs.
+Do not delete the gate file or repeatedly reset it to bypass the limit.
+
+Queueing, `ssh-add -L` identity discovery, API/SSH setup, and safe retry backoff
+share one 120-second startup budget. Discovery runs inside the gate, preserves
+agent diagnostics, and cannot contact the agent while authentication is paused.
+Runner connections additionally require the exact job acknowledgement
+before that deadline. Expiry stops the local transport, not a detached remote
+job; it preserves diagnostics and never automatically retries an unconfirmed
+operation. Acknowledged jobs and authenticated copies are not subject to a
+total runtime limit. Encrypted SSH keepalives disconnect an unresponsive server
+after approximately 45 seconds; a responsive server can still host a stalled
+command or transfer. Do not race a warm-up with another connection, remove a
+busy lock, or automatically retry a Secretive refusal.
 
 ## Step 5 — Connect and make the changes
 
@@ -569,7 +668,8 @@ anything until a target has been chosen, because a runner with no target
 executes on the **operator's own machine**. Re-run it after any daemon restart,
 which resets it. It deliberately does not start a second background warm-up
 connection: the first command opens the only Secretive signing request instead
-of racing two simultaneous SSH connections.
+of racing two simultaneous SSH connections. Later handshakes share the
+transport's signing gate.
 
 The minimal Codespace path in this dotfiles repository's `script/setup`
 installs missing Git LFS before returning: the shared Git config enables
@@ -687,19 +787,56 @@ check it out here (or confirm Step 4 already created the Codespace on it).
 
 ## Step 6 — Validate, publish, and clean up
 
+- After changing the base branch or refreshing an older Codespace, recheck
+  the repository's dependency/bootstrap readiness before validation or pushing.
+  `Available` describes the container, not its dependencies. A successful push
+  whose hook says checks were skipped is **not** successful validation. Repair
+  the environment using the repository's documented bootstrap command inside
+  the Codespace and rerun the actual checks; do not set skip-hook flags.
+- After every Codespace restart, also wait for the repository's backing services
+  using its documented read-only health checks. SSH availability and installed
+  dependencies do not establish database or service readiness. Bound each probe
+  and the overall wait, surface an expired readiness deadline, and only rerun
+  the failed validation after readiness succeeds. Do not restart shared services
+  or change their configuration merely because they are still starting.
+- Check required executables in the same runner environment used for
+  validation. A completed devcontainer bootstrap can omit tools that its CI
+  image installs separately. After a missing-dependency failure, use the
+  repository's dependency declarations or image setup to install the missing
+  tool inside the Codespace, then rerun the failed command. Do not install it
+  locally or treat bootstrap completion as proof that lint/tests can run.
+- For a hook that requires a terminal, publish using
+  `(copilot-cs-tty-sh "git push ...")` once readiness is established. This
+  allocates a PTY inside the detached remote job, not on the local SSH stream,
+  and propagates the command's exit code. It cannot answer interactive prompts.
 - Run the repository's tests/linters/type-checks in the Codespace to verify your
   change — preferring any commands given in `instructions`, otherwise the
   repository's own conventions (see **Repository-specific command notes**
   below).
+- If a test selector cannot fetch a coverage artifact (for example HTTP 410),
+  its checks have not run. Use documented direct test/lint/typecheck entrypoints
+  for the changed files and keep the selector failure visible. Do not substitute
+  stale coverage, narrow away baseline errors, or declare a green result from a
+  dry-run listing. See the cookbook's validation-readiness guidance.
 - Revert any throwaway/exploratory edits and confirm a clean tree
   (`git checkout -- <file>` then `git status --porcelain`) unless the user asked
   to keep the changes — either in `instructions` or in conversation.
-- `copilot-cs-sh` automatically routes `git fetch`, `git push`, and
-  `git commit` through the Codespace login environment. For repository commands
+- `copilot-cs-sh` automatically routes credentialed and commit-producing Git
+  commands through the Codespace login environment, including `cherry-pick`,
+  `revert`, `merge`, `rebase`, `am`, and `pull`. For repository commands
   that fetch other protected remote data, call `copilot-cs-login-sh` directly.
   Codespaces' credential and commit-signing helpers, plus some repository
   tooling, require environment variables that only login shells get. See the
   cookbook's **Commands that need the Codespace login environment**.
+- Codespace API signing may reject a preserved foreign author. Do not silently
+  reset authorship, disable required signing, or repeat a cherry-pick that
+  already staged its changes. Inspect the in-progress state and use the
+  cookbook's author-preserving recovery rules; reauthoring needs the operator's
+  explicit agreement and retained original attribution.
+  With explicit operator approval of agent forwarding, the alternative is
+  `copilot-cs-ssh-git`: it signs Git commits with the registered Secretive
+  public key while retaining the original author. Ordinary commands and copies
+  do not forward the agent. See the cookbook's opt-in signing procedure.
 - Run GitHub control-plane operations such as `gh pr`, `gh workflow`, and
   `gh run` with the operator's **local authenticated `gh`**, always passing
   `-R "$NWO"` (and the target branch, run, or job where needed). Do not send
@@ -734,15 +871,16 @@ Ask the user for the correct commands if none are supplied.
 
 ## Troubleshooting
 
-- **`Found 0 tools` for `emacs-codespace`:** this is local Copilot MCP tool
-  discovery, not Codespace availability. Confirm the registration is beneath
+- **`Found 0 tools` for the optional `emacs-codespace` registration:** this is
+  local Copilot MCP discovery, not Codespace availability. The canonical direct
+  client does not need this registration. If also using the native tool,
+  confirm its registration is beneath
   `mcpServers`, includes `"tools": ["eval-elisp"]` and
   `"deferTools": "never"` plus `"disableToolCache": true`, and has no duplicate
   top-level entry. Starting the Codespace cannot repair tool discovery. Run
   `/mcp` after changing the configuration.
-- **`emacs-codespace-eval-elisp` is missing or rejected as nonexistent:** first
-  confirm `copilot mcp get emacs-codespace --json` reports the server enabled
-  with the configuration above. Use the protocol-aware fallback instead of
+- **`emacs-codespace-eval-elisp` is missing or rejected as nonexistent:** use
+  the canonical direct client instead of
   repeatedly restarting the session or piping a bare `tools/call` request,
   which closes stdin before a long evaluation can answer:
 
@@ -752,7 +890,13 @@ Ask the user for the correct commands if none are supplied.
   ```
 
   The helper performs the MCP initialization handshake, keeps stdin open until
-  the matching response arrives, and prints the evaluated result. Copilot CLI
+  the matching response arrives, and prints the evaluated result. It also
+  handles coalesced notifications and partial frames without losing its timeout.
+  Keep using this entrypoint with the same `COPILOT_AGENT_SESSION_ID`; do not repeatedly invoke
+  an absent JavaScript method, reset a healthy daemon, or switch to interactive
+  Emacs. A missing method failed before dispatch, but a timeout might have
+  dispatched work: use `copilot-cs-status` first instead of resending a mutation.
+  The skill cannot repair Copilot CLI's in-memory registry itself. Copilot CLI
   can regenerate MCP configuration and revert hand-edits, so recheck it if the
   problem returns.
 - **`Transport closed` on every call:** the stdio bridge is gone. Copilot CLI
@@ -760,7 +904,8 @@ Ask the user for the correct commands if none are supplied.
   through blocking TRAMP primitives causes — use `copilot-cs-sh` instead. A
   daemon that merely *dies* no longer causes this: the bridge rebuilds it and
   reconnects by itself. `Transport closed` therefore means the **bridge**
-  process itself was killed, which only `/mcp` or `/restart` can undo. The
+  process itself was killed. A new direct-client invocation starts a fresh
+  bridge; if using the optional native registration, reload it with `/mcp`. The
   daemon survives it for one hour (`COPILOT_MCP_ORPHAN_GRACE`), and every
   successful bridge reattachment resets that window, so a delayed Secretive
   approval does not discard the selected target or known jobs. The watchdog
@@ -806,10 +951,29 @@ Ask the user for the correct commands if none are supplied.
   build directory.
 - **`Security: 'FUNC' is blocked`:** you used a blocklisted Elisp function.
   Switch to the `copilot-cs-*` helper from the cookbook.
-- **`Execution timeout exceeded`:** if it came from a runner poll, the daemon
-  predates the bounded-wait fix or the call used an old helper; current runner
-  calls clamp every wait to 15 seconds. For other calls, you likely ran
-  something blocking inline. Every command belongs in `copilot-cs-sh`.
+- **`Execution timeout exceeded`:** current runner waits are capped at 15
+  seconds and re-entrant calls share the earliest active deadline. This prevents
+  a batch of connection waits from extending the outer request's budget.
+  Invoke the direct client again to reload updated helpers, inspect existing
+  jobs, and poll their exact ids rather than replaying timed-out calls. A
+  zero-second wait returns immediately even while connection setup is queued.
+  Other synchronous Elisp operations can still block: run commands through
+  `copilot-cs-sh`, not inline remote primitives.
+- **Ruby reports US-ASCII or invalid multibyte characters:** remote job scripts
+  now default an unset or empty `LANG` to `C.UTF-8`, including before login-shell
+  setup. Explicit locale settings are preserved; `LC_ALL` and `LC_CTYPE` still
+  override `LANG`. Inspect only those variables and `locale -a`, then use an
+  installed UTF-8 locale for the affected command if a profile deliberately
+  selects a different one. Do not dump the full environment or hide the failed
+  tests with a narrower selection.
+- **A login-aware Git command triggers Node downloads or `No default node
+  version`:** older wrappers passed the working directory and command as login
+  shell arguments. NVS sourced by a profile treats those arguments as a request
+  to execute. The current wrapper starts login setup with no positional
+  arguments, then restores the working directory and runs the safely quoted
+  command. Reload the runner with the direct client; do not install or select
+  an unrelated Node version to silence this symptom. Plain read-only Git and
+  branch switching do not need the login helper.
 - **`Wrong number of arguments ... 3` from `copilot-cs-poll`:** the function
   accepts at most two arguments: `(copilot-cs-poll "job-id" 15)` polls a named
   job for up to 15 seconds, while `(copilot-cs-poll nil 15)` applies that wait
@@ -820,15 +984,59 @@ Ask the user for the correct commands if none are supplied.
   versions either authenticate with Secretive or fail without fallback.
   `copilot-cs-use` no longer launches a concurrent warm-up connection, so the
   first command creates one signing request rather than two competing requests.
-  Retry Secretive authentication at most three times. After the third failure,
-  stop and prompt the human operator before trying again so they can return and
-  approve the signing request. Never create or select
+  After three consecutive pre-authentication signing failures, the shared gate
+  stops further connections with status 75. Prompt the human operator before
+  trying again so they can return and approve the signing request. Only after
+  their approval run `setup/copilot-ghcs resume-auth --operator-approved`, then
+  explicitly launch the intended diagnostic or recovery operation. Never create
+  or select
   `~/.ssh/codespaces.auto` or another on-disk private key as a workaround.
+  The signing gate prevents overlapping connection handshakes from this
+  transport; it cannot make Secretive honour an approval. If refusal persists even for one
+  isolated `true` warm-up, keep the issue open for the operator rather than
+  claiming that a transient successful connection fixed it.
+  In Secretive's debug log, an `SSH_AGENT_FAILURE` response to an unsupported
+  `SSH_AGENTC_EXTENSION` can precede a successful signature; it is not itself a
+  signing refusal. Correlate the request type, `SSH_AGENT_SIGN_RESPONSE`, and
+  OpenSSH's authentication outcome. Check current Secretive releases for
+  upstream fixes, but do not upgrade or restart the shared agent without
+  operator approval.
+- **SSH calls the public-key stand-in an unprotected private key:** do not
+  export a private key, change Secretive's managed file permissions, or switch
+  identities. The stand-in contains a public key; inspect the preceding agent
+  diagnostics. The transport ignores unrelated SSH config and permits only
+  non-password public-key authentication, and never retries this warning.
+  Removing the warning alone would not prove that authentication works.
+- **Codespace discovery or copy returns HTTP 403 and requests `codespace`
+  scope:** stop before SSH, patch application, or another mutation. A prior
+  successful operation does not establish current access. Check the selected
+  Codespace using the local CLI's existing authentication and distinguish a
+  persistent permission denial from the network errors covered by bounded
+  retries. Do not automatically refresh scopes, switch accounts, create a
+  token, or retry a 403; ask the operator to restore the required access.
 - **A short command reports `state=connecting` with no output:** no remote job
   has been acknowledged yet. The Codespace may still be connecting, but an
   unanswered Secretive request is the usual cause. Approve it, then poll the
   same job id. Do not launch a replacement job while the original connection
   is still pending.
+- **Parallel reads return the wrong file's output:** use the job id in each
+  invocation's own returned report when calling `copilot-cs-output` or
+  `copilot-cs-poll`. The runner now restores the returning job's default id
+  after re-entrant waits, but unnamed lookups across separate MCP calls still
+  mean the last returned job, not a caller-specific history.
+- **A completed job is reported as unknown:** preserve the entire id, including
+  its hexadecimal suffix. Use `copilot-cs-job-id` to extract it from the returned
+  report instead of manually retyping it. Check `copilot-cs-status` before
+  assuming the daemon restarted. A genuine replacement still requires
+  `copilot-cs-use` for new commands and `copilot-cs-attach` for old remote logs.
+- **`copilot-cs-interrupt` was undefined on an old daemon:** it is now a
+  compatibility name for `copilot-cs-stop`, using scoped SIGTERM/SIGKILL
+  cancellation. It does not send a terminal Ctrl-C or run `git rebase --abort`;
+  inspect the original job and Git state before continuing.
+- **A short diagnostic remains running:** no pager does not guarantee cheap
+  history traversal in a large repository. Use `copilot-cs-timed-sh` with an
+  explicit remote deadline and omit unnecessary decoration/signature work.
+  Do not impose that short deadline on normal builds or rebase jobs.
 - **A pending job later reports `state=failed`:** the connection ended without
   an acknowledgement. Polling preserves the original error and does not
   reconnect automatically. Its remote outcome is unconfirmed; do not assume
@@ -848,6 +1056,28 @@ Ask the user for the correct commands if none are supplied.
   protected remote data, rerun it with
   `(copilot-cs-login-sh "<command>")`. Do not print, export, or copy the token;
   the login shell supplies the environment the repository tool expects.
+- **A hook skips checks because the environment is not bootstrapped:** stop
+  publication, run the repository's readiness/bootstrap workflow, and rerun
+  the actual checks. A hook's zero exit code does not override its skip message.
+- **A pre-push hook says it must be connected to a terminal:** use
+  `copilot-cs-tty-sh` for the next non-interactive push. Its remote util-linux
+  `script` supplies the PTY without changing the runner's local pipe or job
+  detachment. If the previous push succeeded, do not claim its checks ran;
+  perform explicit validation rather than blindly repeating publication.
+- **Coverage-artifact download reports HTTP 410:** the selected artifact is
+  unavailable, not merely missing login variables. Do not retry that artifact
+  indefinitely or claim its dependent checks ran. Use documented direct
+  validation commands and record the selector limitation.
+- **Generated annotated tags fail with `git-tag: exit status 128`:** inspect
+  the signer error and `git config --show-origin --get tag.gpgsign` in the
+  affected environment. Automatic tag signing now lives in `gitconfig-local`,
+  not the shared config; existing Codespaces need the updated shared file.
+  Commit signing remains enabled. Do not suppress unrelated tag failures or
+  silently downgrade an explicitly requested signed tag.
+- **Cherry-pick signing reports `403 | Author is invalid`:** login routing
+  does not grant the signing service permission for a different author.
+  Preserve the staged changes and original attribution, and follow the
+  cookbook's signing-recovery rules instead of resetting the author silently.
 - **`gh copilot` reports `Copilot CLI not installed`:** the runner has no TTY,
   so `gh` refuses its normal installation prompt. Prefix the command with
   `CI=1`, which tells `gh copilot` to download the CLI without prompting:
@@ -900,12 +1130,11 @@ Ask the user for the correct commands if none are supplied.
   `gh codespace ssh`/Secretive connection. `copilot-cs-use` intentionally does
   not race it with a background warm-up; a `Shutdown` Codespace also has to boot
   first.
-- **Warm-up reports `failed to invoke SSH RPC` with `DeadlineExceeded` or
-  `Unavailable`:** the exact `copilot-ghcs ssh "$CS_ID" true` warm-up retries
-  these startup errors twice with backoff, including a closed server-preface
-  connection. If all three attempts fail, the final error is returned; inspect
-  Codespace availability before trying again. Arbitrary task commands are
-  never replayed automatically.
+- **A first command, copy, or warm-up reports `DeadlineExceeded`, `Unavailable`,
+  or `error connecting to api.github.com`:** the transport retries only when
+  the complete diagnostic proves `gh` failed before dispatch, with no stdout.
+  After three attempts the final failure remains visible. Inspect availability
+  and connectivity rather than blindly rerunning an unconfirmed operation.
 - **Stopping a job leaves descendants running on an older daemon:** reconnect
   `emacs-codespace` to reload the runner, then use `copilot-cs-stop`. The current
   helper freezes the tree parent-first, sends `SIGTERM`, and escalates remaining

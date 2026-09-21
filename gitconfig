@@ -1,8 +1,6 @@
 [commit]
 	template = ~/.git-commit-message
     gpgSign = true
-[tag]
-    gpgSign = true
 [init]
 	templatedir = ~/.git-templates
 	defaultBranch = "main"

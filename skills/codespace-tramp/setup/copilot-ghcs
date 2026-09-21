@@ -9,6 +9,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SECRETIVE_DATA_DIR="${COPILOT_SECRETIVE_DATA_DIR:-$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data}"
 SECRETIVE_SOCKET="${COPILOT_SECRETIVE_AGENT_SOCKET:-${COPILOT_SECRETIVE_SOCKET:-$SECRETIVE_DATA_DIR/socket.ssh}}"
 SECRETIVE_PUBLIC_KEYS_DIR="${COPILOT_SECRETIVE_PUBLIC_KEYS_DIR:-$SECRETIVE_DATA_DIR/PublicKeys}"
@@ -17,13 +18,30 @@ SECRETIVE_STANDIN="${COPILOT_SECRETIVE_STANDIN:-$HOME/.ssh/secretive-codespaces}
 log() { printf '[copilot-ghcs] %s\n' "$*" >&2; }
 die() { log "$*"; exit 1; }
 
+standin_dir=$(dirname "$SECRETIVE_STANDIN")
 mode="${1:-}"
+if [[ "$mode" == "resume-auth" ]]; then
+	[[ $# -eq 2 && "$2" == "--operator-approved" ]] ||
+		die "usage: copilot-ghcs resume-auth --operator-approved"
+	exec python3 "$SCRIPT_DIR/copilot-gh-retry" resume-auth \
+		--lock "$standin_dir/copilot-ghcs-connect.lock" --operator-approved
+fi
 codespace="${2:-}"
-[[ "$mode" == "ssh" || "$mode" == "cp" ]] ||
-	die "usage: copilot-ghcs {ssh|cp} CODESPACE [arguments...]"
+[[ "$mode" == "ssh" || "$mode" == "ssh-sign" || "$mode" == "cp" ]] ||
+	die "usage: copilot-ghcs {ssh|ssh-sign|cp} CODESPACE [arguments...]; or resume-auth --operator-approved"
 [[ "$codespace" =~ ^[A-Za-z0-9._-]+$ ]] ||
 	die "invalid Codespace id: $codespace"
 shift 2
+
+job_id=
+if [[ "$mode" != "cp" && "${1:-}" == "--job-id" ]]; then
+	job_id="${2:-}"
+	[[ "$job_id" =~ ^[A-Za-z0-9._-]+$ ]] ||
+		die "invalid runner job id: $job_id"
+	shift 2
+	[[ $# -eq 1 && "$1" != -* ]] ||
+		die "--job-id requires exactly one remote runner command"
+fi
 
 if [[ "$mode" == "cp" ]]; then
 	(( $# >= 2 )) || die "usage: copilot-ghcs cp CODESPACE SOURCE... DESTINATION"
@@ -42,80 +60,51 @@ fi
 [[ -S "$SECRETIVE_SOCKET" ]] ||
 	die "Secretive agent socket is unavailable: $SECRETIVE_SOCKET"
 
-public_key="${COPILOT_SECRETIVE_PUBLIC_KEY:-}"
-if [[ -z "$public_key" ]]; then
-	if ! active_key=$(SSH_AUTH_SOCK="$SECRETIVE_SOCKET" ssh-add -L 2>/dev/null |
-		sed -n '1p'); then
-		die "Secretive did not return an SSH identity"
-	fi
-	[[ -n "$active_key" ]] || die "Secretive has no active SSH identity"
-
-	for candidate in "$SECRETIVE_PUBLIC_KEYS_DIR"/*.pub; do
-		[[ -f "$candidate" ]] || continue
-		if [[ "$(sed -n '1p' "$candidate")" == "$active_key" ]]; then
-			public_key="$candidate"
-			break
-		fi
-	done
-fi
-
-[[ -f "$public_key" ]] ||
-	die "the active Secretive public-key stand-in could not be found"
-
-standin_dir=$(dirname "$SECRETIVE_STANDIN")
 mkdir -p "$standin_dir"
 chmod 700 "$standin_dir"
-for path in "$SECRETIVE_STANDIN" "$SECRETIVE_STANDIN.pub"; do
-	[[ ! -e "$path" || -L "$path" ]] ||
-		die "refusing to replace non-symlink path: $path"
-done
-ln -sfn "$public_key" "$SECRETIVE_STANDIN"
-ln -sfn "$public_key" "$SECRETIVE_STANDIN.pub"
 
+# scp disables LocalCommand; the local SSH authentication diagnostic frees the gate.
 ssh_args=(
+	-F /dev/null
 	-i "$SECRETIVE_STANDIN"
 	-o "IdentitiesOnly=yes"
 	-o "IdentityAgent=$SECRETIVE_SOCKET"
+	-o "PreferredAuthentications=publickey"
+	-o "BatchMode=yes"
+	-o "LogLevel=VERBOSE"
+	-o "ServerAliveInterval=15"
+	-o "ServerAliveCountMax=3"
 )
 
-warm_codespace() (
-	local attempt=1 rc=0 error_file
-	error_file=$(mktemp "${TMPDIR:-/tmp}/copilot-ghcs-warm.XXXXXX")
-	trap 'rm -f "$error_file"' EXIT
-
-	while :; do
-		if gh codespace ssh -c "$codespace" -- "${ssh_args[@]}" true \
-			2>"$error_file"; then
-			cat "$error_file" >&2
-			return 0
-		else
-			rc=$?
-		fi
-		cat "$error_file" >&2
-		if [[ $attempt -ge 3 ]] ||
-			! grep -Eq '^error getting ssh server details: failed to invoke SSH RPC: rpc error: code = (DeadlineExceeded|Unavailable) ' "$error_file"; then
-			return "$rc"
-		fi
-		log "Codespace SSH is still starting; retrying warm-up ($((attempt + 1))/3)"
-		sleep "$((attempt * 5))"
-		attempt=$((attempt + 1))
-	done
-)
+retry=(python3 "$SCRIPT_DIR/copilot-gh-retry" connect
+	--lock "$standin_dir/copilot-ghcs-connect.lock"
+	--agent-socket "$SECRETIVE_SOCKET" --public-keys-dir "$SECRETIVE_PUBLIC_KEYS_DIR"
+	--standin "$SECRETIVE_STANDIN")
+if [[ -n "${COPILOT_SECRETIVE_PUBLIC_KEY:-}" ]]; then
+	retry+=(--public-key "$COPILOT_SECRETIVE_PUBLIC_KEY")
+fi
+if [[ -n "$job_id" ]]; then
+	retry+=(--ack-marker "__COPILOT_CS_ACK_${job_id}__")
+fi
+if [[ "$mode" == "ssh-sign" ]]; then
+	[[ $# -eq 1 && "$1" != -* ]] ||
+		die "ssh-sign requires exactly one remote command"
+	ssh_args+=(-A)
+	retry+=(--ssh-signing)
+fi
 
 case "$mode" in
-ssh)
-	# Only the exact, side-effect-free warm-up is replayable. Never retry an
-	# arbitrary command, an interactive shell, a copy, or a signing refusal.
-	if [[ $# -eq 1 && "$1" == "true" ]]; then
-		warm_codespace
-		exit $?
+ssh|ssh-sign)
+	# Interactive or option-led invocations retain their one-attempt semantics.
+	if [[ $# -eq 0 || "$1" == -* ]]; then
+		retry+=(--no-retry)
 	fi
-	exec gh codespace ssh -c "$codespace" -- "${ssh_args[@]}" "$@"
+	exec "${retry[@]}" -- gh codespace ssh -c "$codespace" -- "${ssh_args[@]}" "$@"
 	;;
 cp)
 	# Expansion avoids scp treating gh's protective quotes as literal path
 	# characters. Remote paths are restricted above before enabling it.
-	exec gh codespace cp -c "$codespace" --expand --recursive \
+	exec "${retry[@]}" -- gh codespace cp -c "$codespace" --expand --recursive \
 		-- "${ssh_args[@]}" "$@"
 	;;
 esac

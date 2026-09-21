@@ -1,2 +1,4 @@
+[tag]
+    gpgSign = true
 [url "git@github.com:github/"]
 	insteadOf = https://github.com/github/
