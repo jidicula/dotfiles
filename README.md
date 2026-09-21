@@ -5,6 +5,10 @@
 
 A collection of config dotfiles. All scripts are in `script/`: helpers end with `.sh` and [scripts to rule them all](https://github.com/github/scripts-to-rule-them-all) have no suffix.
 
+# Packages
+
+`Brewfile` contains shared Homebrew packages. `macos_Brewfile` adds macOS formulae and casks. `codespaces_Brewfile` adds Codespaces-specific Homebrew packages.
+
 # Steps
 
 1. `$ xcode-select --install`
