@@ -56,9 +56,10 @@ The main design choices are:
 3. **TRAMP for guarded file access, not arbitrary remote commands.** The daemon understands `/ghcs:` paths and allows edits only beneath `/workspaces/` in a Codespace.
 4. **A non-blocking command runner.** `copilot-cs-sh` starts SSH in a local child process, launches the remote work under `nohup` and `setsid`, and streams output into an Emacs buffer. MCP polling reads that local buffer instead of waiting synchronously on SSH.
 5. **Remote job persistence.** Scripts, logs, process ids, and exit status live under `~/.copilot-cs-jobs` in the Codespace. A job can be polled or reattached after a transport or session failure.
-6. **Secretive-only SSH authentication.** The transport pins the Secretive agent and identity with `IdentitiesOnly=yes`. It does not create or fall back to an on-disk private key.
+6. **Separate transport and endorsement identities.** Ordinary SSH pins an approval-free Secretive key with `IdentitiesOnly=yes` and `ForwardAgent=no`. A separate Touch ID-protected key signs reviewed commits only through the endorsement workflow; neither role falls back to an on-disk private key.
 7. **Local GitHub control-plane operations.** The operator's authenticated local `gh` creates and inspects Codespaces and pull requests. Repository commands run remotely; local credentials are never copied into the Codespace.
 8. **Codespace-native language intelligence.** Eglot keeps source buffers local to Emacs while running gopls, Sorbet, or Ruby LSP inside the Codespace over a dedicated Secretive-backed stdio process. Definitions, references, hover information, document symbols, and diagnostics therefore use the repository's remote checkout and dependencies.
+9. **Revision-specific human endorsement.** Agent commits remain unsigned until the operator reviews the draft and chooses its publication method. Every introduced commit is then reconstructed and individually signed, without flattening merges, dropping empty commits, or changing authorship.
 
 ## Workflow
 
@@ -73,8 +74,9 @@ When invoked, the skill:
 7. Points the dedicated Emacs runner at the immutable Codespace id and the discovered repository directory under `/workspaces/`.
 8. Uses Codespace-hosted Eglot servers for semantic navigation and diagnostics when working in Ruby or Go.
 9. Makes changes and runs builds, tests, linters, and other repository commands through detached `copilot-cs-*` jobs.
-10. Commits and pushes retained changes from the Codespace, then uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise.
-11. Leaves the Codespace running so its configured idle timeout can stop it.
+10. Commits and pushes retained changes unsigned from the Codespace, then uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise.
+11. Prompts for endorsement of the exact revision and a publication choice: an exact-head lease update when allowed, or a new `-signed` draft. Rejection or cancellation leaves the draft unendorsed. Replacement drafts are verified and linked before the original is closed.
+12. Leaves the resulting PR in draft and the Codespace running so its configured idle timeout can stop it.
 
 ## Requirements
 
@@ -85,13 +87,26 @@ The local machine needs:
 - Emacs and `emacsclient`;
 - [`socat`](http://www.dest-unreach.org/socat/);
 - Python 3 for the connection wrapper and direct MCP client;
-- [Secretive](https://github.com/maxgoedjen/secretive) with its SSH agent enabled and an active identity;
+- [Secretive](https://github.com/maxgoedjen/secretive) with distinct approval-free transport and Touch ID-protected endorsement keys;
 - [`patrickt/codespaces.el`](https://github.com/patrickt/codespaces.el) for the `/ghcs:` TRAMP method; and
 - an Emacs MCP server package providing `mcp-server` and `mcp-server-security`.
 
 The supplied daemon init resolves Emacs packages from a `straight.el` `straight/build/` directory. Adapt the load-path setup in [`setup/copilot-mcp-init.el`](setup/copilot-mcp-init.el) when using another package manager.
 
 The target GitHub repository must permit Codespaces and expose at least one machine type and development-container configuration. Semantic Ruby support requires Sorbet or Ruby LSP in the Codespace; semantic Go support requires gopls.
+
+Endorsement additionally requires Git, Python 3 with its full standard library, and OpenSSH's `ssh-keygen -Y sign`/`verify` locally and in the Codespace. A minimal Python package can report a version while lacking modules such as `json`; repair the runtime inside the Codespace if imports fail. Its initial implementation supports same-repository github.com draft PRs with complete history. Fork PRs, signed merge tags, and Git grafts/replacement objects stop with explicit errors. If repository rules prohibit unsigned draft branches, obtain a policy decision rather than signing agent work prematurely.
+
+### Secretive key roles
+
+| Role | Public-key alias | Use |
+|---|---|---|
+| Transport | `~/.ssh/secretive-codespaces-agent-sep-2026{,.pub}` | Unattended Codespace SSH, copies, and Eglot; no Touch ID requirement |
+| Endorsement | `~/.ssh/secretive-stormbreaker-github-sep-2026.pub` | Every reviewed commit; remains the signing key in `gitconfig-work` |
+
+Both transport paths are symlinks to the same Secretive-managed **public** key, not a private/public pair. Create these aliases when installing on another machine; never repoint Stormbreaker to the transport key. `COPILOT_SECRETIVE_STANDIN` and `COPILOT_SECRETIVE_PUBLIC_KEY` select transport paths; `COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY` independently selects the endorsement public key. The transport does not enumerate the agent or choose its first key, and fails if the roles overlap.
+
+Register the endorsement public key with GitHub as a **signing** key. The transport key does not need general GitHub SSH authentication registration for `gh codespace ssh`, and must not serve as the endorsement key. Keep user-presence protection enabled on Stormbreaker; **Leave Unlocked** may reuse approval rather than require fresh Touch ID for each signature. The signing transport explicitly pins both authentication and the forwarded agent socket to Secretive, regardless of the daemon's inherited `SSH_AUTH_SOCK`. Forwarding exposes the agent, not just one key, for the lifetime of the approved signing connection.
 
 ## Installation
 
@@ -128,6 +143,7 @@ The target GitHub repository must permit Codespaces and expose at least one mach
      setup/copilot-emacs-mcp-call \
      setup/copilot-ghcs \
      setup/copilot-gh-retry \
+     setup/copilot-cs-endorse \
      setup/copilot-issues-lock
    ```
 
@@ -193,7 +209,13 @@ The implementation deliberately fails closed:
 - MCP file edits are restricted to `/workspaces/` inside a `/ghcs:` remote.
 - Interactive Emacs prompts are inhibited because no person can answer a minibuffer prompt in the background daemon.
 - Secretive authentication failures do not fall back to another SSH identity.
-- Agent forwarding is opt-in through `copilot-cs-ssh-git`, requires operator approval, and signs with the selected public key without exporting a private key or changing global Git configuration. This preserves authors the Codespace API signer cannot sign for.
+- Agent forwarding is restricted to `copilot-cs-endorse "sign"` after the interactive revision-and-publication prompt. The old unrestricted `copilot-cs-ssh-git` API rejects calls. Planning, verification, pushes, copies, and reattachments do not forward the agent.
+- Agent jobs append process-scoped unsigned Git defaults before commands and after login profiles, preserving other Git configuration and child-process inheritance. Explicit Git flags can override defaults, so the skill also prohibits premature signing and checks initial agent commits. Manual Codespace sessions and local Git defaults are unchanged.
+- Every endorsement prompt starts with the full draft PR URL on its own line, repeated in ordinary chat immediately before the form so the review link is easy to find in scrollback. Revision details follow the review question, not the link.
+- Every approval binds the head, base, complete introduced commit range, key fingerprint, and publication options. Signing/pushing requires both the exact plan id and the operator's publication choice; none is selected automatically. Existing `-signed` branches are not overwritten.
+- Publication eligibility checks effective rulesets and classic branch protection separately. A ruleset can mark a branch `protected` without prohibiting rewrites; `protection.enabled: false` explicitly rules out classic protection. Rewrite-blocking rules and unreadable or ambiguous policy still suppress the in-place option.
+- In-place publication uses `--force-with-lease=<source-ref>:<reviewed-head>` only for that endorsement's explicit choice. New-branch publication uses an empty-expectation lease as a create-only compare-and-swap: it cannot replace an existing branch. Neither path uses unconditional `--force`, changes the original local branch, or deletes it.
+- Finalisation independently verifies the expected SSH key and the published commit content. Replacement draft metadata and signatures are checked before linking and closing the original. GitHub's generic verification badge alone is insufficient, and non-atomic PR/branch updates still require coordination with concurrent writers.
 - Git retains shared global defaults and conditionally includes Codespace credentials and commit signing. Host-only URL rewrites and automatic tag signing live in `gitconfig-local`, which `script/setup` hardlinks as `~/.gitconfig-local` only outside Codespaces. Synthetic test tags no longer inherit a requirement for the operator's unavailable signing key.
 - Minimal Codespace setup installs missing Git LFS before returning, so the shared configuration's required filters work even for `git status`. It does not disable filters to hide a missing dependency.
 - Local session artifacts use the explicit Secretive-backed copy transport. They do not gain access through Emacs' Codespace-only file guard; see the [session-patch workflow](references/emacs-tramp-patterns.md#transferring-session-patches).
@@ -214,9 +236,10 @@ The workflow is designed so a transport failure does not automatically discard t
 - `copilot-cs-attach` reconnects the local runner to an existing remote job.
 - Polling automatically reconnects only acknowledged jobs, using their original Codespace. A connection that ends before acknowledgement keeps its original diagnostics and an explicitly unconfirmed remote outcome; it is not silently replaced with a missing-log error or retried as a new command.
 - `copilot-ghcs` retries complete, known API/SSH startup failures at most twice, with five- and ten-second backoff, including on the first task and before a copy. It requires proof that `gh` failed before dispatch and no stdout; missing acknowledgement alone is never enough. Remote command/transfer failures, authentication refusals, and interactive shells are never replayed.
-- A shared advisory gate covers Secretive identity discovery, public-key link preparation, and SSH handshakes until OpenSSH confirms public-key authentication, remote output arrives, or the connection exits. Links are replaced atomically only when necessary; queued connections cannot replace an active identity or contact the agent while another handshake holds the gate. Authenticated copies no longer monopolise the gate until transfer completion.
+- A shared advisory gate covers pinned-key validation, public-key link preparation, and SSH handshakes until OpenSSH confirms public-key authentication, remote output arrives, or the connection exits. Links are replaced atomically only when necessary; queued connections cannot replace an active identity or contact the agent while another handshake holds the gate. Authenticated copies no longer monopolise the gate until transfer completion.
 - Three consecutive pre-authentication signing refusals pause new and already queued connections across sessions and Codespaces sharing that gate. They fail before SSH/SCP dispatch with status 75; already authenticated work continues. After explicit operator approval, `setup/copilot-ghcs resume-auth --operator-approved` clears the refusal count without replaying any command or changing credentials.
-- Queueing, `ssh-add -L` identity discovery, connection setup, and safe retries share one 120-second startup budget. Runner connections must receive their exact acknowledgement within it. Discovery timeouts report that no SSH/SCP command was dispatched; later timeouts preserve an unconfirmed remote outcome and never replay the command. Acknowledged jobs and authenticated copies have no arbitrary runtime limit. SSH keepalives detect an unresponsive server after approximately 45 seconds, but cannot diagnose a stalled application on an otherwise responsive server.
+- Queueing, pinned-key preparation, connection setup, and safe retries share one 120-second startup budget. Runner connections must receive their exact acknowledgement within it. Timeouts preserve an unconfirmed remote outcome and never replay the command. Acknowledged jobs and authenticated copies have no arbitrary runtime limit. SSH keepalives detect an unresponsive server after approximately 45 seconds, but cannot diagnose a stalled application on an otherwise responsive server.
+- Endorsement records live in the repository's Git common directory under `copilot-endorsements/`. Completed receipts can be verified and publication resumed without re-signing. Partial signing failures create no signed branch and are never replayed automatically. A forwarded socket disappears with its connection even though the detached signing process may still exist; inspect its original log before an operator-approved retry.
 - Returning job reports restore their own default output id after re-entrant waits, so immediate parallel reads cannot substitute another invocation's output. Explicit ids remain required across separate MCP calls.
 - Re-entrant waits share the earliest active deadline, so queued MCP requests cannot extend an outer call past its wait budget. A zero-second wait drains only its own stream without servicing another request or timer.
 - `copilot-cs-tty-sh` supplies a remote PTY for non-interactive terminal-only hooks, preserves their exit status, and keeps the local SSH stream a pipe.
@@ -225,7 +248,7 @@ The workflow is designed so a transport failure does not automatically discard t
 - `copilot-cs-stop` cancels the full descendant tree, escalates processes that ignore `SIGTERM`, and preserves the supervisor's exit-code reporting. Its cancellation job reports failure if descendants remain alive.
 - `copilot-emacs-mcp-call` is the canonical entrypoint, performing the MCP initialization and `tools/call` exchange without depending on Copilot's in-memory native-tool registry.
 
-The direct client is protocol-aware: unlike piping one JSON-RPC line into the bridge, it keeps stdin open until the matching response arrives. Its bounded byte-stream reader handles coalesced notifications and incomplete frames. It never automatically resubmits an evaluation; a timed-out mutation must be checked through the job registry first.
+The direct client is protocol-aware: unlike piping one JSON-RPC line into the bridge, it keeps stdin open until the matching response arrives. Its bounded byte-stream reader handles coalesced notifications and incomplete frames. Protocol errors, `isError` results, and the Emacs provider's bare `Error:` diagnostics produce nonzero exit statuses; quoted successful string results remain data. It never automatically resubmits an evaluation; a timed-out mutation must be checked through the job registry first.
 
 ## Components
 
@@ -236,6 +259,7 @@ The direct client is protocol-aware: unlike piping one JSON-RPC line into the br
 | [`setup/copilot-emacs-mcp`](setup/copilot-emacs-mcp) | Per-session daemon launcher and resilient stdio-to-Unix-socket bridge |
 | [`setup/copilot-mcp-init.el`](setup/copilot-mcp-init.el) | Minimal `emacs -Q` configuration, MCP server, TRAMP guards, and daemon watchdog |
 | [`setup/copilot-cs-jobs.el`](setup/copilot-cs-jobs.el) | Non-blocking detached Codespace command runner and job registry |
+| [`setup/copilot-cs-endorse`](setup/copilot-cs-endorse) | Exact-revision signing, per-endorsement publication choice, and verified draft replacement |
 | [`setup/copilot-cs-stop`](setup/copilot-cs-stop) | Scoped process-tree cancellation, escalation, and stale-PID protection |
 | [`setup/copilot-cs-eglot.el`](setup/copilot-cs-eglot.el) | Shared Eglot configuration, remote language-server transport, and semantic query helpers |
 | [`setup/copilot-ghcs`](setup/copilot-ghcs) | Secretive-only wrapper for Codespace SSH and copies |
@@ -252,7 +276,7 @@ Run the local regression cases with the existing Python, Emacs, Git, and shell t
 python3 -m unittest discover -s skills/codespace-tramp/tests -v
 ```
 
-The cases cover local-only Git config and tag signing, Codespace Git defaults and LFS installation, pre-dispatch retry boundaries, gated identity preparation, opt-in forwarding, exact job ids, deadlines, MCP framing, re-entrant output isolation, remote PTYs, daemon refresh, and process-tree cancellation. Package installation, authentication, and bridge subprocesses use isolated fixtures; cancellation runs against disposable local jobs.
+The cases cover local-only Git config and tag signing, unsigned agent jobs, key-role separation, approval gates, signature verification, preserved merge/empty-commit history, lease races, safe PR replacement/recovery, Codespace LFS installation, pre-dispatch retry boundaries, exact job ids, deadlines, MCP framing, re-entrant output isolation, remote PTYs, daemon refresh, and process-tree cancellation. Signing uses disposable test keys and a dedicated temporary SSH agent, never Secretive. Git remotes and GitHub API responses are isolated fixtures; no real PR, branch, or account is mutated.
 
 ## Reporting problems
 

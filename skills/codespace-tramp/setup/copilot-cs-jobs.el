@@ -176,6 +176,7 @@ over this same connection."
          ;; message interpolates nothing and has no quoting surface at all.
          (script (concat
                   (when copilot-cs-id "export LANG=\"${LANG:-C.UTF-8}\"\n")
+                  (when copilot-cs-id (copilot-cs--unsigned-git-environment))
                   (format "cd %s || { printf '%%s\\n' 'copilot-cs: cannot enter \
 the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n"
                           (shell-quote-argument workdir) command)))
@@ -203,13 +204,33 @@ the target directory -- set it with (copilot-cs-use ...)' >&2; exit 127; }\n%s\n
      "sleep 1; "
      "exec tail -c +1 -F " dir "/" id ".log")))
 
+(defun copilot-cs--unsigned-git-environment ()
+  "Return process-scoped Git overrides for unreviewed agent work."
+  (concat
+   "_copilot_git_count=${GIT_CONFIG_COUNT:-0}; "
+   "case $_copilot_git_count in *[!0-9]*|'') "
+   "printf '%s\\n' 'copilot-cs: invalid GIT_CONFIG_COUNT' >&2; exit 125;; esac; "
+   "while [ \"$_copilot_git_count\" != 0 ] && "
+   "[ \"${_copilot_git_count#0}\" != \"$_copilot_git_count\" ]; do "
+   "_copilot_git_count=${_copilot_git_count#0}; done; "
+   "[ ${#_copilot_git_count} -le 6 ] || { "
+   "printf '%s\\n' 'copilot-cs: GIT_CONFIG_COUNT exceeds the environment limit' >&2; exit 125; }; "
+   "export \"GIT_CONFIG_KEY_$_copilot_git_count=commit.gpgsign\" "
+   "\"GIT_CONFIG_VALUE_$_copilot_git_count=false\"; "
+   "_copilot_git_count=$((_copilot_git_count + 1)); "
+   "export \"GIT_CONFIG_KEY_$_copilot_git_count=tag.gpgsign\" "
+   "\"GIT_CONFIG_VALUE_$_copilot_git_count=false\"; "
+   "GIT_CONFIG_COUNT=$((_copilot_git_count + 1)); export GIT_CONFIG_COUNT; "
+   "unset _copilot_git_count;\n"))
+
 (defun copilot-cs--login-shell-command (command)
   "Return a login-shell wrapper that runs COMMAND in the current directory."
   ;; Sourced profiles can interpret the login shell's arguments as commands.
   (format "env COPILOT_CS_LOGIN_DIR=\"$(pwd -P)\" bash -lc %s copilot-cs-login"
           (shell-quote-argument
-           (concat "cd \"$COPILOT_CS_LOGIN_DIR\" && unset COPILOT_CS_LOGIN_DIR "
-                   "&& exec sh -c " (shell-quote-argument command)))))
+           (concat "cd \"$COPILOT_CS_LOGIN_DIR\" || exit; unset COPILOT_CS_LOGIN_DIR; "
+                   (when copilot-cs-id (copilot-cs--unsigned-git-environment))
+                   "exec sh -c " (shell-quote-argument command)))))
 
 (defun copilot-cs--login-required-p (command)
   "Return non-nil when COMMAND contains a Git operation needing login state."
@@ -412,8 +433,8 @@ active deadline instead of extending the caller's wait."
       ('done (format "job=%s state=done rc=%d elapsed=%.1fs" id rc elapsed))
       ('connecting
        (format "job=%s state=connecting elapsed=%.1fs -- waiting for the \
-Codespace connection or Secretive approval; no remote job has been \
-acknowledged yet; approve Secretive, then poll with \
+Codespace connection or authentication; no remote job has been \
+acknowledged yet; inspect connection diagnostics, then poll with \
 (copilot-cs-poll \"%s\")" id elapsed id))
       ('running
        (format "job=%s state=running elapsed=%.1fs -- still going; \
@@ -487,30 +508,60 @@ exit 127; }; timeout --verbose --kill-after=5s %ds %s"
            seconds (copilot-cs--login-shell-command command))
    command wait))
 
-(defun copilot-cs-ssh-git (arguments &optional wait)
-  "Run Git ARGUMENTS with explicitly approved Secretive SSH-agent forwarding.
-ARGUMENTS is a nonempty list of strings. Git signs with the transport's pinned
-public key, preserving original authors. Configuration overrides apply only
-to this Git invocation; ordinary jobs and copies never forward the agent.
-Requires operator approval of agent access from the Codespace, a registered
-SSH signing public key, and Git with SSH-signing support."
+(defun copilot-cs-ssh-git (_arguments &optional _wait)
+  "Reject the retired unrestricted signing API."
+  (user-error "Create a draft PR and use `copilot-cs-endorse' after revision-specific approval"))
+
+(defun copilot-cs-endorse (action data &optional approved-plan wait tty)
+  "Run endorsement ACTION using DATA inside the selected Codespace.
+ACTION is \"plan\", \"sign\", \"verify\", or \"push\".  DATA is the local
+prepare command's JSON request for \"plan\", otherwise the exact plan id.
+Signing and pushing require APPROVED-PLAN to be \"ID:replacement\" or
+\"ID:replace\", matching the revision and publication method explicitly chosen
+by the operator.  Only \"sign\" forwards the agent.  WAIT is a polling budget.
+For \"push\" only, TTY supplies a remote PTY for terminal-dependent hooks."
   (unless (and copilot-cs-configured copilot-cs-id)
-    (error "copilot-cs: SSH signing requires an explicitly selected Codespace"))
-  (unless (and (consp arguments) (proper-list-p arguments)
-               (seq-every-p #'stringp arguments))
-    (error "copilot-cs: Git arguments must be a nonempty list of strings"))
-  (let* ((args (mapconcat #'shell-quote-argument arguments " "))
-         (command
-          (concat
-           "test -S \"${COPILOT_CS_SIGNING_SOCKET:-}\" && "
-           "test -n \"${COPILOT_CS_SIGNING_KEY:-}\" || { "
-           "printf '%s\\n' 'copilot-cs: forwarded Secretive signing identity is unavailable' >&2; "
-           "exit 127; }; "
-           "SSH_AUTH_SOCK=\"$COPILOT_CS_SIGNING_SOCKET\" exec git "
-           "-c gpg.format=ssh -c gpg.ssh.program=ssh-keygen "
-           "-c user.signingkey=\"key::$COPILOT_CS_SIGNING_KEY\" " args)))
-    (copilot-cs--run (copilot-cs--login-shell-command command)
-                    (concat "git (Secretive SSH signing) " args) wait t)))
+    (error "copilot-cs: endorsement requires an explicitly selected Codespace"))
+  (unless (and (member action '("plan" "sign" "verify" "push")) (stringp data))
+    (error "copilot-cs: invalid endorsement action or data"))
+  (when (and tty (not (equal action "push")))
+    (error "copilot-cs: an endorsement PTY is only available for publication hooks"))
+  (unless (or (equal action "plan")
+              (string-match-p "\\`[0-9a-f]\\{64\\}\\'" data))
+    (error "copilot-cs: expected the complete endorsement plan id"))
+  (when (and (member action '("sign" "push"))
+             (not (member approved-plan (list (concat data ":replacement")
+                                              (concat data ":replace")))))
+    (error "copilot-cs: explicit approval of this plan and publication method is required"))
+  (let* ((program (with-temp-buffer
+                    (insert-file-contents
+                     (expand-file-name "copilot-cs-endorse" copilot-cs-setup-dir))
+                    (buffer-string)))
+         ;; Encode once instead of multiplying shell escapes through login/PTY layers.
+         (arguments (append
+                     (list "python3" "-c"
+                           (concat "import base64, sys; "
+                                   "exec(compile(base64.b64decode(sys.argv.pop(1)), "
+                                   "'copilot-cs-endorse', 'exec'))")
+                           (base64-encode-string (encode-coding-string program 'utf-8) t)
+                           action
+                           (if (equal action "plan") "--request" "--plan") data)
+                     (when (member action '("sign" "push"))
+                       (list "--approve-plan" approved-plan))))
+         (command (mapconcat #'shell-quote-argument arguments " ")))
+    (copilot-cs--run (if tty (copilot-cs--tty-shell-command command)
+                      (copilot-cs--login-shell-command command))
+                    (concat "endorsement " action) wait (equal action "sign"))))
+
+(defun copilot-cs-endorsement-result (id)
+  "Return the complete JSON result from successful endorsement job ID."
+  (let ((job (copilot-cs--job id)))
+    (unless (equal (copilot-cs--rc job) 0)
+      (error "copilot-cs: endorsement job has not completed successfully"))
+    (let ((output (copilot-cs-output id)))
+      (unless (string-match "^COPILOT_ENDORSEMENT_RESULT \\({.*}\\)$" output)
+        (error "copilot-cs: endorsement result is missing"))
+      (match-string 1 output))))
 
 (defun copilot-cs-sh (command &optional wait)
   "Run COMMAND in the Codespace and report what happened.

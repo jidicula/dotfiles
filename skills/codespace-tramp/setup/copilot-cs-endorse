@@ -1,0 +1,596 @@
+#!/usr/bin/env python3
+"""Plan, sign, and publish a revision-specific Codespace endorsement."""
+
+import argparse
+import base64
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+from urllib.parse import quote
+
+
+SIGNING_ALIAS = "~/.ssh/secretive-stormbreaker-github-sep-2026.pub"
+RESULT_PREFIX = "COPILOT_ENDORSEMENT_RESULT "
+OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+PLAN_ID = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def digest(value):
+    return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def public_key(value):
+    require(isinstance(value, str), "expected an OpenSSH public-key string")
+    lines = value.strip().splitlines()
+    fields = lines[0].split() if len(lines) == 1 else []
+    require(len(fields) >= 2 and re.fullmatch(r"(?:ssh-|ecdsa-|sk-)[\w@.+-]+", fields[0]),
+            "expected one OpenSSH public key")
+    blob = base64.b64decode(fields[1], validate=True)
+    require(len(blob) > 4, "invalid SSH public key")
+    length = int.from_bytes(blob[:4], "big")
+    require(blob[4:4 + length] == fields[0].encode(), "SSH public-key algorithm mismatch")
+    return " ".join(fields[:2])
+
+
+def fingerprint(key):
+    blob = base64.b64decode(public_key(key).split()[1], validate=True)
+    return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+
+
+def run(arguments, *, data=None, env=None, timeout=120, echo=False):
+    result = subprocess.run(arguments, input=data, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, env=env, timeout=timeout)
+    if echo:
+        sys.stdout.write(result.stdout.decode("utf-8", errors="replace"))
+        sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
+    if result.returncode:
+        raise RuntimeError(
+            f"{arguments[0]} failed ({result.returncode}): "
+            + result.stderr.decode("utf-8", errors="replace").strip()
+        )
+    return result.stdout
+
+
+def github(endpoint, method="GET", data=None):
+    arguments = ["gh", "api", "--hostname", "github.com", "--method", method, endpoint]
+    if data is not None:
+        arguments += ["--input", "-"]
+    return json.loads(run(arguments, data=canonical(data).encode() if data is not None else None))
+
+
+def github_pages(endpoint):
+    pages = json.loads(run([
+        "gh", "api", "--hostname", "github.com", "--paginate", "--slurp", endpoint,
+    ]))
+    require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
+            "invalid paginated GitHub response")
+    return [item for page in pages for item in page]
+
+
+def validate_request(request):
+    require(isinstance(request, dict), "expected an endorsement request object")
+    require(request.get("version") == 1, "unsupported endorsement request version")
+    require(isinstance(request.get("repository"), str)
+            and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]),
+            "invalid repository")
+    require(type(request.get("pr")) is int and request["pr"] > 0, "invalid pull request")
+    require(request.get("url") == f"https://github.com/{request['repository']}/pull/{request['pr']}",
+            "pull-request URL does not match the repository")
+    for field in ("head", "base"):
+        require(isinstance(request.get(field), str) and OID.fullmatch(request[field]),
+                f"invalid {field} object id")
+    for field in ("source_branch", "base_branch", "target_branch"):
+        require(isinstance(request.get(field), str), f"missing {field}")
+        run(["git", "check-ref-format", "refs/heads/" + request[field]])
+    require(request["source_branch"] != request["base_branch"], "cannot endorse the base branch")
+    require(request["target_branch"] == request["source_branch"] + "-signed",
+            "signed branch must append -signed to the source branch")
+    require(request.get("publication_options") in (["replacement"], ["replacement", "replace"]),
+            "invalid publication options")
+    require(request.get("key") == public_key(request.get("key", "")), "noncanonical signing key")
+    require(request.get("fingerprint") == fingerprint(request["key"]), "signing fingerprint mismatch")
+
+
+def pull_request(repository, number):
+    pr = github(f"repos/{repository}/pulls/{number}")
+    require(pr["head"]["repo"] is not None
+            and pr["head"]["repo"]["full_name"] == repository
+            and pr["base"]["repo"]["full_name"] == repository,
+            "endorsement currently requires a same-repository pull request")
+    require(pr["draft"] and not pr["merged"], "endorsement requires an unmerged draft pull request")
+    return pr
+
+
+def replacement_allowed(repository, branch):
+    """Return false on prohibited or uncertain history replacement."""
+    path = quote(branch, safe="")
+    try:
+        rules = github(f"repos/{repository}/rules/branches/{path}")
+        require(isinstance(rules, list), "invalid branch-rule response")
+        if any(rule.get("type") == "non_fast_forward" for rule in rules):
+            return False
+        branch_info = github(f"repos/{repository}/branches/{path}")
+        # Rulesets can mark a branch protected without enabling classic protection.
+        summary = branch_info.get("protection")
+        classic_disabled = isinstance(summary, dict) and summary.get("enabled") is False
+        if not branch_info["protected"] or classic_disabled:
+            return True
+        protection = github(f"repos/{repository}/branches/{path}/protection")
+        return protection.get("allow_force_pushes", {}).get("enabled") is True
+    except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+        print(f"[copilot-cs-endorse] rewrite permission is uncertain; "
+              f"only the replacement-draft option is available: {error}",
+              file=sys.stderr)
+        return False
+
+
+def prepare(repository, number, key_path):
+    pr = pull_request(repository, number)
+    require(pr["state"] == "open", "the original draft PR is not open")
+    key = public_key(Path(key_path).expanduser().read_text())
+    source = pr["head"]["ref"]
+    request = {
+        "version": 1, "repository": repository, "pr": number, "url": pr["html_url"],
+        "source_branch": source, "target_branch": source + "-signed",
+        "base_branch": pr["base"]["ref"], "head": pr["head"]["sha"], "base": pr["base"]["sha"],
+        "publication_options": ["replacement"] + (
+            ["replace"] if replacement_allowed(repository, source) else []),
+        "key": key, "fingerprint": fingerprint(key),
+    }
+    validate_request(request)
+    return request
+
+
+class Repository:
+    def __init__(self):
+        self.env = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1", GIT_OPTIONAL_LOCKS="0",
+                        GIT_TERMINAL_PROMPT="0")
+        self.root = self.git("rev-parse", "--show-toplevel").decode().strip()
+        require(self.git("rev-parse", "--is-shallow-repository").strip() == b"false",
+                "endorsement requires complete history, not a shallow checkout")
+        common = Path(self.git("rev-parse", "--git-common-dir").decode().strip()).resolve()
+        require(not (common / "info" / "grafts").exists(), "Git grafts are not supported")
+        require(not self.git("for-each-ref", "--format=%(refname)", "refs/replace").strip(),
+                "Git replacement objects are not supported")
+        self.state = common / "copilot-endorsements"
+        self.state.mkdir(mode=0o700, exist_ok=True)
+
+    def git(self, *arguments, data=None):
+        pushing = arguments[0] == "push"
+        return run(["git", *arguments], data=data, env=self.env, echo=pushing,
+                   timeout=None if pushing else 120)
+
+    def ref(self, name):
+        return self.git("rev-parse", "--verify", name).decode().strip()
+
+    def validate_origin(self, request):
+        expected = request["repository"].lower()
+        for options in (("--all",), ("--push", "--all")):
+            urls = self.git("remote", "get-url", *options, "origin").decode().splitlines()
+            require(len(urls) == 1, "origin must have exactly one fetch and one push URL")
+            match = re.fullmatch(
+                r"(?:https://github\.com/|git@github\.com:)(.+?)(?:\.git)?/?", urls[0])
+            require(match and match[1].lower() == expected,
+                    "origin fetch/push URL does not match the reviewed GitHub repository")
+        settings = self.git("config", "--get-regexp", r"^remote\.origin\.")
+        if any(line.startswith(b"remote.origin.mirror ") for line in settings.splitlines()):
+            require(self.git("config", "--bool", "--get", "remote.origin.mirror").strip() == b"false",
+                    "a mirror remote cannot publish an endorsement")
+
+    def remote_refs(self, request):
+        self.validate_origin(request)
+        output = self.git("ls-remote", "--heads", "origin",
+                          *("refs/heads/" + request[field] for field in
+                            ("source_branch", "base_branch", "target_branch")))
+        return {line.split()[1]: line.split()[0] for line in output.decode().splitlines()}
+
+    def snapshot(self, request, *, published=None, publication=None):
+        validate_request(request)
+        require(self.ref("refs/heads/" + request["source_branch"]) == request["head"],
+                "local source branch changed; obtain a new endorsement")
+        refs = self.remote_refs(request)
+        require(refs.get("refs/heads/" + request["base_branch"]) == request["base"],
+                "remote base changed; obtain a new endorsement")
+        expected = published if published and publication == "replace" else request["head"]
+        require(refs.get("refs/heads/" + request["source_branch"]) == expected,
+                "remote source branch changed; obtain a new endorsement")
+        return refs
+
+    def commits(self, request):
+        return self.git("rev-list", "--reverse", "--topo-order",
+                        request["head"], "^" + request["base"]).decode().splitlines()
+
+    def commit(self, oid):
+        require(isinstance(oid, str) and OID.fullmatch(oid), "invalid commit object id")
+        raw = self.git("cat-file", "commit", oid)
+        header, separator, message = raw.partition(b"\n\n")
+        require(separator, "invalid commit encoding")
+        blocks = []
+        for line in header.split(b"\n"):
+            if line.startswith(b" "):
+                require(blocks, "invalid commit continuation")
+                blocks[-1] += b"\n" + line
+            else:
+                blocks.append(line)
+        require(not any(block.startswith(b"mergetag ") for block in blocks),
+                "signed merge tags require manual handling; no commits were published")
+        return blocks, message
+
+    def payload(self, oid, mapping):
+        blocks, message = self.commit(oid)
+        rewritten = []
+        for block in blocks:
+            if block.startswith((b"gpgsig ", b"gpgsig-sha256 ")):
+                continue
+            if block.startswith(b"parent "):
+                parent = block[7:].decode("ascii")
+                block = b"parent " + mapping.get(parent, parent).encode("ascii")
+            rewritten.append(block)
+        return b"\n".join(rewritten) + b"\n\n" + message
+
+    def write_record(self, name, value):
+        path = self.state / name
+        if path.exists():
+            require(json.loads(path.read_text()) == value, f"conflicting endorsement record: {name}")
+            return
+        with tempfile.NamedTemporaryFile(mode="w", dir=self.state) as output:
+            output.write(canonical(value))
+            output.flush()
+            os.fsync(output.fileno())
+            try:
+                os.link(output.name, path)
+            except FileExistsError:
+                require(json.loads(path.read_text()) == value, f"concurrent endorsement record: {name}")
+
+    def load_plan(self, plan_id):
+        require(isinstance(plan_id, str) and PLAN_ID.fullmatch(plan_id), "invalid plan id")
+        plan = json.loads((self.state / f"{plan_id}.plan.json").read_text())
+        require(digest(plan) == plan_id, "endorsement plan changed")
+        validate_request(plan["request"])
+        require(plan["root"] == self.root, "select the worktree where this plan was reviewed")
+        require(plan["commits"] == self.commits(plan["request"]), "reviewed commit range changed")
+        return plan
+
+    def plan(self, request):
+        self.snapshot(request)
+        require(not self.git("status", "--porcelain", "--untracked-files=no").strip(),
+                "commit or set aside tracked worktree changes before requesting endorsement")
+        commits = self.commits(request)
+        require(commits, "the draft PR introduces no commits")
+        for oid in commits:
+            self.commit(oid)
+        plan = {"request": request, "root": self.root, "commits": commits}
+        plan_id = digest(plan)
+        target = "refs/heads/" + request["target_branch"]
+        exists = self.git("for-each-ref", "--format=%(refname)", target).decode().splitlines()
+        require(target not in exists or (self.state / f"{plan_id}.receipt.json").exists(),
+                "the signed branch already exists; do not overwrite it")
+        self.write_record(f"{plan_id}.plan.json", plan)
+        return {"plan_id": plan_id, **plan}
+
+    def verify(self, plan_id):
+        plan = self.load_plan(plan_id)
+        receipt = json.loads((self.state / f"{plan_id}.receipt.json").read_text())
+        require(receipt.get("plan_id") == plan_id and receipt.get("plan") == plan,
+                "receipt does not match the reviewed plan")
+        require(receipt.get("publication") in plan["request"]["publication_options"],
+                "receipt has no approved publication method")
+        mapping = receipt["mapping"]
+        require(isinstance(mapping, dict) and set(mapping) == set(plan["commits"]),
+                "signed commit mapping is incomplete")
+        for index, original in enumerate(plan["commits"], 1):
+            print(f"[copilot-cs-endorse] verifying {index}/{len(plan['commits'])}: {original}",
+                  flush=True)
+            signed = mapping[original]
+            require(self.payload(signed, {}) == self.payload(original, mapping),
+                    f"signed commit content or metadata differs: {original}")
+            blocks, _ = self.commit(signed)
+            signatures = [block[7:].replace(b"\n ", b"\n") + b"\n"
+                          for block in blocks if block.startswith(b"gpgsig ")]
+            require(len(signatures) == 1, "signed commit must have exactly one endorsement")
+            verify_signature(plan["request"]["key"], self.payload(signed, {}), signatures[0])
+        require(receipt["head"] == mapping[plan["request"]["head"]], "invalid signed head")
+        return receipt
+
+    @contextmanager
+    def locked_plan(self, plan_id):
+        require(isinstance(plan_id, str) and PLAN_ID.fullmatch(plan_id), "invalid plan id")
+        lock = os.open(self.state / f"{plan_id}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ValueError("this endorsement is already running; inspect its job") from error
+            yield
+        finally:
+            os.close(lock)
+
+    def sign(self, plan_id, approval):
+        plan = self.load_plan(plan_id)
+        request = plan["request"]
+        publication = approved_publication(plan_id, request, approval)
+        with self.locked_plan(plan_id):
+            receipt_path = self.state / f"{plan_id}.receipt.json"
+            if receipt_path.exists():
+                receipt = self.verify(plan_id)
+                require(receipt["publication"] == publication,
+                        "publication choice differs from the existing endorsement; operator decision required")
+                remote_head = self.remote_refs(request).get("refs/heads/" + request["source_branch"])
+                self.snapshot(request, publication=publication,
+                              published=receipt["head"] if remote_head == receipt["head"] else None)
+            else:
+                self.snapshot(request)
+                key = public_key(os.environ.get("COPILOT_CS_SIGNING_KEY", ""))
+                require(key == request["key"], "forwarded signing key does not match the reviewed plan")
+                socket = os.environ.get("COPILOT_CS_SIGNING_SOCKET", "")
+                require(socket and Path(socket).is_socket(), "forwarded Secretive socket is unavailable")
+                environment = dict(self.env, SSH_AUTH_SOCK=socket)
+                mapping = {}
+                with tempfile.TemporaryDirectory(prefix="copilot-endorse-") as directory:
+                    key_file = Path(directory) / "endorsement.pub"
+                    key_file.write_text(key + "\n")
+                    for index, original in enumerate(plan["commits"], 1):
+                        print(f"[copilot-cs-endorse] signing {index}/{len(plan['commits'])}: {original}",
+                              flush=True)
+                        payload = self.payload(original, mapping)
+                        signature = run(
+                            ["ssh-keygen", "-Y", "sign", "-n", "git", "-f", str(key_file)],
+                            data=payload, env=environment,
+                        )
+                        verify_signature(key, payload, signature)
+                        mapping[original] = self.git(
+                            "hash-object", "-t", "commit", "-w", "--stdin",
+                            data=signed_commit(payload, signature),
+                        ).decode().strip()
+                self.snapshot(request)
+                receipt = {"plan_id": plan_id, "plan": plan, "mapping": mapping,
+                           "publication": publication,
+                           "head": mapping[request["head"]]}
+                self.write_record(f"{plan_id}.receipt.json", receipt)
+                self.verify(plan_id)
+            target = "refs/heads/" + request["target_branch"]
+            current = self.git("for-each-ref", "--format=%(objectname)", target).decode().strip()
+            require(not current or current == receipt["head"], "signed branch collision; nothing overwritten")
+            if not current:
+                self.git("update-ref", target, receipt["head"], "0" * len(receipt["head"]))
+            return receipt
+
+    def push(self, plan_id, approval):
+        with self.locked_plan(plan_id):
+            receipt = self.verify(plan_id)
+            request = receipt["plan"]["request"]
+            publication = approved_publication(plan_id, request, approval)
+            destination = request["source_branch"] if publication == "replace" else request["target_branch"]
+            target = "refs/heads/" + destination
+            refs = self.remote_refs(request)
+            other = request["target_branch"] if publication == "replace" else request["source_branch"]
+            require(refs.get("refs/heads/" + other) != receipt["head"],
+                    "the other publication method already published this endorsement; inspect it before proceeding")
+            receipt = dict(receipt, publication=publication)
+            if refs.get(target) != receipt["head"]:
+                self.snapshot(request)
+                expected = request["head"] if publication == "replace" else ""
+                require(refs.get(target, "") == expected, "remote destination changed; nothing overwritten")
+                # An empty expectation creates a new ref only; it cannot rewrite an existing branch.
+                self.git("push", "--porcelain", "--no-follow-tags", "--recurse-submodules=check",
+                         f"--force-with-lease={target}:{expected}",
+                         "origin", f"{receipt['head']}:{target}")
+            require(self.remote_refs(request).get(target) == receipt["head"],
+                    "remote head was not confirmed after pushing")
+            self.snapshot(request, published=receipt["head"], publication=publication)
+            self.write_record(f"{plan_id}.{publication}.published.json", receipt)
+            return receipt
+
+
+def signed_commit(payload, signature):
+    header, separator, message = payload.partition(b"\n\n")
+    require(separator, "invalid signed commit payload")
+    return (header + b"\ngpgsig " + signature.rstrip(b"\n").replace(b"\n", b"\n ")
+            + b"\n\n" + message)
+
+
+def verify_signature(key, payload, signature):
+    with tempfile.TemporaryDirectory(prefix="copilot-verify-") as directory:
+        allowed = Path(directory) / "allowed"
+        signed = Path(directory) / "signature"
+        allowed.write_text("endorser " + public_key(key) + "\n")
+        signed.write_bytes(signature)
+        run(["ssh-keygen", "-Y", "verify", "-f", str(allowed),
+             "-I", "endorser", "-n", "git", "-s", str(signed)], data=payload)
+
+
+def approved_publication(plan_id, request, approval):
+    for publication in request["publication_options"]:
+        if approval == f"{plan_id}:{publication}":
+            return publication
+    raise ValueError("explicit approval of this exact plan AND publication method is required")
+
+
+def full_references(text, repository):
+    text = re.sub(r"(?<![\w/])(?:([\w.-]+/[\w.-]+))?#(\d+)\b",
+                  lambda match: f"https://github.com/{match[1] or repository}/issues/{match[2]}",
+                  text.replace("\r\n", "\n"))
+    return re.sub(r"\b(PR|pull request|issue)\s+(\d+)\b",
+                  lambda match: f"{match[1]} https://github.com/{repository}/"
+                  f"{'issues' if match[1].lower() == 'issue' else 'pull'}/{match[2]}",
+                  text, flags=re.I)
+
+
+def pull_metadata(pr):
+    return {
+        "labels": sorted(label["name"] for label in pr["labels"]),
+        "assignees": sorted(user["login"] for user in pr["assignees"]),
+        "milestone": pr["milestone"]["number"] if pr["milestone"] else None,
+    }
+
+
+def finish(receipt, approval):
+    require(isinstance(receipt, dict) and isinstance(receipt.get("plan"), dict),
+            "expected an endorsement receipt")
+    plan = receipt["plan"]
+    plan_id = digest(plan)
+    require(plan_id == receipt["plan_id"], "receipt plan digest does not match")
+    request = plan["request"]
+    validate_request(request)
+    publication = approved_publication(plan_id, request, approval)
+    require(receipt["publication"] == publication, "publication choice differs from the signed receipt")
+    repository = request["repository"]
+    require(set(receipt["mapping"]) == set(plan["commits"])
+            and receipt["head"] == receipt["mapping"].get(request["head"]),
+            "incomplete signed commit receipt")
+    pr = pull_request(repository, request["pr"])
+    expected = receipt["head"] if publication == "replace" else request["head"]
+    require(pr["head"]["sha"] == expected and pr["base"]["sha"] == request["base"]
+            and pr["head"]["ref"] == request["source_branch"]
+            and pr["base"]["ref"] == request["base_branch"], "PR changed after endorsement")
+    target = request["source_branch"] if publication == "replace" else request["target_branch"]
+    branch = github(f"repos/{repository}/branches/{quote(target, safe='')}")
+    require(branch["commit"]["sha"] == receipt["head"], "published signed branch changed")
+    for original in plan["commits"]:
+        before = github(f"repos/{repository}/git/commits/{original}")
+        after = github(f"repos/{repository}/git/commits/{receipt['mapping'][original]}")
+        require(before["tree"]["sha"] == after["tree"]["sha"]
+                and all(before[field] == after[field] for field in ("message", "author", "committer"))
+                and [receipt["mapping"].get(parent["sha"], parent["sha"]) for parent in before["parents"]]
+                == [parent["sha"] for parent in after["parents"]],
+                f"published commit differs from reviewed commit: {original}")
+        verification = after["verification"]
+        require(verification["verified"] and verification.get("signature") and verification.get("payload"),
+                "GitHub has not verified the endorsement; check signing-key registration")
+        verify_signature(request["key"], verification["payload"].encode(),
+                         verification["signature"].encode())
+        raw = signed_commit(verification["payload"].encode(), verification["signature"].encode())
+        hasher = hashlib.sha1 if len(receipt["mapping"][original]) == 40 else hashlib.sha256
+        require(hasher(b"commit " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
+                == receipt["mapping"][original], "GitHub signature payload does not match the signed object")
+    if publication == "replace":
+        require(pr["state"] == "open", "the original draft PR is no longer open")
+        return {"url": pr["html_url"], "head": receipt["head"]}
+
+    marker = f"<!-- copilot-endorsement:{plan_id} -->"
+    title = full_references(pr["title"], repository)
+    body = (full_references(pr["body"] or "", repository)
+            + f"\n\nSigned replacement for {request['url']}.\n\n{marker}")
+    candidates = github_pages(f"repos/{repository}/pulls?state=all&head="
+                              + quote(repository.split("/")[0] + ":" + target, safe="")
+                              + "&per_page=100")
+    require(len(candidates) <= 1, "multiple replacement PRs exist; operator decision required")
+    if candidates:
+        replacement = candidates[0]
+        require(marker in (replacement["body"] or ""), "existing PR is not this endorsement's replacement")
+    else:
+        require(pr["state"] == "open", "original PR closed before replacement creation")
+        replacement = github(f"repos/{repository}/pulls", "POST", {
+            "title": title, "body": body,
+            "base": request["base_branch"], "head": target, "draft": True,
+        })
+    replacement = pull_request(repository, replacement["number"])
+    require(replacement["state"] == "open" and replacement["head"]["sha"] == receipt["head"]
+            and replacement["base"]["ref"] == request["base_branch"]
+            and replacement["base"]["sha"] == request["base"], "replacement draft PR does not match")
+    github(f"repos/{repository}/issues/{replacement['number']}", "PATCH", pull_metadata(pr))
+    current_reviewers = {user["login"] for user in replacement["requested_reviewers"]}
+    current_teams = {team["slug"] for team in replacement["requested_teams"]}
+    reviewers = [user["login"] for user in pr["requested_reviewers"]
+                 if user["login"] not in current_reviewers]
+    teams = [team["slug"] for team in pr["requested_teams"] if team["slug"] not in current_teams]
+    if reviewers or teams:
+        requested = github(f"repos/{repository}/pulls/{replacement['number']}/requested_reviewers", "POST",
+                           {"reviewers": reviewers, "team_reviewers": teams})
+        require(set(reviewers) <= {user["login"] for user in requested["requested_reviewers"]}
+                and set(teams) <= {team["slug"] for team in requested["requested_teams"]},
+                "requested reviewers were not preserved; leaving the original PR open")
+
+    def confirm_drafts():
+        latest = pull_request(repository, request["pr"])
+        require(latest["head"]["sha"] == request["head"] and latest["base"]["sha"] == request["base"]
+                and latest["head"]["ref"] == request["source_branch"]
+                and latest["base"]["ref"] == request["base_branch"]
+                and latest["title"] == pr["title"] and latest["body"] == pr["body"]
+                and pull_metadata(latest) == pull_metadata(pr),
+                "original PR changed; leaving both drafts open")
+        current = pull_request(repository, replacement["number"])
+        require(current["state"] == "open" and current["head"]["sha"] == receipt["head"]
+                and current["head"]["ref"] == request["target_branch"]
+                and current["base"]["sha"] == request["base"]
+                and current["base"]["ref"] == request["base_branch"]
+                and marker in (current["body"] or ""), "replacement changed; leaving the original PR open")
+        require(current["title"] == title and current["body"] == body
+                and pull_metadata(current) == pull_metadata(pr),
+                "replacement metadata differs; leaving the original PR open")
+        return latest
+
+    confirm_drafts()
+    comment = (f"Superseded by {replacement['html_url']}, containing the reviewed commit range "
+               f"signed with the endorsement key `{request['fingerprint']}`. {marker}")
+    comments = github_pages(f"repos/{repository}/issues/{request['pr']}/comments?per_page=100")
+    if not any(item["body"] == comment for item in comments):
+        github(f"repos/{repository}/issues/{request['pr']}/comments", "POST", {"body": comment})
+    latest = confirm_drafts()
+    if latest["state"] == "open":
+        github(f"repos/{repository}/pulls/{request['pr']}", "PATCH", {"state": "closed"})
+    return {"url": replacement["html_url"], "replaces": request["url"], "head": receipt["head"]}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    actions = parser.add_subparsers(dest="action", required=True)
+    prepare_parser = actions.add_parser("prepare", help="LOCAL: snapshot draft PR and publication policy")
+    prepare_parser.add_argument("--repo", required=True)
+    prepare_parser.add_argument("--pr", required=True, type=int)
+    prepare_parser.add_argument("--key", default=os.environ.get("COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY", SIGNING_ALIAS))
+    plan_parser = actions.add_parser("plan", help="CODESPACE: freeze the commit range for human review")
+    plan_parser.add_argument("--request", required=True)
+    for action in ("sign", "verify", "push"):
+        subparser = actions.add_parser(action, help="CODESPACE: " + action + " the exact reviewed plan")
+        subparser.add_argument("--plan", required=True)
+        if action != "verify":
+            subparser.add_argument("--approve-plan", required=True)
+    finish_parser = actions.add_parser("finish", help="LOCAL: verify published signatures and update draft PRs")
+    finish_parser.add_argument("--receipt", required=True)
+    finish_parser.add_argument("--approve-plan", required=True)
+    args = parser.parse_args()
+    remote = args.action in ("plan", "sign", "verify", "push")
+    try:
+        if remote:
+            require(os.environ.get("CODESPACES") == "true", "run this action inside the selected Codespace")
+            repository = Repository()
+            if args.action == "plan":
+                result = repository.plan(json.loads(args.request))
+            elif args.action == "verify":
+                result = repository.verify(args.plan)
+            else:
+                result = getattr(repository, args.action)(args.plan, args.approve_plan)
+        elif args.action == "prepare":
+            require(os.environ.get("CODESPACES") != "true",
+                    "run GitHub preparation locally with the operator's authenticated gh")
+            result = prepare(args.repo, args.pr, args.key)
+        else:
+            require(os.environ.get("CODESPACES") != "true",
+                    "run GitHub finalisation locally with the operator's authenticated gh")
+            result = finish(json.loads(Path(args.receipt).read_text()), args.approve_plan)
+        print((RESULT_PREFIX if remote else "") + canonical(result))
+        return 0
+    except (ValueError, RuntimeError, OSError, KeyError, subprocess.TimeoutExpired) as error:
+        print(f"[copilot-cs-endorse] {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

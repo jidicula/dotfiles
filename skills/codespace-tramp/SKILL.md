@@ -65,9 +65,9 @@ esac
   to their `~/work/github/` work repositories, then stop and handle the request
   with the normal local tools instead.
 
-> **Sharing this skill?** This Scope section is the only personal part. Change
-> `~/work/github/` to your own work-repos path, or delete this section entirely
-> to make the skill apply everywhere.
+> **Sharing this skill?** Change `~/work/github/` to your own work-repos path,
+> or delete this section to make the skill apply everywhere. Also configure
+> your own two public-key aliases in the prerequisites below.
 
 ## When to use this skill
 
@@ -87,7 +87,7 @@ each of these must be set up on the operator's machine:
 - A **per-session Emacs MCP daemon**, invoked through the protocol-aware
   `setup/copilot-emacs-mcp-call` client. The `setup/` directory provides it:
   - `setup/copilot-ghcs` — the sole SSH/copy transport for this workflow. It
-    resolves the active Secretive public-key stand-in, presents it in the
+    reads the explicitly pinned transport public key, presents it in the
     two-path shape `gh` requires, pins the Secretive agent socket, and enables
     `IdentitiesOnly=yes`. Private signing remains in Secretive, and a refused
     signing request fails rather than falling back to an on-disk or
@@ -112,6 +112,10 @@ each of these must be set up on the operator's machine:
     TRAMP/`ghcs`, detached jobs, and Codespace-hosted Eglot.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
     is built on, loaded into the daemon at boot.
+  - `setup/copilot-cs-endorse` — local draft-PR preparation/finalisation and
+    Codespace-only reconstruction, verification, and publication of an exact
+    reviewed commit range. It requires a separate publication choice for every
+    endorsement; it never decides to replace branch history automatically.
   - `setup/copilot-gh-retry` — bounded pre-dispatch connection retries and a
     shared Secretive signing gate, used by `copilot-ghcs`; its `get` command
     also supports strictly read-only GitHub API discovery.
@@ -166,16 +170,27 @@ each of these must be set up on the operator's machine:
   and **Python 3** available for the connection wrapper and protocol-aware
   direct client. Remote PTY commands additionally need util-linux `script`
   inside the Codespace.
-- **Secretive** installed with its SSH agent enabled and at least one active
-  identity. `setup/copilot-ghcs` uses Secretive's standard data directory by
-  default. `COPILOT_SECRETIVE_AGENT_SOCKET` selects another socket
-  (`COPILOT_SECRETIVE_SOCKET` remains a compatibility alias), and the other
-  `COPILOT_SECRETIVE_*` variables support a different data directory or an
-  explicitly selected public-key stand-in. The default alias base is
-  `~/.ssh/secretive-stormbreaker-github-sep-2026`; it and its `.pub` sibling
-  both point to the selected Secretive-managed public key. The work Git
-  configuration uses the `.pub` alias for signing. `COPILOT_SECRETIVE_STANDIN`
-  overrides the transport's base alias path.
+- **Two distinct Secretive keys:** the approval-free Codespace transport key
+  at `~/.ssh/secretive-codespaces-agent-sep-2026{,.pub}`, and the Touch
+  ID-protected endorsement key at
+  `~/.ssh/secretive-stormbreaker-github-sep-2026.pub`. The aliases contain only
+  symlinks to Secretive-managed public keys; never copy private material.
+  `gitconfig-work` must remain pinned to Stormbreaker, not the transport key.
+  Register only the endorsement key as a GitHub **signing** key. Codespace SSH
+  through `gh` does not require registering the transport key for general
+  GitHub authentication.
+- `COPILOT_SECRETIVE_STANDIN` overrides the transport alias base and
+  `COPILOT_SECRETIVE_PUBLIC_KEY` can select its managed public-key source.
+  `COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY` independently selects the endorsement
+  public key. Automatic first-key discovery is disabled; missing or overlapping
+  identities stop the connection. `COPILOT_SECRETIVE_AGENT_SOCKET` selects
+  the agent socket (`COPILOT_SECRETIVE_SOCKET` is a compatibility alias), and
+  `COPILOT_SECRETIVE_DATA_DIR` overrides Secretive's data directory.
+- Endorsement requires Python 3 with its full standard library, Git, and an OpenSSH `ssh-keygen` supporting
+  `-Y sign`/`-Y verify` both locally and in the Codespace. Keep Stormbreaker's
+  user-presence protection enabled. Do not select **Leave Unlocked** when fresh
+  Touch ID approval is wanted for each signature. Never change Secretive's key
+  settings automatically.
 
 Assume these work; diagnose only when a call fails. See the **Troubleshooting**
 section and `references/emacs-tramp-patterns.md` for the execution cookbook.
@@ -626,7 +641,7 @@ backoff. Any stdout, a remote exit or tunnel error, an authentication failure,
 or an unrecognized error prevents retry.
 An unacknowledged job alone is never sufficient evidence to replay it.
 
-The shared signing gate serialises identity discovery and handshakes until
+The shared signing gate serialises pinned-key preparation and handshakes until
 OpenSSH's local verbose diagnostic confirms public-key authentication, remote output arrives, or the
 connection exits. A quiet authenticated copy therefore does not block another
 connection until its entire transfer completes.
@@ -639,9 +654,9 @@ approval run `setup/copilot-ghcs resume-auth --operator-approved`. This resets
 the shared refusal count, not credentials, and does not replay failed jobs.
 Do not delete the gate file or repeatedly reset it to bypass the limit.
 
-Queueing, `ssh-add -L` identity discovery, API/SSH setup, and safe retry backoff
-share one 120-second startup budget. Discovery runs inside the gate, preserves
-agent diagnostics, and cannot contact the agent while authentication is paused.
+Queueing, pinned-key preparation, API/SSH setup, and safe retry backoff share
+one 120-second startup budget. Key preparation runs inside the gate; automatic
+agent enumeration and first-key selection are disabled.
 Runner connections additionally require the exact job acknowledgement
 before that deadline. Expiry stops the local transport, not a detached remote
 job; it preserves diagnostics and never automatically retries an unconfirmed
@@ -829,18 +844,18 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   commands through the Codespace login environment, including `cherry-pick`,
   `revert`, `merge`, `rebase`, `am`, and `pull`. For repository commands
   that fetch other protected remote data, call `copilot-cs-login-sh` directly.
-  Codespaces' credential and commit-signing helpers, plus some repository
+  Codespaces' credential helpers, plus some repository
   tooling, require environment variables that only login shells get. See the
   cookbook's **Commands that need the Codespace login environment**.
-- Codespace API signing may reject a preserved foreign author. Do not silently
-  reset authorship, disable required signing, or repeat a cherry-pick that
-  already staged its changes. Inspect the in-progress state and use the
-  cookbook's author-preserving recovery rules; reauthoring needs the operator's
-  explicit agreement and retained original attribution.
-  With explicit operator approval of agent forwarding, the alternative is
-  `copilot-cs-ssh-git`: it signs Git commits with the registered Secretive
-  public key while retaining the original author. Ordinary commands and copies
-  do not forward the agent. See the cookbook's opt-in signing procedure.
+- **Agent-produced work stays unsigned until human endorsement.** Remote
+  runner jobs append process-only `commit.gpgsign=false` and
+  `tag.gpgsign=false`, including after login profiles and for child processes.
+  The operator's normal Git configuration and manual Codespace sessions are
+  unchanged. Do not add `-S`, enable signing explicitly, use the Codespace API
+  signer, or call the retired `copilot-cs-ssh-git` interface to bypass review.
+  Preserve original authors. Inspect newly created commit headers before
+  publishing the initial draft to ensure the agent has not signed them.
+  These defaults are not a sandbox against explicit Git overrides.
 - Run GitHub control-plane operations such as `gh pr`, `gh workflow`, and
   `gh run` with the operator's **local authenticated `gh`**, always passing
   `-R "$NWO"` (and the target branch, run, or job where needed). Do not send
@@ -854,7 +869,8 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   `gh pr create -R "$NWO" --draft --head "$BRANCH"` plus a task-derived title
   and body. If an open PR already exists but is ready for review, return it to
   draft with `gh pr ready --undo` rather than opening a duplicate. Lead the
-  final response with the full draft PR URL. Skip this only when the user
+  final response with the full draft PR URL. **Then perform the endorsement
+  gate below; a draft's creation is not approval to sign it.** Skip this only when the user
   explicitly requested no commit, push, or PR, or when the task was read-only
   and retained no code change.
 - Do **not** manually stop or delete the Codespace when the task is complete.
@@ -863,6 +879,88 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   explicitly requests that.
 - Report back against `instructions`: what you did, what you skipped, and
   anything you could not satisfy.
+
+### Human endorsement gate
+
+If repository rules reject unsigned draft-branch pushes, stop for an operator
+decision. Do not evade the rule by signing early or choosing a different
+identity.
+
+1. Use local `setup/copilot-cs-endorse prepare --repo "$NWO" --pr "$PR_NUMBER"`
+   to read the draft and applicable branch policy using local `gh`. Pass its
+   JSON request as data to `(copilot-cs-endorse "plan" "<request JSON>")`.
+   Poll that exact job and retrieve its complete JSON with
+   `(copilot-cs-endorsement-result "<job-id>")`. Planning requests no signature.
+2. Print the full draft PR URL from the plan on its own line in ordinary chat
+   immediately before opening the interactive prompt, so it remains easy to
+   find in scrollback. Repeat that full URL as the **first line of the prompt's
+   message**, followed by a blank line. Do not bury it in prose, revision
+   details, or a label such as "here". Then ask:
+   **"Please review this implementation. Do you believe it is correct and
+   stand by every commit in this exact revision, or is further work needed?"**
+   Show the exact head and base OIDs, commit count/range, endorsement-key
+   fingerprint, and plan id below the review question. Show validation
+   limitations honestly. Explain that signatures change commit IDs and CI
+   must run on the resulting signed head.
+3. Offer **"Further work is needed"**, **"Leave this draft unendorsed"**, and
+   **"I stand by it: create a replacement -signed draft"**. Only when
+   `publication_options` also contains `replace`, offer **"I stand by it:
+   update this draft using an exact-head --force-with-lease"**. No endorsement
+   option is preselected. The operator chooses the publication method on
+   **every** endorsement; a previous choice grants no blanket rewrite
+   permission. Decline/cancellation means no signing or signed publication.
+4. Bind the answer to `<plan-id>:replacement` or `<plan-id>:replace`. This
+   approval token is a guard, not proof of human consent: never construct it
+   without the actual interactive answer. Only then call
+   `(copilot-cs-endorse "sign" "<plan-id>" "<approval-token>")`.
+   Explain that this one connection forwards the Secretive agent and may
+   produce one Touch ID request per commit. `IdentitiesOnly` pins SSH login
+   but does **not** restrict which keys a forwarded agent can access.
+5. Keep the signing connection open and inspect its exact job. Successful
+   signing verifies each signature against the designated key, preserves
+   trees/messages/authors/committers/empty commits/merge topology, and creates
+   `<source>-signed` **inside the Codespace** without changing the source ref
+   or working tree. A refusal, timeout, stale head/base, or collision stops the
+   operation. Never replay a signing job automatically or use a different key.
+6. Publish only that verified receipt with
+   `(copilot-cs-endorse "push" "<plan-id>" "<approval-token>")`.
+   Terminal-dependent hooks can use the same call with optional `WAIT` and
+   `TTY` arguments, for example `... 10 t`. Read hook diagnostics; do not bypass
+   hooks or treat skipped validation as success.
+   `replace` uses an explicit lease against the reviewed source OID.
+   `replacement` uses an empty-expectation lease against the new branch:
+   despite the flag's name, this is **create-only**, and cannot overwrite an
+   existing branch. The helpers never run unconditional `--force`.
+7. Copy the successful push's `<plan-id>.<publication>.published.json` receipt
+   to this session's local files area and run local
+   `setup/copilot-cs-endorse finish --receipt "<receipt.json>" --approve-plan
+   "<approval-token>"`. See the cookbook for the exact transfer. The local
+   helper checks the published commit content, GitHub verification, and the
+   designated SSH signatures. For a replacement, it creates/reuses only its
+   marked draft, preserves title/body and supported metadata, links it from
+   the original, and closes the original **only after verifying the replacement**.
+   Existing review discussion and check runs remain on the old PR.
+8. Check CI on the new signed OIDs using local `gh`. Leave the resulting PR in
+   draft. Report its full URL and whether endorsement/publication/CI completed;
+   a generic GitHub **Verified** badge or a `-signed` name is not enough.
+
+Any source/base change requires a new plan and prompt. A rejected lease is not
+permission to use plain `--force`, refresh its expected OID, or silently switch
+publication methods. Preserve both histories and ask again. If only the
+publication method changes after a failed push, an explicit new choice for the
+same unchanged plan can reuse its signatures: call `push` with the newly
+approved token, not `sign`. Do not switch methods after either path has
+already published; recover that outcome instead. Existing signed
+branch collisions also require an operator decision; never overwrite them.
+The local source ref intentionally stays at the reviewed unsigned head, even
+after an in-place remote update; do not reset it or other worktrees as cleanup.
+GitHub PR metadata updates are not atomic with branch changes, so coordinate
+concurrent work and retain both drafts whenever a check fails.
+
+The helper currently supports same-repository github.com draft PRs with complete
+Git history. Fork PRs, grafts/replacement objects, and signed merge-tag headers
+require explicit manual handling rather than a lossy rewrite. Ordinary merge
+commits and empty commits are supported.
 
 ## Repository-specific command notes
 
@@ -1019,10 +1117,10 @@ Ask the user for the correct commands if none are supplied.
   retries. Do not automatically refresh scopes, switch accounts, create a
   token, or retry a 403; ask the operator to restore the required access.
 - **A short command reports `state=connecting` with no output:** no remote job
-  has been acknowledged yet. The Codespace may still be connecting, but an
-  unanswered Secretive request is the usual cause. Approve it, then poll the
-  same job id. Do not launch a replacement job while the original connection
-  is still pending.
+  has been acknowledged yet. Poll the same job id and inspect connection
+  diagnostics. The transport key should not request Touch ID; if it does,
+  inspect the pinned alias rather than approving an unexpected use of
+  Stormbreaker. Do not launch a replacement while the original is pending.
 - **Parallel reads return the wrong file's output:** use the job id in each
   invocation's own returned report when calling `copilot-cs-output` or
   `copilot-cs-poll`. The runner now restores the returning job's default id
@@ -1076,12 +1174,29 @@ Ask the user for the correct commands if none are supplied.
   the signer error and `git config --show-origin --get tag.gpgsign` in the
   affected environment. Automatic tag signing now lives in `gitconfig-local`,
   not the shared config; existing Codespaces need the updated shared file.
-  Commit signing remains enabled. Do not suppress unrelated tag failures or
+  Manual Codespace signing defaults remain intact, but agent jobs suppress
+  implicit commit and tag signing. Do not suppress unrelated tag failures or
   silently downgrade an explicitly requested signed tag.
 - **Cherry-pick signing reports `403 | Author is invalid`:** login routing
-  does not grant the signing service permission for a different author.
-  Preserve the staged changes and original attribution, and follow the
-  cookbook's signing-recovery rules instead of resetting the author silently.
+  does not grant the API signer permission for a different author. Agent jobs
+  should now be unsigned: reload the runner, inspect explicit Git overrides
+  and the in-progress state, and preserve staged changes and attribution.
+  Do not repeat the cherry-pick or sign before endorsement.
+- **Endorsement signing disconnects or fails:** attach to the original log,
+  then use `(copilot-cs-endorse "verify" "<plan-id>")` to check whether a complete
+  receipt exists. Reattachment never forwards the agent or repeats signatures.
+  A detached process cannot use a forwarded socket after its SSH connection
+  closes. If no complete receipt exists, get operator approval before retrying;
+  completed signatures may have to be requested again. No signed branch is
+  published automatically.
+- **Python reports a version but cannot import `json`, `argparse`, or another
+  standard-library module:** a version check alone does not establish that the
+  required runtime is usable. Inspect the selected interpreter and its package
+  installation inside the Codespace. On Debian/Ubuntu, install the full
+  `python3` package rather than relying on `python3-minimal`, then verify the
+  required standard-library imports before retrying the failed phase. Do not
+  install similarly named packages from PyPI, replace the operator's local
+  Python, or recreate commits that succeeded before validation failed.
 - **`gh copilot` reports `Copilot CLI not installed`:** the runner has no TTY,
   so `gh` refuses its normal installation prompt. Prefix the command with
   `CI=1`, which tells `gh copilot` to download the CLI without prompting:
@@ -1123,10 +1238,11 @@ Ask the user for the correct commands if none are supplied.
   supplies Codespace credentials and signing. Fix the misplaced rewrite rather
   than weakening SSH host-key checking.
 - **`git commit` fails with `gpg failed to sign the data` and
-  `unsupported protocol scheme ""`:** same root cause. Current
-  `copilot-cs-sh` routes `git commit` through the login environment
-  automatically. On an older daemon, rebuild it with `/mcp` and amend through
-  `(copilot-cs-login-sh "git commit --amend --no-edit")`.
+  `unsupported protocol scheme ""`:** the Codespace API signer ran without
+  its expected login variables. Current agent jobs must be unsigned: reload
+  the runner with the direct client, inspect explicit signing overrides and
+  the existing Git state, and preserve the author. Do not amend merely to
+  sign, call the API signer, or invoke Secretive before the endorsement gate.
 - **Every command fails with `cannot cd to ...`:** `copilot-cs-use` was given a
   directory that does not exist in the Codespace. Re-discover it with
   `(copilot-cs-sh "ls -d /workspaces/*/")` from a directory that does exist.

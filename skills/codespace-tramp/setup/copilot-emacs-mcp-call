@@ -75,7 +75,9 @@ def print_tool_result(message):
         print("\n".join(texts))
     else:
         print(json.dumps(result, separators=(",", ":")))
-    return 1 if result.get("isError") else 0
+    # The Emacs provider also emits bare Error: text; successful strings are quoted.
+    failed = result.get("isError") or any(text.startswith("Error: ") for text in texts)
+    return 1 if failed else 0
 
 
 def main():

@@ -12,8 +12,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SECRETIVE_DATA_DIR="${COPILOT_SECRETIVE_DATA_DIR:-$HOME/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data}"
 SECRETIVE_SOCKET="${COPILOT_SECRETIVE_AGENT_SOCKET:-${COPILOT_SECRETIVE_SOCKET:-$SECRETIVE_DATA_DIR/socket.ssh}}"
-SECRETIVE_PUBLIC_KEYS_DIR="${COPILOT_SECRETIVE_PUBLIC_KEYS_DIR:-$SECRETIVE_DATA_DIR/PublicKeys}"
-SECRETIVE_STANDIN="${COPILOT_SECRETIVE_STANDIN:-$HOME/.ssh/secretive-stormbreaker-github-sep-2026}"
+SECRETIVE_STANDIN="${COPILOT_SECRETIVE_STANDIN:-$HOME/.ssh/secretive-codespaces-agent-sep-2026}"
+SECRETIVE_PUBLIC_KEY="${COPILOT_SECRETIVE_PUBLIC_KEY:-$SECRETIVE_STANDIN.pub}"
+SECRETIVE_SIGNING_KEY="${COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY:-$HOME/.ssh/secretive-stormbreaker-github-sep-2026.pub}"
 
 log() { printf '[copilot-ghcs] %s\n' "$*" >&2; }
 die() { log "$*"; exit 1; }
@@ -75,21 +76,23 @@ ssh_args=(
 	-o "ServerAliveInterval=15"
 	-o "ServerAliveCountMax=3"
 )
+if [[ "$mode" == "ssh-sign" ]]; then
+	export SSH_AUTH_SOCK="$SECRETIVE_SOCKET"
+	ssh_args+=(-A)
+else
+	ssh_args+=(-o "ForwardAgent=no")
+fi
 
 retry=(python3 "$SCRIPT_DIR/copilot-gh-retry" connect
 	--lock "$standin_dir/copilot-ghcs-connect.lock"
-	--agent-socket "$SECRETIVE_SOCKET" --public-keys-dir "$SECRETIVE_PUBLIC_KEYS_DIR"
-	--standin "$SECRETIVE_STANDIN")
-if [[ -n "${COPILOT_SECRETIVE_PUBLIC_KEY:-}" ]]; then
-	retry+=(--public-key "$COPILOT_SECRETIVE_PUBLIC_KEY")
-fi
+	--public-key "$SECRETIVE_PUBLIC_KEY" --standin "$SECRETIVE_STANDIN"
+	--signing-public-key "$SECRETIVE_SIGNING_KEY")
 if [[ -n "$job_id" ]]; then
 	retry+=(--ack-marker "__COPILOT_CS_ACK_${job_id}__")
 fi
 if [[ "$mode" == "ssh-sign" ]]; then
 	[[ $# -eq 1 && "$1" != -* ]] ||
 		die "ssh-sign requires exactly one remote command"
-	ssh_args+=(-A)
 	retry+=(--ssh-signing)
 fi
 

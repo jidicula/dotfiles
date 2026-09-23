@@ -333,11 +333,14 @@ class SecretiveTransportTestCase(HelperTestCase):
         agent = self.root / "agent.sock"
         self.unix_socket(agent)
         public = self.root / "public.pub"
-        public.write_text("test public-key stand-in\n", encoding="utf-8")
+        public.write_text("ssh-ed25519 AAAA transport-fixture\n", encoding="utf-8")
+        signing = self.root / "signing.pub"
+        signing.write_text("ssh-ed25519 BBBB endorsement-fixture\n", encoding="utf-8")
         self.env.update(
             {
                 "COPILOT_SECRETIVE_AGENT_SOCKET": str(agent),
                 "COPILOT_SECRETIVE_PUBLIC_KEY": str(public),
+                "COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY": str(signing),
                 "COPILOT_SECRETIVE_STANDIN": str(self.root / "ssh" / "standin"),
                 "FAKE_GH_CALLS": str(self.calls),
                 "FAKE_GH_FAILURES": "1",
@@ -539,7 +542,7 @@ class ApiConnectionTests(WarmupTests):
 
 
 class ConnectionSafetyTests(SecretiveTransportTestCase):
-    def test_default_identity_matches_the_work_signing_alias(self):
+    def test_default_identity_is_separate_from_the_work_signing_alias(self):
         self.env.pop("COPILOT_SECRETIVE_STANDIN")
         self.env["FAKE_GH_FAILURES"] = "0"
         result = self.invoke("ssh", "test-codespace", "run-once")
@@ -553,14 +556,15 @@ class ConnectionSafetyTests(SecretiveTransportTestCase):
         self.assertEqual(
             public, self.root / ".ssh" / "secretive-stormbreaker-github-sep-2026.pub",
         )
-        standin = public.with_suffix("")
-        for path in (standin, public):
+        standin = self.root / ".ssh" / "secretive-codespaces-agent-sep-2026"
+        for path in (standin, Path(str(standin) + ".pub")):
             self.assertTrue(path.is_symlink())
             self.assertEqual(
                 path.resolve(), Path(self.env["COPILOT_SECRETIVE_PUBLIC_KEY"]).resolve(),
             )
         arguments = self.recorded_calls()[0]
         self.assertEqual(arguments[arguments.index("-i") + 1], str(standin))
+        self.assertFalse(public.exists(), "transport created an endorsement alias")
         for name in ("secretive-codespaces", "secretive-codespaces.pub"):
             self.assertFalse(os.path.lexists(self.root / ".ssh" / name))
 
@@ -571,7 +575,7 @@ class ConnectionSafetyTests(SecretiveTransportTestCase):
         standin = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
         original = os.readlink(standin)
         second_key = self.root / "second-public.pub"
-        second_key.write_text("second public-key fixture\n")
+        second_key.write_text("ssh-ed25519 CCCC second-transport-fixture\n")
         environment = dict(self.env, COPILOT_SECRETIVE_PUBLIC_KEY=str(second_key))
         helper = self.load_script("copilot-gh-retry")
         process = None
@@ -785,41 +789,33 @@ child.wait()
                     os.kill(pid, signal.SIGKILL)
 
 
-class IdentityDiscoveryTests(SecretiveTransportTestCase):
+class IdentityPinningTests(SecretiveTransportTestCase):
     def setUp(self):
         super().setUp()
-        self.public_key = Path(self.env.pop("COPILOT_SECRETIVE_PUBLIC_KEY"))
+        self.public_key = Path(self.env["COPILOT_SECRETIVE_PUBLIC_KEY"])
         self.agent_calls = self.root / "agent-calls"
         self.gate_path = (
             Path(self.env["COPILOT_SECRETIVE_STANDIN"]).parent
             / "copilot-ghcs-connect.lock"
         )
         self.env.update(
-            COPILOT_SECRETIVE_PUBLIC_KEYS_DIR=str(self.public_key.parent),
             FAKE_AGENT_CALLS=str(self.agent_calls),
-            FAKE_AGENT_PUBLIC_KEY=self.public_key.read_text(),
             FAKE_GH_FAILURES="0",
         )
         self.executable(
             "ssh-add",
-            """import os, sys, time
+            """import os, sys
 from pathlib import Path
-assert sys.argv[1:] == ["-L"]
-assert os.environ["SSH_AUTH_SOCK"] == os.environ["COPILOT_SECRETIVE_AGENT_SOCKET"]
 Path(os.environ["FAKE_AGENT_CALLS"]).write_text("queried\\n")
-time.sleep(float(os.environ.get("FAKE_AGENT_DELAY", "0")))
-if os.environ.get("FAKE_AGENT_ERROR"):
-    print(os.environ["FAKE_AGENT_ERROR"], file=sys.stderr)
-    sys.exit(2)
-print(os.environ["FAKE_AGENT_PUBLIC_KEY"], end="")
+raise SystemExit("automatic agent identity discovery is forbidden")
 """,
         )
 
-    def test_discovered_identity_is_pinned_without_changing_its_files(self):
+    def test_configured_identity_is_pinned_without_querying_agent(self):
         before = self.public_key.stat()
         result = self.invoke("ssh", "test-codespace", "run-once")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.agent_calls.read_text(), "queried\n")
+        self.assertFalse(self.agent_calls.exists())
         self.assertEqual(len(self.recorded_calls()), 1)
         standin = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
         self.assertEqual(standin.resolve(), self.public_key.resolve())
@@ -828,7 +824,7 @@ print(os.environ["FAKE_AGENT_PUBLIC_KEY"], end="")
         self.assertEqual((before.st_ino, before.st_mtime_ns, before.st_mode),
                          (after.st_ino, after.st_mtime_ns, after.st_mode))
 
-    def test_identity_discovery_waits_for_the_signing_gate(self):
+    def test_alias_preparation_waits_for_the_signing_gate(self):
         helper = self.load_script("copilot-gh-retry")
         self.gate_path.parent.mkdir()
         process = None
@@ -844,34 +840,33 @@ print(os.environ["FAKE_AGENT_PUBLIC_KEY"], end="")
                 self.assertFalse(self.agent_calls.exists())
             _, error = process.communicate(timeout=10)
             self.assertEqual(process.returncode, 0, error)
-            self.assertTrue(self.agent_calls.exists())
+            self.assertFalse(self.agent_calls.exists())
+            self.assertEqual(Path(self.env["COPILOT_SECRETIVE_STANDIN"]).resolve(),
+                             self.public_key.resolve())
         finally:
             if process is not None:
                 if process.poll() is None:
                     process.terminate()
                 process.communicate(timeout=10)
 
-    def test_identity_discovery_is_inside_the_startup_deadline(self):
-        self.executable(
-            "python3",
-            """import os, sys
-arguments = sys.argv[1:]
-assert arguments[1] == "connect"
-arguments[2:2] = ["--startup-timeout", "0.25"]
-os.execv(sys.executable, [sys.executable, *arguments])
-""",
-        )
-        self.env["FAKE_AGENT_DELAY"] = "2"
-        started = time.monotonic()
+    def test_missing_alias_never_falls_back_to_an_agent_key(self):
+        self.env.pop("COPILOT_SECRETIVE_PUBLIC_KEY")
         result = self.invoke("ssh", "test-codespace", "run-once")
-        self.assertEqual(result.returncode, 124, result.stderr)
-        self.assertLess(time.monotonic() - started, 1.5)
-        self.assertIn("identity discovery", result.stderr)
-        self.assertIn("no SSH/SCP command was dispatched", result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("No such file", result.stderr)
+        self.assertFalse(self.agent_calls.exists())
         self.assertFalse(self.calls.exists())
         self.assertFalse(self.sleeps.exists())
-        with self.gate_path.open("rb") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_existing_default_alias_does_not_require_discovery(self):
+        standin = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
+        standin.parent.mkdir()
+        standin.symlink_to(self.public_key)
+        Path(str(standin) + ".pub").symlink_to(self.public_key)
+        self.env.pop("COPILOT_SECRETIVE_PUBLIC_KEY")
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.agent_calls.exists())
 
     def test_paused_authentication_does_not_query_the_agent(self):
         self.gate_path.parent.mkdir()
@@ -881,35 +876,33 @@ os.execv(sys.executable, [sys.executable, *arguments])
         self.assertFalse(self.agent_calls.exists())
         self.assertFalse(self.calls.exists())
 
-    def test_identity_discovery_failure_preserves_the_agent_diagnostic(self):
-        self.env["FAKE_AGENT_ERROR"] = "Error connecting to agent: Connection refused"
+    def test_missing_endorsement_key_fails_closed(self):
+        Path(self.env["COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY"]).unlink()
         result = self.invoke("ssh", "test-codespace", "run-once")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(self.env["FAKE_AGENT_ERROR"], result.stderr)
+        self.assertIn("No such file", result.stderr)
         self.assertFalse(self.calls.exists())
         self.assertFalse(self.sleeps.exists())
 
-    def test_identity_discovery_uses_only_the_remaining_startup_budget(self):
-        helper = self.load_script("copilot-gh-retry")
-        completed = subprocess.CompletedProcess(
-            ["ssh-add", "-L"], 0, self.public_key.read_bytes(),
-        )
-        with mock.patch.object(helper.time, "monotonic", return_value=20.25), \
-                mock.patch.object(helper.subprocess, "run", return_value=completed) as run:
-            result = helper.discover_identity(
-                self.env["COPILOT_SECRETIVE_AGENT_SOCKET"],
-                self.env["COPILOT_SECRETIVE_PUBLIC_KEYS_DIR"], 21,
-            )
-        self.assertEqual(Path(result), self.public_key)
-        self.assertEqual(run.call_args.kwargs["timeout"], 0.75)
-        self.assertEqual(run.call_args.kwargs["env"]["SSH_AUTH_SOCK"],
-                         self.env["COPILOT_SECRETIVE_AGENT_SOCKET"])
-
-    def test_unknown_identity_does_not_fall_back_to_another_key(self):
-        self.env["FAKE_AGENT_PUBLIC_KEY"] = "a different identity\n"
+    def test_transport_cannot_use_the_endorsement_key(self):
+        self.env["COPILOT_SECRETIVE_PUBLIC_KEY"] = self.env["COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY"]
         result = self.invoke("ssh", "test-codespace", "run-once")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("public-key stand-in could not be found", result.stderr)
+        self.assertIn("different Secretive keys", result.stderr)
+        self.assertFalse(self.calls.exists())
+
+    def test_transport_cannot_repoint_an_endorsement_alias(self):
+        signing = Path(self.env["COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY"])
+        alias = Path(self.env["COPILOT_SECRETIVE_STANDIN"])
+        alias.parent.mkdir()
+        alias.symlink_to(signing)
+        Path(str(alias) + ".pub").symlink_to(signing)
+        before = signing.read_bytes()
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("overlaps the protected signing identity", result.stderr)
+        self.assertEqual(alias.resolve(), signing.resolve())
+        self.assertEqual(signing.read_bytes(), before)
         self.assertFalse(self.calls.exists())
 
 
@@ -1313,6 +1306,26 @@ time.sleep(10)
             }), 1)
             output.assert_called_once_with("fixture security denial")
 
+    def test_emacs_error_text_is_failure_without_an_iserror_flag(self):
+        helper = self.load_script("copilot-emacs-mcp-call")
+        for text in ("Error: Security: 'getenv' is blocked.", "Error: Arithmetic error"):
+            with self.subTest(text=text), mock.patch("builtins.print") as output:
+                result = helper.print_tool_result({
+                    "result": {"content": [{"type": "text", "text": text}]}
+                })
+                self.assertEqual(result, 1)
+                output.assert_called_once_with(text)
+
+    def test_successful_elisp_error_shaped_string_remains_successful(self):
+        helper = self.load_script("copilot-emacs-mcp-call")
+        text = '"Error: this is returned string data"'
+        with mock.patch("builtins.print") as output:
+            result = helper.print_tool_result({
+                "result": {"content": [{"type": "text", "text": text}]}
+            })
+            self.assertEqual(result, 0)
+            output.assert_called_once_with(text)
+
 
 class CopyTests(SecretiveTransportTestCase):
     def test_local_session_artifact_uses_explicit_copy_transport(self):
@@ -1352,26 +1365,44 @@ class SshSigningTests(SecretiveTransportTestCase):
         )
         self.env["FAKE_GH_FAILURES"] = "0"
 
+    def test_forwarding_pins_secretive_instead_of_the_parent_agent(self):
+        self.env["SSH_AUTH_SOCK"] = str(self.root / "unrelated-agent.sock")
+        self.executable(
+            "gh",
+            """import os
+print(os.environ["SSH_AUTH_SOCK"])
+""",
+        )
+        ordinary = self.invoke("ssh", "test-codespace", "ordinary")
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        self.assertEqual(ordinary.stdout.strip(), self.env["SSH_AUTH_SOCK"])
+        signing = self.invoke("ssh-sign", "test-codespace", "git-fixture")
+        self.assertEqual(signing.returncode, 0, signing.stderr)
+        self.assertEqual(signing.stdout.strip(), self.env["COPILOT_SECRETIVE_AGENT_SOCKET"])
+
     def test_forwarding_and_public_key_export_require_explicit_mode(self):
         result = self.invoke("ssh", "test-codespace", "ordinary")
         self.assertEqual(result.returncode, 0, result.stderr)
         ordinary = self.recorded_calls()[-1]
         self.assertNotIn("-A", ordinary)
+        self.assertIn("ForwardAgent=no", ordinary)
         self.assertNotIn("COPILOT_CS_SIGNING_KEY", ordinary[-1])
         result = self.invoke("ssh-sign", "test-codespace", "git-fixture")
         self.assertEqual(result.returncode, 0, result.stderr)
         signing = self.recorded_calls()[-1]
         self.assertIn("-A", signing)
         self.assertIn("IdentityAgent=" + self.env["COPILOT_SECRETIVE_AGENT_SOCKET"], signing)
-        self.assertIn("COPILOT_CS_SIGNING_KEY='ssh-ed25519 AAAA'", signing[-1])
+        self.assertIn("COPILOT_CS_SIGNING_KEY='ssh-ed25519 BBBB'", signing[-1])
+        self.assertNotIn("ForwardAgent=no", signing)
         self.assertIn('COPILOT_CS_SIGNING_SOCKET="$SSH_AUTH_SOCK"', signing[-1])
         self.assertTrue(signing[-1].endswith("; git-fixture"))
         result = self.invoke("cp", "test-codespace", "fixture", "remote:/tmp/fixture")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("-A", self.recorded_calls()[-1])
+        self.assertIn("ForwardAgent=no", self.recorded_calls()[-1])
 
     def test_signing_mode_rejects_non_public_data_before_connecting(self):
-        Path(self.env["COPILOT_SECRETIVE_PUBLIC_KEY"]).write_text(
+        Path(self.env["COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY"]).write_text(
             "not a public key\n"
         )
         result = self.invoke("ssh-sign", "test-codespace", "git-fixture")
@@ -1418,7 +1449,7 @@ class JobStateTests(HelperTestCase):
                   (unless rejected (error "Invalid report accepted: %S" report))))"""
         )
 
-    def test_ssh_signing_is_per_invocation_and_keeps_arguments_quoted(self):
+    def test_only_approved_endorsement_signing_forwards_the_agent(self):
         self.emacs(
             """(progn
               (require 'cl-lib)
@@ -1427,18 +1458,18 @@ class JobStateTests(HelperTestCase):
                 (cl-letf (((symbol-function 'copilot-cs--run)
                            (lambda (command label wait &optional ssh-signing)
                              (setq seen (list command label wait ssh-signing)))))
-                  (copilot-cs-ssh-git '("cherry-pick" "--" "ref;not-a-command") 0))
+                  (let ((plan (make-string 64 ?a)))
+                    (copilot-cs-endorse "sign" plan (concat plan ":replacement") 0)))
                 (unless (and (nth 3 seen)
-                             (string-match-p "gpg.format" (car seen))
-                             (equal (cadr seen)
-                                    (concat "git (Secretive SSH signing) cherry-pick -- "
-                                            (shell-quote-argument "ref;not-a-command")))
+                             (string-match-p "approve-plan" (car seen))
+                             (equal (cadr seen) "endorsement sign")
+                             (equal (nth 2 seen) 0)
                              (equal (nth 1 (copilot-cs--argv "ordinary")) "ssh")
                              (equal (nth 1 (copilot-cs--argv "signed" t)) "ssh-sign"))
                   (error "Signing escaped its invocation or lost quoting"))))"""
         )
 
-    def test_ssh_signing_requires_codespace_and_argument_list(self):
+    def test_unrestricted_signing_api_is_retired(self):
         self.emacs(
             """(progn
               (copilot-cs-use nil ".")
@@ -1447,11 +1478,56 @@ class JobStateTests(HelperTestCase):
                   (error (setq rejected t)))
                 (unless rejected (error "Local signing was accepted")))
               (copilot-cs-use "fixture-codespace" "/workspaces/fixture")
-              (dolist (args '(nil "commit" (commit)))
+              (dolist (args '(nil "commit" (commit) ("commit" "-S")))
                 (let ((rejected nil))
                   (condition-case nil (copilot-cs-ssh-git args)
                     (error (setq rejected t)))
                   (unless rejected (error "Invalid arguments accepted: %S" args)))))"""
+        )
+
+    def test_endorsement_requires_target_and_exact_plan_and_publication_approval(self):
+        self.emacs(
+            """(progn
+              (copilot-cs-use nil ".")
+              (let ((rejected nil))
+                (condition-case nil (copilot-cs-endorse "plan" "{}")
+                  (error (setq rejected t)))
+                (unless rejected (error "Local endorsement was accepted")))
+              (copilot-cs-use "fixture-codespace" "/workspaces/fixture")
+              (dolist (args '(("sign" "bad-id" "bad-id:replace")
+                             ("sign" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                             ("push" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                                     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                             ("arbitrary" "{}")))
+                (let ((rejected nil))
+                  (condition-case nil (apply #'copilot-cs-endorse args)
+                    (error (setq rejected t)))
+                  (unless rejected (error "Unapproved endorsement accepted: %S" args)))))"""
+        )
+
+    def test_plan_verify_and_push_do_not_forward_the_agent(self):
+        self.emacs(
+            """(progn
+              (require 'cl-lib)
+              (copilot-cs-use "fixture-codespace" "/workspaces/fixture")
+              (cl-letf (((symbol-function 'copilot-cs--run)
+                         (lambda (_command _label _wait &optional signing)
+                           (when signing (error "Unexpected agent forwarding")))))
+                (copilot-cs-endorse "plan" "{\\"fixture\\":\\"'; not a command\\"}")
+                (let ((plan (make-string 64 ?a)))
+                  (copilot-cs-endorse "verify" plan)
+                  (copilot-cs-endorse "push" plan (concat plan ":replace"))))))"""
+        )
+
+    def test_endorsement_result_uses_the_named_jobs_complete_output(self):
+        self.check_job(
+            """(let ((copilot-cs-tail-bytes 8)
+                     (copilot-cs--last-id "different-job"))
+                (unless (equal (copilot-cs-endorsement-result id)
+                               "{\\"plan_id\\":\\"fixture\\"}")
+                  (error "Endorsement result was truncated or crossed jobs")))""",
+            output='COPILOT_ENDORSEMENT_RESULT {"plan_id":"fixture"}\n'
+                   "__COPILOT_CS_DONE_job-state-fixture__:0\n",
         )
 
     def test_command_deadline_is_separate_from_poll_wait(self):
@@ -1790,6 +1866,96 @@ class JobEnvironmentTests(HelperTestCase):
     def test_local_jobs_do_not_change_the_operator_locale(self):
         self.env.pop("LC_ALL")
         self.assertIn("locale=||", self.run_locale_job(codespace=None))
+
+
+class UnsignedJobTests(HelperTestCase):
+    def setUp(self):
+        super().setUp()
+        self.config = self.root / ".gitconfig"
+        self.config.write_text(
+            "[user]\nname = Fixture\nemail = fixture@example.invalid\n"
+            "[commit]\ngpgsign = true\n[tag]\ngpgsign = true\n"
+        )
+        self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_COUNT="1",
+                        GIT_CONFIG_KEY_0="fixture.preserved", GIT_CONFIG_VALUE_0="preserved")
+        self.executable(
+            "bash",
+            """import os, sys
+assert sys.argv[1] == "-lc" and len(sys.argv) == 4
+os.environ.update(GIT_CONFIG_COUNT="3", GIT_CONFIG_KEY_1="commit.gpgsign",
+                  GIT_CONFIG_VALUE_1="true", GIT_CONFIG_KEY_2="tag.gpgsign",
+                  GIT_CONFIG_VALUE_2="true")
+os.execv("/bin/sh", ["sh", "-c", sys.argv[2], sys.argv[3]])
+""",
+        )
+
+    def job(self, command, login=False, local=False):
+        return self.emacs(
+            f"""(progn
+              (require 'cl-lib)
+              (copilot-cs-use {"nil" if local else '"fixture-codespace"'}
+                              {json.dumps(str(self.root))})
+              (let ((copilot-cs-remote-dir
+                     (shell-quote-argument {json.dumps(str(self.root))})))
+                (cl-letf (((symbol-function 'copilot-cs--argv)
+                           (lambda (command &optional _sign _id)
+                             (list "sh" "-c" command))))
+                  (princ ({"copilot-cs-login-sh" if login else "copilot-cs-sh"}
+                          {json.dumps(command)} 3)))))"""
+        )
+
+    def test_plain_and_login_children_are_unsigned_without_losing_other_config(self):
+        command = ("sh -c 'git config --get commit.gpgsign; git config --get tag.gpgsign; "
+                   "git config --get fixture.preserved'")
+        before = self.config.read_bytes()
+        for login in (False, True):
+            with self.subTest(login=login):
+                result = self.job(command, login=login)
+                self.assertIn("state=done rc=0", result)
+                self.assertIn("false\nfalse\npreserved", result)
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_actual_commit_and_annotated_tag_are_unsigned(self):
+        result = self.job(
+            "git init -q --template= && git commit -q --allow-empty -m unsigned && "
+            "git tag -a fixture -m unsigned && "
+            "git cat-file commit HEAD && git cat-file tag fixture"
+        )
+        self.assertIn("state=done rc=0", result)
+        self.assertNotIn("gpgsig", result)
+        self.assertNotIn("BEGIN SSH SIGNATURE", result)
+        self.assertIn("unsigned", result)
+
+    def test_local_test_mode_keeps_signing_defaults(self):
+        result = self.job("git config --get commit.gpgsign; git config --get tag.gpgsign", local=True)
+        self.assertIn("true\ntrue", result)
+
+    def test_malformed_config_counts_fail_explicitly_before_the_command(self):
+        for count in ("invalid", "-1", "999999999999999999999999999999"):
+            with self.subTest(count=count):
+                self.env["GIT_CONFIG_COUNT"] = count
+                result = self.job("printf command-ran")
+                self.assertIn("state=done rc=125", result)
+                self.assertIn("GIT_CONFIG_COUNT", result)
+                self.assertNotIn("command-ran", result)
+
+    def test_decimal_counts_with_leading_zeros_are_normalized(self):
+        self.env["GIT_CONFIG_COUNT"] = "0001"
+        result = self.job("git config --get fixture.preserved; git config --get commit.gpgsign")
+        self.assertIn("preserved\nfalse", result)
+
+    def test_endorsement_publication_can_keep_terminal_dependent_hooks(self):
+        self.emacs(
+            """(progn
+              (require 'cl-lib)
+              (copilot-cs-use "fixture-codespace" "/workspaces/fixture")
+              (cl-letf (((symbol-function 'copilot-cs--run)
+                         (lambda (command _label _wait &optional signing)
+                           (unless (and (not signing) (string-match-p "script -q -e -c" command))
+                             (error "Publication lost its remote PTY or forwarded the agent")))))
+                (let ((plan (make-string 64 ?a)))
+                  (copilot-cs-endorse "push" plan (concat plan ":replacement") 0 t)))))"""
+        )
 
 
 class DaemonReuseTests(HelperTestCase):
