@@ -1326,6 +1326,190 @@ time.sleep(10)
             self.assertEqual(result, 0)
             output.assert_called_once_with(text)
 
+    def test_parallel_clients_for_one_daemon_do_not_overlap_evaluations(self):
+        self.env["COPILOT_AGENT_SESSION_ID"] = "mcp-test-shared"
+        self.env["COPILOT_MCP_CALL_TIMEOUT"] = "3"
+        self.executable(
+            "copilot-emacs-mcp",
+            """import json, os, sys, time
+from pathlib import Path
+root = Path(os.environ["HOME"])
+def respond(identifier, result):
+    print(json.dumps({"jsonrpc": "2.0", "id": identifier, "result": result}), flush=True)
+initialization = json.loads(sys.stdin.readline())
+respond(initialization["id"], {})
+sys.stdin.readline()
+call = json.loads(sys.stdin.readline())
+active = root / "active"
+try:
+    active.mkdir()
+except FileExistsError:
+    respond(call["id"], {"isError": True, "content": [
+        {"type": "text", "text": "overlapping daemon evaluation"}]})
+    raise SystemExit(0)
+try:
+    (root / "started").touch()
+    deadline = time.monotonic() + 2
+    while not (root / "release").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    respond(call["id"], {"content": [
+        {"type": "text", "text": call["params"]["arguments"]["expression"]}]})
+finally:
+    active.rmdir()
+sys.stdin.read()
+""",
+        )
+        processes = []
+        try:
+            first = subprocess.Popen(
+                [sys.executable, str(self.client), "first"],
+                cwd=self.root, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+            )
+            processes.append(first)
+            deadline = time.monotonic() + 2
+            while not (self.root / "started").exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue((self.root / "started").exists())
+            second = subprocess.Popen(
+                [sys.executable, str(self.client), "second"],
+                cwd=self.root, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+            )
+            processes.append(second)
+            time.sleep(0.2)
+            (self.root / "release").touch()
+            for process, expected in zip(processes, ("first", "second")):
+                stdout, stderr = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 0, stderr + stdout)
+                self.assertEqual(stdout.strip(), expected)
+        finally:
+            (self.root / "release").touch()
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=5)
+
+    def test_busy_daemon_lock_times_out_before_starting_the_bridge(self):
+        self.env["COPILOT_AGENT_SESSION_ID"] = "mcp-test-shared"
+        self.env["COPILOT_MCP_CALL_TIMEOUT"] = "0.2"
+        directory = self.root / ".emacs.d"
+        directory.mkdir()
+        self.executable("copilot-emacs-mcp", "raise RuntimeError('bridge must not start')")
+        with (directory / "copilot-mcp-test.call.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            result = self.invoke()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no evaluation was sent", result.stderr)
+        self.assertNotIn("bridge must not start", result.stderr)
+
+    def test_different_daemons_have_independent_invocation_locks(self):
+        helper = self.load_script("copilot-emacs-mcp-call")
+        self.env["COPILOT_AGENT_SESSION_ID"] = "first-daemon"
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            with helper.invocation_lock(0.2):
+                with mock.patch.dict(os.environ, {"COPILOT_AGENT_SESSION_ID": "second-daemon"}):
+                    with helper.invocation_lock(0.2):
+                        pass
+
+    def test_invocation_failure_releases_the_daemon_lock(self):
+        helper = self.load_script("copilot-emacs-mcp-call")
+        self.env["COPILOT_AGENT_SESSION_ID"] = "mcp-test-shared"
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "fixture failure"):
+                with helper.invocation_lock(0.2):
+                    raise RuntimeError("fixture failure")
+            with helper.invocation_lock(0.2):
+                pass
+
+
+class ShellStartupTests(HelperTestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "macOS terminal-session integration")
+    def test_macos_session_restore_is_only_enabled_for_real_terminals(self):
+        self.env.update(TERM_PROGRAM="Apple_Terminal", TERM_SESSION_ID="fixture-terminal")
+        (self.root / ".zshenv").symlink_to(DOTFILES / "zshenv")
+        session_dir = self.root / ".zsh_sessions"
+        session_dir.mkdir()
+        session_file = session_dir / "fixture-terminal.session"
+        restored = self.root / "restored"
+        seed = 'printf restored > "$HOME/restored"\n'
+        command = 'printf "%s" "${SHELL_SESSION_DID_INIT:-0}" > "$HOME/session-init"'
+        for terminal, term in ((False, "xterm-256color"),
+                               (True, "xterm-256color"), (True, "dumb")):
+            with self.subTest(terminal=terminal, term=term):
+                self.env["TERM"] = term
+                restored.unlink(missing_ok=True)
+                session_file.write_text(seed)
+                argv = ["zsh", "-i", "-c", command]
+                if terminal:
+                    master, slave = os.openpty()
+                    try:
+                        with subprocess.Popen(
+                            argv, cwd=self.root, env=self.env, stdin=slave,
+                            stdout=slave, stderr=subprocess.PIPE, text=True,
+                        ) as process:
+                            _, stderr = process.communicate(timeout=10)
+                            self.assertEqual(process.returncode, 0, stderr)
+                    finally:
+                        os.close(slave)
+                        os.close(master)
+                else:
+                    result = self.run_command(argv)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                enabled = terminal and term != "dumb"
+                self.assertEqual((self.root / "session-init").read_text(), "1" if enabled else "0")
+                self.assertEqual(restored.exists(), enabled)
+                if not enabled:
+                    self.assertEqual(session_file.read_text(), seed)
+
+    def test_headless_interactive_shell_keeps_shared_config_without_terminal_frameworks(self):
+        self.env["CODESPACES"] = "true"
+        self.executable("starship", "raise RuntimeError('prompt must not start')")
+        (self.root / ".shared_shell_configs").write_text(
+            "export SHARED_SHELL_CONFIGS=1\nfixture_shared() { printf shared-ready; }\n"
+        )
+        result = self.run_command([
+            "zsh", "-f", "-i", "-c",
+            f"source {shlex.quote(str(DOTFILES / 'zshrc'))} && "
+            "fixture_shared && printf '\\n' && alias ls && "
+            "if [[ $OSTYPE == darwin* ]]; then functions ec >/dev/null; fi",
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn("shared-ready", result.stdout)
+        self.assertIn("ls=", result.stdout)
+
+    def test_terminal_shell_still_loads_prompt_plugins_and_highlighting(self):
+        self.env.update(SHARED_SHELL_CONFIGS="1", TERM="xterm-256color",
+                        HOMEBREW_PREFIX=str(self.root / "brew"))
+        highlighting = self.root / "brew/share/zsh-syntax-highlighting"
+        highlighting.mkdir(parents=True)
+        (highlighting / "zsh-syntax-highlighting.zsh").write_text(
+            'printf "highlighting\\n" >> "$HOME/startup"\n'
+        )
+        framework = self.root / ".oh-my-zsh"
+        framework.mkdir()
+        (framework / "oh-my-zsh.sh").write_text(
+            'printf "plugins: %s\\n" "${plugins[*]}" >> "$HOME/startup"\n'
+        )
+        self.executable("starship", """print('printf "prompt\\\\n" >> "$HOME/startup"')""")
+        master, slave = os.openpty()
+        try:
+            with subprocess.Popen(
+                ["zsh", "-f", "-i", "-c", f"source {shlex.quote(str(DOTFILES / 'zshrc'))}"],
+                cwd=self.root, env=self.env, stdin=slave, stdout=slave,
+                stderr=subprocess.PIPE, text=True,
+            ) as process:
+                _, stderr = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0, stderr)
+                self.assertEqual(stderr, "")
+        finally:
+            os.close(slave)
+            os.close(master)
+        self.assertEqual((self.root / "startup").read_text().splitlines(), [
+            "highlighting", "prompt", "plugins: macos brew kubectl python pip ruby gpg-agent golang",
+        ])
+
 
 class CopyTests(SecretiveTransportTestCase):
     def test_local_session_artifact_uses_explicit_copy_transport(self):
@@ -1956,6 +2140,67 @@ os.execv("/bin/sh", ["sh", "-c", sys.argv[2], sys.argv[3]])
                 (let ((plan (make-string 64 ?a)))
                   (copilot-cs-endorse "push" plan (concat plan ":replacement") 0 t)))))"""
         )
+
+
+class EglotReconnectTests(HelperTestCase):
+    def test_codespace_servers_cannot_autoreconnect_after_shutdown(self):
+        for root in ("/ghcs:test-codespace:/workspaces/test/",
+                     "/ssh:test-host:/workspaces/test/", str(self.root) + "/"):
+            for existing in (False, True):
+                for delayed in (False, True):
+                    with self.subTest(root=root, existing=existing, delayed=delayed):
+                        configure = (
+                            "(puthash project (list server) eglot--servers-by-project)"
+                            "(copilot-cs-eglot-configure)"
+                            if existing else
+                            "(run-hook-with-args 'eglot-connect-hook server)"
+                        )
+                        policy = (
+                            """(run-at-time
+                                 0.1 nil
+                                 (lambda ()
+                                   (setq timer-fired t)
+                                   (setf (eglot--inhibit-autoreconnect server) nil)))"""
+                            if delayed else "nil"
+                        )
+                        output = self.emacs(
+                            f"""(progn
+                              (require 'copilot-cs-eglot)
+                              (require 'tramp)
+                              (add-to-list 'tramp-methods
+                                           '("ghcs" (tramp-login-program "false")))
+                              (let* ((eglot--servers-by-project (make-hash-table :test #'equal))
+                                     (project (cons 'transient {json.dumps(root)}))
+                                     (process (make-process
+                                               :name "eglot-fixture" :command '("cat")
+                                               :connection-type 'pipe :noquery t))
+                                     (server (make-instance
+                                              'eglot-lsp-server :name "eglot-fixture"
+                                              :process process
+                                              :on-shutdown #'eglot--on-shutdown))
+                                     (reconnects 0)
+                                     (timer-fired nil)
+                                     (timer {policy}))
+                                (unwind-protect
+                                    (cl-letf (((symbol-function 'eglot-reconnect)
+                                               (lambda (&rest _) (cl-incf reconnects))))
+                                      (setf (eglot--project server) project
+                                            (eglot--inhibit-autoreconnect server) timer)
+                                      {configure}
+                                      (sleep-for 0.2)
+                                      (delete-process process)
+                                      (accept-process-output nil 0.05)
+                                      (prin1 (list reconnects
+                                                   (eq (eglot--inhibit-autoreconnect server) t)
+                                                   timer-fired)))
+                                  (when (timerp timer) (cancel-timer timer))
+                                  (setf (eglot--shutdown-requested server) t)
+                                  (when (process-live-p process) (delete-process process)))))"""
+                        )
+                        expected = "(0 t nil)" if root.startswith("/ghcs:") else (
+                            "(1 nil t)" if delayed else "(1 nil nil)"
+                        )
+                        self.assertEqual(output, expected)
 
 
 class DaemonReuseTests(HelperTestCase):

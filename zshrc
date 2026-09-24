@@ -79,25 +79,25 @@ if [[ $OSTYPE == darwin* || $CODESPACES ]]; then
 
 fi
 
-# Set up ZSH syntax highlighting
-source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+# Headless interactive commands need shell configuration, not shared completion caches.
+if [[ -t 0 && -t 1 && $TERM != "dumb" ]]; then
+	source "$HOMEBREW_PREFIX/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 
-eval "$(starship init zsh)"
+	eval "$(starship init zsh)"
 
-# Example format: plugins=(rails git textmate ruby lighthouse)
-# Add wisely, as too many plugins slow down shell startup.
-plugins=(
-	macos
-	brew
-	kubectl
-	python
-	pip
-	ruby
-	gpg-agent
-	golang
-)
-# shellcheck source=/dev/null
-source "$ZSH/oh-my-zsh.sh"
+	plugins=(
+		macos
+		brew
+		kubectl
+		python
+		pip
+		ruby
+		gpg-agent
+		golang
+	)
+	# shellcheck source=/dev/null
+	source "$ZSH/oh-my-zsh.sh"
+fi
 
 # Set personal aliases, overriding those provided by oh-my-zsh libs,
 # plugins, and themes. Aliases can be placed here, though oh-my-zsh
@@ -130,7 +130,7 @@ if [[ $OSTYPE == darwin* ]]; then
 	}
 fi
 
-if [[ $TERM == "dumb" ]]; then
+if [[ $TERM == "dumb" || ! -t 0 || ! -t 1 ]]; then
 	# Don't use the zsh line editor.
 	unsetopt zle
 	PS1='$ '

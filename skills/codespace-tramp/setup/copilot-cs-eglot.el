@@ -133,9 +133,23 @@ Sorbet is selected when the project contains `sorbet/config'."
       (cl-remf foreign-message :requestMethod))
     (list connection foreign-message)))
 
+(defun copilot-cs-eglot--inhibit-autoreconnect (server)
+  "Prevent SERVER from restarting a stopped Codespace without approval."
+  (when-let* ((project (eglot--project server))
+              (root (project-root project))
+              ((copilot-cs-eglot--ghcs-root-p root)))
+    (let ((timer (eglot--inhibit-autoreconnect server)))
+      (when (timerp timer)
+        (cancel-timer timer)))
+    (setf (eglot--inhibit-autoreconnect server) t)))
+
 (defun copilot-cs-eglot-configure ()
   "Install Codespace-aware Ruby and Go Eglot configuration."
   (add-hook 'project-find-functions #'copilot-cs-eglot-project-find)
+  (add-hook 'eglot-connect-hook #'copilot-cs-eglot--inhibit-autoreconnect)
+  (maphash (lambda (_project servers)
+             (mapc #'copilot-cs-eglot--inhibit-autoreconnect servers))
+           eglot--servers-by-project)
   (add-to-list
    'eglot-server-programs
    '((ruby-mode ruby-ts-mode) . copilot-cs-eglot-ruby-contact))

@@ -220,6 +220,7 @@ The implementation deliberately fails closed:
 - Minimal Codespace setup installs missing Git LFS before returning, so the shared configuration's required filters work even for `git status`. It does not disable filters to hide a missing dependency.
 - Local session artifacts use the explicit Secretive-backed copy transport. They do not gain access through Emacs' Codespace-only file guard; see the [session-patch workflow](references/emacs-tramp-patterns.md#transferring-session-patches).
 - Codespace Eglot servers are launched only through the Secretive-backed transport and receive repository paths with the TRAMP prefix removed.
+- Codespace Eglot servers cannot automatically reconnect and restart a stopped Codespace. Reconnection requires an explicit availability check and any necessary start approval; local and other SSH language servers keep their usual behaviour.
 - GitHub API and pull-request operations use local `gh`; local credentials are not transferred into the Codespace.
 - Repository readiness must be rechecked after a base-branch refresh. Skipped hooks, expired coverage artifacts, and dry-run test listings are not successful validation. A Codespace signer rejecting a preserved author is not permission to silently change authorship.
 - Remote jobs default an unset or empty `LANG` to `C.UTF-8`; explicit `LANG`, `LC_ALL`, and `LC_CTYPE` settings retain their normal precedence. Local test-mode jobs do not change the operator's locale.
@@ -249,6 +250,8 @@ The workflow is designed so a transport failure does not automatically discard t
 - `copilot-emacs-mcp-call` is the canonical entrypoint, performing the MCP initialization and `tools/call` exchange without depending on Copilot's in-memory native-tool registry.
 
 The direct client is protocol-aware: unlike piping one JSON-RPC line into the bridge, it keeps stdin open until the matching response arrives. Its bounded byte-stream reader handles coalesced notifications and incomplete frames. Protocol errors, `isError` results, and the Emacs provider's bare `Error:` diagnostics produce nonzero exit statuses; quoted successful string results remain data. It never automatically resubmits an evaluation; a timed-out mutation must be checked through the job registry first.
+
+Calls to one daemon queue behind a per-daemon invocation lock before starting a bridge, preventing overlapping evaluations or helper reloads. Queue and response waits are bounded separately; a queue timeout reports that no evaluation was sent. Detached remote jobs still run concurrently, and other daemons remain independent. Local headless zsh skips terminal prompt/completion frameworks while retaining shared configuration and custom aliases/functions; real terminal sessions keep their normal plugins. The early `~/.zshenv` installed by `script/setup` also disables macOS terminal-session restoration for headless shells, before the system's session hooks load.
 
 ## Components
 

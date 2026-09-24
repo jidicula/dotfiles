@@ -108,6 +108,9 @@ each of these must be set up on the operator's machine:
     `eval-elisp`. It keeps the stdio transport open until the matching JSON-RPC
     response arrives, so Codespace work can continue if Copilot's in-memory
     tool registry temporarily rejects or omits `emacs-codespace-eval-elisp`.
+    Calls to the same daemon queue before bridge startup, avoiding re-entrant
+    MCP/Eglot evaluations. Queueing has its own bounded wait and never replays
+    an expression; different daemons and detached remote jobs remain independent.
   - `setup/copilot-mcp-init.el` — the daemon's `emacs -Q` init: MCP server,
     TRAMP/`ghcs`, detached jobs, and Codespace-hosted Eglot.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
@@ -613,6 +616,10 @@ done
 [ "$state" = "Available" ] || { echo "not Available after timeout"; exit 1; }
 ```
 
+If the deadline expires, retain the immutable Codespace name and report its
+last state. Recheck that same Codespace before resuming; a late transition to
+`Available` is not a reason to create a duplicate or wait without a deadline.
+
 Run this as one synchronous shell call with a long `initial_wait` (it returns as
 soon as the state is `Available`), or asynchronously and read once. To start a
 reused `Shutdown` Codespace after the required user confirmation, initiate one
@@ -690,6 +697,13 @@ connection: the first command opens the only Secretive signing request instead
 of racing two simultaneous SSH connections. Later handshakes share the
 transport's signing gate.
 
+Before creating a new task branch, compare the checkout with the requested
+base revision. A fresh Codespace can contain an older prebuild. If necessary,
+fetch the named base through the login-aware runner and create the new branch
+from the requested revision before editing or bootstrapping. Preserve existing
+work, reused branches, and explicitly requested historical revisions; never
+reset or rebase them merely to refresh a prebuild.
+
 The minimal Codespace path in this dotfiles repository's `script/setup`
 installs missing Git LFS before returning: the shared Git config enables
 required LFS filters, which can run even during `git status`. For an older
@@ -731,6 +745,13 @@ Lines are one-based and columns are zero-based. Ruby projects use Sorbet when
 `sorbet/config` exists and Ruby LSP otherwise; Go projects use gopls. The
 server executable must already be available in the Codespace. Remote Sorbet
 automatically disables Watchman when it is unavailable.
+
+Codespace Eglot servers do not reconnect automatically after a disconnect:
+opening SSH could restart a billable Codespace without approval. Local and
+other SSH language servers retain their usual reconnection behaviour. Before
+explicitly starting Eglot again, confirm the Codespace is `Available`; obtain
+operator approval if it needs starting. Reloading the shared configuration
+also applies this guard to already connected Codespace servers.
 
 The Eglot transport is the sole exception to the rule against direct remote
 processes. The preloaded helper launches a local `copilot-ghcs` process whose
@@ -818,12 +839,26 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   and the overall wait, surface an expired readiness deadline, and only rerun
   the failed validation after readiness succeeds. Do not restart shared services
   or change their configuration merely because they are still starting.
+- Probe the actual application endpoint and credentials selected by the
+  repository, not a different default socket. A command such as `mysqladmin
+  ping` can exit successfully after an authentication error; require the
+  documented successful response or a read-only application query.
 - Check required executables in the same runner environment used for
   validation. A completed devcontainer bootstrap can omit tools that its CI
   image installs separately. After a missing-dependency failure, use the
   repository's dependency declarations or image setup to install the missing
   tool inside the Codespace, then rerun the failed command. Do not install it
   locally or treat bootstrap completion as proof that lint/tests can run.
+- Check versions as well as executable presence. Match repository/CI compiler,
+  analyser and formatter pins; a newer default-image tool can be incompatible
+  too. Scope version selections to the affected jobs rather than changing
+  global tool defaults. Complete shared toolchain installation before starting
+  parallel jobs that could each trigger the same installer.
+- The editor's devcontainer `remoteEnv` is not necessarily present in an SSH
+  job. Read the repository's wrapper/configuration and pass required reviewed,
+  non-secret values (for example its Compose-file selector) explicitly. Do not
+  import all editor environment values, copy credentials, or assume a login
+  shell recreates the editor environment.
 - For a hook that requires a terminal, publish using
   `(copilot-cs-tty-sh "git push ...")` once readiness is established. This
   allocates a PTY inside the detached remote job, not on the local SSH stream,

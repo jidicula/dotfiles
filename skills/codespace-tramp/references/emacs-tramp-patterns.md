@@ -25,6 +25,14 @@ call might have done so. In the latter case inspect status and recover the
 known job before deciding to repeat any command. The direct client never resubmits
 an evaluation automatically.
 
+Canonical clients take a per-daemon invocation lock **before** starting the
+bridge. This serialises local MCP evaluations and helper reloads, not detached
+remote jobs. A waiting client gets a fresh response budget when admitted.
+`COPILOT_MCP_CALL_TIMEOUT` bounds both the queue wait and each response wait
+separately. A queue timeout explicitly says no evaluation was sent; a response
+timeout still requires inspecting the original job. Never delete a busy lock
+or resubmit a timed-out mutation. Other sessions' daemons have separate locks.
+
 ## Golden rules
 
 1. **Run every command whose execution environment is the Codespace with
@@ -172,6 +180,18 @@ login environment they require.
 For other commands that need the Codespace's login environment, use
 `copilot-cs-login-sh` as described below.
 
+The operator's local `source ~/.shared_shell_configs` convention is not a
+remote prerequisite. Minimal/default Codespace images may intentionally lack
+that file; send the remote command through the runner rather than sourcing a
+nonexistent local dotfile or installing the operator's entire shell setup.
+Local headless zsh invocations still load shared configuration and custom
+aliases/functions, but skip prompt/completion frameworks and their shared
+caches. Terminal sessions retain those frameworks and their plugin aliases.
+`script/setup` also links the early `zshenv` guard as `~/.zshenv`: macOS loads
+its terminal-session restoration before `.zshrc`, so suppressing that work
+there would be too late. Headless shells leave the parent terminal's saved
+session untouched; real terminals keep session restoration.
+
 For a non-interactive command whose hook insists on a terminal, use the
 explicit remote-PTY helper instead:
 
@@ -318,6 +338,14 @@ The configured servers are:
 The same contacts are loaded by the operator's `init.el`, so visiting a
 Codespace file interactively and running Eglot uses the remote server transport
 without any Copilot-specific setup.
+
+Automatic reconnection is disabled only for `/ghcs:` servers, including
+already connected servers when this configuration is reloaded. The guard also
+cancels Eglot's delayed autoreconnect timer: otherwise a later timer can undo
+the guard and an SSH reconnect can restart a stopped Codespace. On
+`state=disconnected`, check availability and obtain approval for any restart
+before calling `copilot-cs-eglot-start` again. Local and other SSH servers
+keep their existing reconnection policy.
 
 ### Recovering from an unavailable optional native tool
 
@@ -601,6 +629,12 @@ coordinate with other writers and stop on changed state.
 
 ### Validation readiness and missing artifacts
 
+For a new task, verify the requested base before editing: a new Codespace can
+still contain a stale prebuild. Fetch the named base inside the Codespace and
+create the new task branch from it when appropriate. Do not reset a dirty
+checkout, rewrite a reused branch, or replace an explicitly requested older
+revision with the latest default branch.
+
 After refreshing a base branch, run the repository's documented readiness
 check in the Codespace before tests or publication. A container can be
 `Available` with dependencies from an older revision. If readiness fails, run
@@ -619,11 +653,41 @@ explicitly; do not silently continue, restart shared services, or change their
 configuration. Once ready, rerun the actual failed validation rather than
 assuming that an open service port proves the tests passed.
 
+Use the host, port and authentication path the application actually uses.
+For example, `mysqladmin ping` can return zero after printing access denied,
+and a healthy default socket says nothing about another configured TCP port.
+Require the repository's documented healthy response or a read-only query
+through its application configuration. Do not print credentials or replace
+authentication checks with a TCP-connect-only probe.
+
 Check tool availability in the same plain or login runner used for the check.
 Some devcontainers' bootstrap scripts omit packages present in their CI image.
 If a check reports a missing executable, install that repository-declared
 dependency inside the Codespace and rerun the actual check; do not change the
 operator's local environment or disable the check.
+
+Also compare actual versions with the repository's manifests, toolchain files
+and CI setup. A newer compiler can produce export data an older pinned
+analyser cannot read. For Go, select the declared supported toolchain through
+job-scoped `GOTOOLCHAIN`, not `go env -w` or a global upgrade. For Rust, install
+the declared toolchain/components once and wait for completion before parallel
+Cargo/formatter jobs; a stable compiler does not satisfy a separately pinned
+nightly formatter. Apply the same check to utility versions such as `jq`.
+Install only after a missing/incompatible dependency is established, and
+rerun the original failing check.
+
+The devcontainer editor's `remoteEnv` is separate from the SSH/login
+environment. Compare required **non-secret** selectors with the repository's
+documented wrapper: a missing `COMPOSE_FILE`, for example, can choose a
+different image while both Docker and Bundler are installed. Pass the reviewed
+selector explicitly to the affected job. Do not bulk-evaluate devcontainer
+JSON, dump environment variables, or copy editor credentials.
+
+A private-package 401/403 is an access failure, not a missing dependency to
+replace. Check the documented package/repository grants with existing
+authentication, then stop for the operator if access is unavailable. Never
+create a PAT, copy local credentials into the Codespace, substitute a package,
+or bypass the failed validation.
 
 Every remote job defaults an unset or empty `LANG` to `C.UTF-8` before starting
 its command, avoiding an implicit POSIX/US-ASCII environment. Explicit `LANG`,

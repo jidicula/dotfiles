@@ -160,6 +160,7 @@ else
 fi
 
 # Set up shell configs
+ln -sfv "$DOTFILESDIR/zshenv" "$HOME/.zshenv"
 ln -sfv "$DOTFILESDIR/zshrc" "$HOME/.zshrc"
 ln -sfv "$DOTFILESDIR/bashrc" "$HOME/.bashrc"
 ln -sfv "$DOTFILESDIR/shared_shell_configs" "$HOME/.shared_shell_configs"
