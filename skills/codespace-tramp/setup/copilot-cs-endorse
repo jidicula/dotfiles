@@ -100,7 +100,8 @@ def authenticated_operator():
 
 def validate_request(request):
     require(isinstance(request, dict), "expected an endorsement request object")
-    require(request.get("version") == 1, "unsupported endorsement request version")
+    require(type(request.get("version")) is int and request["version"] in (1, 2),
+            "unsupported endorsement request version")
     require(isinstance(request.get("repository"), str)
             and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]),
             "invalid repository")
@@ -265,7 +266,7 @@ def prepare(repository, number, key_path, *, committer=None):
     source = request["source_branch"]
     key = public_key(Path(key_path).expanduser().read_text())
     request.update(
-        version=1, target_branch=source + "-signed",
+        version=2, target_branch=source + "-signed",
         publication_options=["replacement"] + (
             ["replace"] if replacement_allowed(repository, source) else []),
         key=key, fingerprint=fingerprint(key), attestor=authenticated_operator(),
@@ -380,6 +381,26 @@ class Repository:
         return self.git("rev-list", "--reverse", "--topo-order",
                         request["head"], "^" + request["base"]).decode().splitlines()
 
+    def preserved_commits(self, request, commits):
+        introduced = set(commits)
+        preserved = set()
+        for oid in commits:
+            blocks, _ = self.commit(oid)
+            parents = [block[7:].decode("ascii") for block in blocks
+                       if block.startswith(b"parent ")]
+            if any(parent in introduced and parent not in preserved for parent in parents):
+                continue
+            signatures = [block[7:].replace(b"\n ", b"\n") + b"\n"
+                          for block in blocks if block.startswith(b"gpgsig ")]
+            if not signatures:
+                continue
+            require(len(signatures) == 1, "existing commit has multiple signature headers")
+            if signature_public_key(signatures[0]) != request["key"]:
+                continue
+            verify_signature(request["key"], self.payload(oid, {}), signatures[0])
+            preserved.add(oid)
+        return [oid for oid in commits if oid in preserved]
+
     def commit(self, oid):
         require(isinstance(oid, str) and OID.fullmatch(oid), "invalid commit object id")
         raw = self.git("cat-file", "commit", oid)
@@ -439,6 +460,10 @@ class Repository:
         reviewed_plan_request(plan, plan_id)
         require(plan["root"] == self.root, "select the worktree where this plan was reviewed")
         require(plan["commits"] == self.commits(plan["request"]), "reviewed commit range changed")
+        if plan["request"]["version"] == 2:
+            require(plan["preserved_commits"] ==
+                    self.preserved_commits(plan["request"], plan["commits"]),
+                    "previously endorsed commit selection changed")
         return plan
 
     def plan(self, request):
@@ -452,6 +477,10 @@ class Repository:
         for oid in commits:
             self.commit(oid)
         plan = {"request": request, "root": self.root, "commits": commits}
+        if request["version"] == 2:
+            plan["preserved_commits"] = self.preserved_commits(request, commits)
+            require(len(plan["preserved_commits"]) < len(commits),
+                    "no new commits require endorsement; resume the prior receipt instead")
         plan_id = digest(plan)
         target = "refs/heads/" + request["target_branch"]
         exists = self.git("for-each-ref", "--format=%(refname)", target).decode().splitlines()
@@ -470,12 +499,16 @@ class Repository:
         mapping = receipt["mapping"]
         require(isinstance(mapping, dict) and set(mapping) == set(plan["commits"]),
                 "signed commit mapping is incomplete")
+        preserved = set(plan.get("preserved_commits", []))
+        require(all(mapping[oid] == oid for oid in preserved),
+                "previously endorsed commits must remain unchanged")
         for index, original in enumerate(plan["commits"], 1):
             print(f"[copilot-cs-endorse] verifying {index}/{len(plan['commits'])}: {original}",
                   flush=True)
             signed = mapping[original]
             require(self.payload(signed, {}) ==
-                    self.payload(original, mapping, plan["request"].get("committer")),
+                    self.payload(original, mapping,
+                                 None if original in preserved else plan["request"].get("committer")),
                     f"signed commit content or metadata differs: {original}")
             blocks, _ = self.commit(signed)
             signatures = [block[7:].replace(b"\n ", b"\n") + b"\n"
@@ -519,12 +552,13 @@ class Repository:
                 socket = os.environ.get("COPILOT_CS_SIGNING_SOCKET", "")
                 require(socket and Path(socket).is_socket(), "forwarded Secretive socket is unavailable")
                 environment = dict(self.env, SSH_AUTH_SOCK=socket)
-                mapping = {}
+                mapping = {oid: oid for oid in plan.get("preserved_commits", [])}
+                pending = [oid for oid in plan["commits"] if oid not in mapping]
                 with tempfile.TemporaryDirectory(prefix="copilot-endorse-") as directory:
                     key_file = Path(directory) / "endorsement.pub"
                     key_file.write_text(key + "\n")
-                    for index, original in enumerate(plan["commits"], 1):
-                        print(f"[copilot-cs-endorse] signing {index}/{len(plan['commits'])}: {original}",
+                    for index, original in enumerate(pending, 1):
+                        print(f"[copilot-cs-endorse] signing {index}/{len(pending)}: {original}",
                               flush=True)
                         payload = self.payload(original, mapping, request.get("committer"))
                         signature = run(
@@ -583,6 +617,26 @@ def signed_commit(payload, signature):
             + b"\n\n" + message)
 
 
+def signature_public_key(signature):
+    lines = signature.strip().splitlines()
+    if not lines or lines[0] != b"-----BEGIN SSH SIGNATURE-----":
+        return None
+    require(len(lines) >= 3 and lines[-1] == b"-----END SSH SIGNATURE-----",
+            "malformed existing SSH signature")
+    envelope = base64.b64decode(b"".join(lines[1:-1]), validate=True)
+    require(len(envelope) >= 14 and envelope[:10] == b"SSHSIG\x00\x00\x00\x01",
+            "unsupported existing SSH signature envelope")
+    key_length = int.from_bytes(envelope[10:14], "big")
+    key = envelope[14:14 + key_length]
+    require(key_length >= 4 and len(key) == key_length,
+            "truncated existing SSH signature key")
+    algorithm_length = int.from_bytes(key[:4], "big")
+    require(0 < algorithm_length <= len(key) - 4,
+            "invalid existing SSH signature key algorithm")
+    algorithm = key[4:4 + algorithm_length].decode("ascii")
+    return public_key(algorithm + " " + base64.b64encode(key).decode("ascii"))
+
+
 def verify_signature(key, payload, signature):
     with tempfile.TemporaryDirectory(prefix="copilot-verify-") as directory:
         allowed = Path(directory) / "allowed"
@@ -612,6 +666,16 @@ def reviewed_plan_request(plan, plan_id):
             and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in commits)
             and len(set(commits)) == len(commits) and commits[-1] == request["head"],
             "invalid reviewed commit range")
+    if request["version"] == 2:
+        preserved = plan.get("preserved_commits")
+        require(isinstance(preserved, list)
+                and all(isinstance(oid, str) for oid in preserved)
+                and len(preserved) < len(commits)
+                and preserved == [oid for oid in commits if oid in set(preserved)],
+                "invalid previously endorsed commit selection")
+    else:
+        require("preserved_commits" not in plan,
+                "incremental endorsement requires a version 2 request")
     return request
 
 
@@ -626,6 +690,8 @@ def signed_receipt_request(receipt, approval):
             and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in mapping.values())
             and receipt.get("head") == mapping.get(request["head"]),
             "incomplete signed commit receipt")
+    require(all(mapping[oid] == oid for oid in receipt["plan"].get("preserved_commits", [])),
+            "previously endorsed commits must remain unchanged")
     return request, publication
 
 
@@ -673,7 +739,7 @@ def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=Fal
 def await_attestation(result):
     require(isinstance(result, dict) and all(key in result for key in
             ("request", "root", "commits", "plan_id")), "expected the complete planning result")
-    plan = {key: result[key] for key in ("request", "root", "commits")}
+    plan = {key: value for key, value in result.items() if key != "plan_id"}
     request = reviewed_plan_request(plan, result["plan_id"])
     require_passing_checks(request, request["pr"], request["head"], request["source_branch"],
                            require_draft=True)
@@ -1080,11 +1146,13 @@ def finish(receipt, approval):
     confirm_base_compatibility(request, merge_pr)
     branch = github(f"repos/{repository}/branches/{quote(target, safe='')}")
     require(branch["commit"]["sha"] == receipt["head"], "published signed branch changed")
+    preserved = set(plan.get("preserved_commits", []))
     for original in plan["commits"]:
         before = github(f"repos/{repository}/git/commits/{original}")
         after = github(f"repos/{repository}/git/commits/{receipt['mapping'][original]}")
         require(isinstance(before["committer"], dict), "invalid reviewed committer metadata")
-        expected_committer = {**before["committer"], **request.get("committer", {})}
+        override = {} if original in preserved else request.get("committer", {})
+        expected_committer = {**before["committer"], **override}
         require(before["tree"]["sha"] == after["tree"]["sha"]
                 and all(before[field] == after[field] for field in ("message", "author"))
                 and after["committer"] == expected_committer

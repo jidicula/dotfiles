@@ -40,7 +40,20 @@ and no request. Do not start a remote plan, ask for an endorsement, or forward
 the signing agent while either pre-endorsement gate is blocked. A cached request
 is not a substitute for checking the current revision.
 
-Preserve existing committer identity by default. If an override is needed,
+Preserve previously endorsed commits byte-for-byte. New version 2 plans verify
+existing SSH signatures against the selected endorsement key and retain commits
+whose introduced parents are also retained. Other signers do not count as the
+operator's endorsement; malformed or invalid matching-key signatures block planning.
+A changed parent requires reconstruction and a fresh signature on its descendants.
+The immutable `preserved_commits` list records what will not be re-signed; the
+remaining entries in `commits` are the exact signing scope. If none remain, do not
+request another endorsement: resume the prior receipt instead.
+
+Version 1 plans and receipts retain their original full-range signing semantics.
+Never edit an old plan, convert its version or reuse its approval for a new scope.
+Older helpers reject version 2 rather than silently rewriting preserved commits.
+
+Preserve committer identity on new commits by default. If an override is needed,
 pass `--committer-name "<name>" --committer-email "<email>"` to `prepare` as a
 proposal, without a separate permission prompt. Both values are required and
 become part of the immutable plan. Show the existing and proposed identities
@@ -49,7 +62,9 @@ change together with signing and the selected publication method. Preparing
 or planning the proposal changes no commits and grants no approval.
 Preparation checks the selected key against the authenticated operator's
 registered signing keys; the supplied email must belong to that account.
-Authors and all timestamps remain unchanged. Never change attribution or
+The override applies only to newly signed commits; preserved commits keep their
+existing identities and signatures. Authors and all timestamps remain unchanged.
+Never change attribution or
 Git/Secretive settings automatically to obtain GitHub's verification badge.
 
 `gh api user/emails` is an optional identity diagnostic, not a required
@@ -183,6 +198,8 @@ Include CCR's outcome, full review URL and any unresolved findings, especially
 when human review is recommended. Explain why CCR was skipped if unavailable.
 Show head/base OIDs, commit count/range, key fingerprint, plan ID, any proposed
 committer change and material validation limitations below the question.
+Distinguish the complete reviewed range from the commits requiring signatures,
+and explicitly list the previously endorsed commits that retain their IDs.
 For a committer proposal, show the existing identities and proposed name/email,
 confirm that authors and timestamps stay unchanged, and state that endorsement
 also approves this change. Include any verified-email confirmation here.
@@ -218,8 +235,9 @@ for the signer.
 The helper reconstructs raw commits rather than using `rebase --exec`. It
 preserves trees, messages, authors, timestamps, empty commits and merge parent
 order. Committer name/email are preserved unless the approved plan explicitly
-supplies them. It replaces introduced commits' signatures with the designated
-endorsement; base history is untouched. `ssh-keygen -Y verify` checks the exact
+supplies them. It replaces only the planned new commits' signatures with the
+designated endorsement; previously endorsed commits and base history are untouched.
+The receipt includes identity mappings for preserved commits. `ssh-keygen -Y verify` checks the exact
 key. Reconstruction does not run commit hooks: validate beforehand, and keep
 publication's push hooks enabled. No signed branch exists until every commit
 verifies.

@@ -296,3 +296,5 @@ The cases cover local-only Git config and tag signing, unsigned agent jobs, key-
 Unexpected MCP, Emacs, TRAMP, SSH, Codespace, or runner behaviour must be recorded immediately in [`ISSUES.md`](ISSUES.md), even when a workaround is available or the problem is fixed in the same session.
 
 Reports describe observable symptoms only. Updates are serialized through `setup/copilot-issues-lock` so concurrent Copilot sessions cannot overwrite each other's issue-log or Git-index changes.
+
+Filing or resolving a problem still stages `ISSUES.md`, but its changes must never be committed, including through a request to commit all staged changes. Commits of other dotfiles changes hold the same lock, temporarily exclude the log from the index, and restore its previous staging state afterward, including on failure. The [skill's issue-log protocol](SKILL.md#record-problems-for-follow-up) describes the required sequence; the log's working-copy contents must remain intact.

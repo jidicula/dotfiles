@@ -59,6 +59,7 @@ class EndorsementTestCase(HelperTestCase):
         )
         self.key_file = self.root / "test-only"
         self.command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.key_file))
+        self.key_file.chmod(0o600)
         self.key = self.helper.public_key(Path(str(self.key_file) + ".pub").read_text())
         self.agent = subprocess.Popen(
             ["ssh-agent", "-D", "-a", self.env["SSH_AUTH_SOCK"]],
@@ -160,6 +161,19 @@ class EndorsementTestCase(HelperTestCase):
         self.git(remote, "update-ref", "refs/heads/main", oid)
         return oid
 
+    def follow_up(self, previous, count=3):
+        self.git("checkout", "--quiet", "-b", "followup", previous["head"])
+        added = []
+        for index in range(count):
+            self.git("commit", "--quiet", "--allow-empty", "-m", f"followup {index}")
+            added.append(self.git("rev-parse", "HEAD").strip())
+        self.request.update(
+            version=2, source_branch="followup", target_branch="followup-signed",
+            head=self.git("rev-parse", "HEAD").strip(),
+        )
+        self.git("push", "--quiet", "origin", "followup")
+        return added
+
     def commit_data(self, oid):
         raw = self.repository.git("cat-file", "commit", oid)
         result = json.loads(self.git(
@@ -182,6 +196,151 @@ class EndorsementTestCase(HelperTestCase):
         }
         self.assertEqual(hashlib.sha1(b"commit " + str(len(raw)).encode() + b"\0" + raw).hexdigest(), oid)
         return result
+
+
+class IncrementalEndorsementTests(EndorsementTestCase):
+    def test_only_three_new_commits_are_signed_and_prior_two_are_byte_identical(self):
+        previous = self.sign()
+        added = self.follow_up(previous)
+        preserved = list(previous["mapping"].values())
+        before = {oid: self.repository.git("cat-file", "commit", oid) for oid in preserved}
+        self.freeze()
+        self.assertEqual(self.plan["commits"], preserved + added)
+        self.assertEqual(self.plan["preserved_commits"], preserved)
+        output = io.StringIO()
+        with redirect_stdout(output), mock.patch.object(
+                self.helper, "run", wraps=self.helper.run) as commands:
+            receipt = self.repository.sign(self.plan_id, self.approve("replace"))
+        signatures = [call for call in commands.call_args_list
+                      if call.args[0][:3] == ["ssh-keygen", "-Y", "sign"]]
+        self.assertEqual(len(signatures), 3)
+        self.assertIn("signing 1/3:", output.getvalue())
+        self.assertIn("signing 3/3:", output.getvalue())
+        for oid in preserved:
+            self.assertEqual(receipt["mapping"][oid], oid)
+            self.assertEqual(self.repository.git("cat-file", "commit", oid), before[oid])
+        for oid in added:
+            self.assertNotEqual(receipt["mapping"][oid], oid)
+            self.assertEqual(self.repository.payload(receipt["mapping"][oid], {}),
+                             self.repository.payload(oid, receipt["mapping"]))
+        first_parent = self.git("show", "-s", "--format=%P", receipt["mapping"][added[0]]).strip()
+        self.assertEqual(first_parent, previous["head"])
+        self.assertEqual(self.git("rev-parse", "followup").strip(), self.request["head"])
+        self.assertEqual(self.repository.verify(self.plan_id), receipt)
+        self.repository.push(self.plan_id, self.approve("replace"))
+        self.assertEqual(self.remote_head("followup"), receipt["head"])
+        with mock.patch.object(self.helper, "signed_commit", side_effect=AssertionError("resigned")):
+            self.assertEqual(self.repository.sign(self.plan_id, self.approve("replace")), receipt)
+
+    def test_committer_proposal_applies_only_to_new_commits(self):
+        previous = self.sign()
+        added = self.follow_up(previous)
+        preserved = list(previous["mapping"].values())
+        self.request["committer"] = {"name": "New Endorser", "email": "new@example.invalid"}
+        receipt = self.sign()
+        for oid in preserved:
+            self.assertEqual(receipt["mapping"][oid], oid)
+            self.assertEqual(self.commit_data(oid)["committer"]["name"], "Fixture Author")
+        for oid in added:
+            self.assertEqual(self.commit_data(receipt["mapping"][oid])["committer"]["name"],
+                             "New Endorser")
+        self.repository.verify(self.plan_id)
+
+    def test_another_signing_key_does_not_count_as_prior_endorsement(self):
+        previous = self.sign()
+        self.follow_up(previous)
+        key = self.root / "other-test-only"
+        self.command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key))
+        key.chmod(0o600)
+        public = self.helper.public_key(Path(str(key) + ".pub").read_text())
+        self.request.update(key=public, fingerprint=self.helper.fingerprint(public))
+        self.freeze()
+        self.assertEqual(self.plan["preserved_commits"], [])
+
+    def test_a_signed_descendant_with_an_unsigned_parent_must_be_reconstructed(self):
+        self.git("-c", "gpg.format=ssh", "-c", f"user.signingkey={self.key_file}",
+                 "commit", "--quiet", "--allow-empty", "-S", "-m", "signed descendant")
+        self.request.update(version=2, head=self.git("rev-parse", "HEAD").strip())
+        self.git("push", "--quiet", "origin", "feature")
+        receipt = self.sign()
+        self.assertEqual(self.plan["preserved_commits"], [])
+        self.assertNotEqual(receipt["mapping"][self.request["head"]], self.request["head"])
+
+    def test_corrupt_matching_key_signature_blocks_planning(self):
+        previous = self.sign()
+        original = previous["mapping"][self.first]
+        raw = self.repository.git("cat-file", "commit", original) + b"tampered message\n"
+        corrupt = self.repository.git(
+            "hash-object", "-t", "commit", "-w", "--stdin", data=raw,
+        ).decode().strip()
+        self.follow_up({"head": corrupt}, count=1)
+        records = sorted(self.repository.state.glob("*.plan.json"))
+        with self.assertRaisesRegex(RuntimeError, "ssh-keygen failed"):
+            self.freeze()
+        self.assertEqual(sorted(self.repository.state.glob("*.plan.json")), records)
+
+    def test_fully_endorsed_history_does_not_request_more_signatures(self):
+        previous = self.sign()
+        self.follow_up(previous, count=0)
+        with self.assertRaisesRegex(ValueError, "no new commits require endorsement"):
+            self.freeze()
+
+    def test_preserved_selection_is_immutable_and_cannot_be_rewritten_in_receipt(self):
+        previous = self.sign()
+        self.follow_up(previous)
+        receipt = self.sign()
+        original = self.plan["preserved_commits"][0]
+        modified = copy.deepcopy(receipt)
+        modified["mapping"][original] = self.base
+        with self.assertRaisesRegex(ValueError, "must remain unchanged"):
+            self.helper.signed_receipt_request(modified, self.approve())
+        path = self.repository.state / f"{self.plan_id}.receipt.json"
+        path.write_text(json.dumps(modified))
+        with self.assertRaisesRegex(ValueError, "must remain unchanged"):
+            self.repository.verify(self.plan_id)
+        plan = {key: copy.deepcopy(value) for key, value in self.plan.items() if key != "plan_id"}
+        plan["preserved_commits"] = []
+        with self.assertRaisesRegex(ValueError, "digest is invalid"):
+            self.helper.reviewed_plan_request(plan, self.plan_id)
+
+    def test_invalid_incremental_selections_are_rejected(self):
+        previous = self.sign()
+        self.follow_up(previous)
+        self.freeze()
+        plan = {key: value for key, value in self.plan.items() if key != "plan_id"}
+        for preserved in (None, {}, [self.base], [plan["commits"][0]] * 2,
+                          list(reversed(plan["preserved_commits"])), plan["commits"]):
+            with self.subTest(preserved=preserved):
+                changed = dict(plan, preserved_commits=preserved)
+                with self.assertRaisesRegex(ValueError, "previously endorsed commit selection"):
+                    self.helper.reviewed_plan_request(changed, self.helper.digest(changed))
+
+    def test_legacy_plans_keep_their_original_full_range_semantics(self):
+        previous = self.sign()
+        self.follow_up(previous)
+        self.request["version"] = 1
+        self.freeze()
+        self.assertNotIn("preserved_commits", self.plan)
+        with mock.patch.object(self.helper, "run", wraps=self.helper.run) as commands:
+            self.repository.sign(self.plan_id, self.approve())
+        signatures = [call for call in commands.call_args_list
+                      if call.args[0][:3] == ["ssh-keygen", "-Y", "sign"]]
+        self.assertEqual(len(signatures), 5)
+        plan = {key: value for key, value in self.plan.items() if key != "plan_id"}
+        plan["preserved_commits"] = list(previous["mapping"].values())
+        with self.assertRaisesRegex(ValueError, "requires a version 2 request"):
+            self.helper.reviewed_plan_request(plan, self.helper.digest(plan))
+
+    def test_malformed_ssh_envelopes_fail_explicitly(self):
+        self.assertIsNone(self.helper.signature_public_key(b"-----BEGIN PGP SIGNATURE-----\n"))
+        for envelope in (b"", b"SSHSIG\x00\x00\x00\x02",
+                         b"SSHSIG\x00\x00\x00\x01\x00\x00\x00\x64short",
+                         b"SSHSIG\x00\x00\x00\x01\x00\x00\x00\x04\x00\x00\x00\x01"):
+            signature = (b"-----BEGIN SSH SIGNATURE-----\n"
+                         + self.helper.base64.b64encode(envelope)
+                         + b"\n-----END SSH SIGNATURE-----\n")
+            with self.subTest(envelope=envelope), self.assertRaises(ValueError):
+                self.helper.signature_public_key(signature)
 
 
 class SignedHistoryTests(EndorsementTestCase):
@@ -212,6 +371,7 @@ class SignedHistoryTests(EndorsementTestCase):
     def test_ecdsa_agent_signatures_verify_with_native_git(self):
         key = self.root / "test-only-ecdsa"
         self.command("ssh-keygen", "-q", "-t", "ecdsa", "-b", "256", "-N", "", "-f", str(key))
+        key.chmod(0o600)
         self.command("ssh-add", str(key))
         public = self.helper.public_key(Path(str(key) + ".pub").read_text())
         self.request.update(key=public, fingerprint=self.helper.fingerprint(public))
@@ -221,6 +381,8 @@ class SignedHistoryTests(EndorsementTestCase):
         allowed.write_text("endorser " + public + "\n")
         self.git("-c", "gpg.format=ssh", "-c", f"gpg.ssh.allowedSignersFile={allowed}",
                  "verify-commit", receipt["head"])
+        signature = self.commit_data(receipt["head"])["verification"]["signature"].encode()
+        self.assertEqual(self.helper.signature_public_key(signature), public)
 
     def test_signatures_preserve_empty_commits_metadata_and_worktree(self):
         before = self.git("status", "--porcelain")
@@ -859,6 +1021,7 @@ class PublicationTests(EndorsementTestCase):
 class GitHubEndorsementTests(EndorsementTestCase):
     def setUp(self):
         super().setUp()
+        self.request["version"] = 2
         self.receipt = self.sign()
         self.original = {
             "number": 12, "node_id": "PR_original",
@@ -1530,7 +1693,7 @@ class GitHubEndorsementTests(EndorsementTestCase):
         result["request"]["attestor"] = "other"
         with self.assertRaisesRegex(ValueError, "plan changed"):
             self.helper.await_attestation(result)
-        plan = {key: copy.deepcopy(self.plan[key]) for key in ("request", "root", "commits")}
+        plan = {key: copy.deepcopy(value) for key, value in self.plan.items() if key != "plan_id"}
         del plan["request"]["attestor"]
         with self.assertRaisesRegex(ValueError, "no attestor"):
             self.helper.await_attestation({"plan_id": self.helper.digest(plan), **plan})
@@ -1689,6 +1852,7 @@ class GitHubEndorsementTests(EndorsementTestCase):
         self.assertEqual(self.original["assignees"], [{"login": "maintainer"}])
 
     def test_old_receipts_without_attestor_keep_existing_assignees(self):
+        self.request["version"] = 1
         del self.request["attestor"]
         self.git("branch", "-m", "feature-signed", "prior-signed-fixture")
         self.receipt = self.sign()
@@ -1803,6 +1967,27 @@ class GitHubEndorsementTests(EndorsementTestCase):
         result = self.finish()
         self.assertEqual(result["url"], self.original["html_url"])
         self.assertTrue(result["ready_for_review"])
+
+    def test_incremental_finish_preserves_prior_committer_and_requires_signed_head_ci(self):
+        previous = self.receipt
+        self.follow_up(previous)
+        self.request["committer"] = {"name": "New Endorser", "email": "new@example.invalid"}
+        self.freeze()
+        self.original["head"].update(ref=self.request["source_branch"], sha=self.request["head"])
+        self.assertTrue(self.await_attestation()["awaiting_attestation"])
+        self.receipt = self.sign("replace")
+        self.original["head"].update(ref=self.request["source_branch"], sha=self.receipt["head"])
+        self.commits = {oid: self.commit_data(oid) for oid in
+                        [*self.receipt["mapping"], *self.receipt["mapping"].values()]}
+        self.check_pages[0][0].update(status="IN_PROGRESS", conclusion=None)
+        with self.assertRaisesRegex(ValueError, "quality gate blocked"):
+            self.finish()
+        self.assertTrue(self.original["draft"])
+        self.check_pages[0][0].update(status="COMPLETED", conclusion="SUCCESS")
+        self.assertTrue(self.finish()["ready_for_review"])
+        for oid in self.plan["preserved_commits"]:
+            self.assertEqual(self.receipt["mapping"][oid], oid)
+            self.assertEqual(self.commits[oid]["committer"]["name"], "Fixture Author")
 
     def test_finish_verifies_the_explicit_committer_without_accepting_other_metadata_changes(self):
         self.git("branch", "-m", "feature-signed", "previous-signed-fixture")

@@ -243,7 +243,27 @@ git -C "/absolute/path/to/skills/codespace-tramp" diff --cached -- ISSUES.md
 cannot be completed, run the helper's `release "$OWNER"` action. A lock held
 by another session must not be bypassed; inspect it with the helper's `status`
 action and wait for that session or ask the operator. Never restore
-`ISSUES.md` to the tracked version as task cleanup.
+the working-copy contents of `ISSUES.md` to the tracked version as task cleanup.
+
+**Stage issue-log updates, but never commit them.** Staging is required when
+filing or resolving problems; it is not permission to include this local log in
+Git history, even when asked to commit all staged changes.
+
+When committing other changes in the local dotfiles repository:
+
+1. Acquire the same issue-log lock and hold it through the commit and staging
+   restoration, so another session cannot restage the log during the commit.
+2. Record whether the log has staged changes. Temporarily exclude it with
+   `git restore --staged -- skills/codespace-tramp/ISSUES.md` from the repository
+   root. Never restore or discard its working-copy contents.
+3. Require `git diff --cached --quiet -- skills/codespace-tramp/ISSUES.md` to
+   succeed before committing only the intended remaining changes. Do not use
+   `git commit -a` / `--all` or broadly restage files after excluding the log.
+   If nothing else is staged, do not create an empty commit.
+4. In a cleanup handler, restore the prior staging state even if the commit
+   fails or no commit is made: use `copilot-issues-lock stage "$OWNER"` if the log
+   was staged, otherwise use `release "$OWNER"`. Both release the lock. Surface
+   any cleanup failure without discarding the reports or bypassing a lock.
 
 Use the entry format and next sequential `CT-NNNN` identifier from
 `ISSUES.md`. Each report must include:
@@ -1139,11 +1159,15 @@ complete protocol:
    the prepared head and base branch with the quality-gate revision before
    submitting it, applying the clean-base-advance policy above.
    Save the complete planning result using the reference's persisted-record
-   transfer, not manual JSON transcription. Preserve committer metadata by default.
+   transfer, not manual JSON transcription. Version 2 plans preserve verified
+   prior endorsements and record their unchanged IDs in `preserved_commits`.
+   Sign only the remaining commits; never reinterpret an older plan's scope.
+   Preserve committer metadata by default.
    If an override is needed, include the proposed name/email in `prepare` so
    it is frozen in the plan. Do not ask for separate permission to prepare
    that proposal; approval belongs in the endorsement request below. Preserve
-   authors and timestamps in either case.
+   authors and timestamps in either case. The proposal affects only newly signed
+   commits, never the metadata of preserved commits.
 2. Run local `await-attestation` for that exact plan. It rechecks the revision
    and CI, assigns only the planned operator and confirms the result. Only
    then present the human prompt.
@@ -1154,6 +1178,7 @@ complete protocol:
    Include the CCR outcome and full review link, especially any human-review
    recommendation and unresolved findings; explain an unavailable CCR gate.
    Show the exact head and recorded base OIDs, commit count/range, key fingerprint, plan ID,
+   the new signing count and IDs, the preserved commit IDs,
    any proposed committer change (existing identities and proposed name/email)
    and material validation limitations. State that endorsement also approves
    the shown metadata change. Include any required verified-email confirmation
@@ -1166,7 +1191,7 @@ complete protocol:
    invoking this skill or a previous answer is never signing/rewrite consent.
 5. Only the actual affirmative choice authorises `<plan-id>:replacement` or
    `<plan-id>:replace`. Use that token for remote `sign`; explain the temporary
-   Secretive agent forwarding and possible Touch ID request for each commit.
+   Secretive agent forwarding and possible Touch ID request for each newly signed commit.
    Keep the connection open and verify the complete receipt. Never replay a
    signing failure automatically or change key protection to avoid approval.
 6. After successful signing/verification, run local `complete-attestation`
