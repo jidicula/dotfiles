@@ -36,22 +36,52 @@ gh api graphql --paginate --slurp \
 Require a successful command, no GraphQL `errors`, non-null repository/PR,
 consistent expected head/branches across pages, and a final `hasNextPage: false`.
 Find a `Bot` with login `copilot-pull-request-reviewer` and retain its node ID.
-REST calls use `copilot-pull-request-reviewer[bot]`; the display name "Copilot"
-is not an identity check.
+Use that ID to correlate Bot identity across APIs, not as a User identifier.
+REST reviews use `copilot-pull-request-reviewer[bot]`,
+while timeline events can report `Copilot` for the same Bot. Match `node_id`
+and `type: "Bot"` rather than relying on a display name or login alias.
 
-Read pending reviewers before deciding the gate is unavailable or sending a
-request:
+Read pending requests through the PR's **GraphQL `reviewRequests` connection**
+before deciding the gate is unavailable or sending a request:
 
 ```sh
-gh api "repos/$NWO/pulls/$PR_NUMBER/requested_reviewers?per_page=100" \
-  --paginate --slurp > "$SESSION_FILES/ccr-requested-reviewers.json"
+gh api graphql --paginate --slurp \
+  -F owner="$OWNER" -F name="$REPO" -F number="$PR_NUMBER" \
+  -f query='
+    query CopilotPendingReviewRequests(
+      $owner: String!, $name: String!, $number: Int!, $endCursor: String
+    ) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          id url state isDraft headRefOid headRefName baseRefName
+          reviewRequests(first: 100, after: $endCursor) {
+            nodes {
+              id
+              requestedReviewer { __typename ... on Bot { id login } }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }' > "$SESSION_FILES/ccr-requested-reviewers.json"
 ```
 
-Validate every page's `users` and `teams` lists; match the reviewer's node ID
-or its exact Bot login/type. An existing request or an identified in-progress
-CCR run is not a reason to submit another one. If it contradicts missing
-eligibility, inspect the pending operation rather than skipping the gate.
-Never treat a failed, truncated or unreadable lookup as an empty list.
+Require no GraphQL errors, a non-null PR/connection, valid request nodes and
+reviewer types, a stable expected PR/head/branches across every page, and final
+`hasNextPage: false`. Match `requestedReviewer.__typename: "Bot"` and the
+discovered Bot ID; if eligibility omitted Copilot, its exact Bot login here
+can establish the identity and an active gate. A null reviewer or incomplete
+readback is unknown, not proof that Copilot is absent.
+
+The REST `requested_reviewers` endpoint can return empty `users` and `teams`
+arrays while a Copilot Bot request is pending. Do not use that response to
+skip CCR, accept an older review or submit another request. Do not fall back
+to REST to declare the gate clear when GraphQL fails.
+
+An existing request or an identified in-progress CCR run is not a reason to
+submit another one. If it contradicts missing eligibility, inspect the pending
+operation rather than skipping the gate. Never treat a failed, truncated or
+unreadable lookup as an empty list.
 
 ## Request and re-request
 
@@ -61,10 +91,17 @@ After Gate 1 passes, and only when no request/run is already pending:
 gh pr edit "$PR_URL" -R "$NWO" --add-reviewer '@copilot'
 ```
 
+Use this supported command rather than constructing a User-only mutation from
+the discovered Bot ID. `requestReviews.userIds` rejects Bot nodes; its distinct
+`botIds` field is the Bot input. The CLI handles Copilot's special reviewer
+syntax and separates bot logins from user logins. GraphQL pending-request
+readback does not require using the same interface for the mutation.
+
 The same command re-requests CCR after fixes. Keep the PR in draft. Record its
 head, the last completed review ID and the request outcome in session state.
-Confirm a pending request or a newer completed Copilot review through readback;
-an immediate completion need not remain in the requested-reviewer list.
+Confirm a pending request through the same GraphQL connection, or a newer
+completed Copilot review on the requested head through readback; an immediate
+completion need not remain in the pending-request connection.
 
 A timeout or uncertain mutation outcome does not authorise automatic replay.
 Inspect pending requests, newer reviews and the PR timeline first. Do not
@@ -108,7 +145,7 @@ only each thread's origin for attribution; the fully paginated REST comments
 provide its complete discussion, including human replies via `in_reply_to_id`.
 Do not mistake `comments(first: 1)` for the whole conversation.
 
-Match review author Bot identity, `commit_id`, review ID and completion time.
+Match the review author's Bot node ID/type, `commit_id`, review ID and completion time.
 Exclude pending/dismissed reviews and stale commits. After a re-request, require
 a newer review, even when the head did not change. A later pending request
 prevents reusing an earlier completed assessment as the new result.
@@ -163,3 +200,4 @@ new head's CCR run as directed by the skill; old CI/review evidence is stale.
 - [Using Copilot code review](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review) documents REST review requests, re-reviews, approval assessments and the fact that Copilot does not read conversation replies.
 - [About Copilot code review](https://docs.github.com/en/copilot/concepts/agents/code-review) documents availability, policy and usage limits. Do not change those settings to make an optional gate available.
 - [GitHub CLI reviewer discovery](https://github.com/cli/cli/blob/fc4b137cdef0a6bd28fd461b7cf9c84a5812a8cd/api/queries_pr_review.go) uses the PR's `suggestedReviewerActors` connection to detect Copilot eligibility.
+- [GitHub CLI review requests](https://github.com/cli/cli/blob/v2.102.0/api/queries_pr_review.go#L352-L398) keep bot and user logins separate; [GraphQL request inputs](https://docs.github.com/en/graphql/reference/input-objects#requestreviewsinput) likewise distinguish `botIds` from `userIds`.

@@ -241,6 +241,7 @@
 ;; setup exists to avoid, so the allow-list is the only safe route.
 
 (require 'mcp-server-security)
+(require 'copilot-mcp-form-safety)
 
 (setq mcp-server-security-allowed-dangerous-functions
       '(find-file

@@ -145,7 +145,7 @@ Sorbet is selected when the project contains `sorbet/config'."
     (list connection foreign-message)))
 
 (defun copilot-cs-eglot--inhibit-autoreconnect (server)
-  "Prevent SERVER from restarting a stopped Codespace without approval."
+  "Prevent background retries from restarting an inactive task's Codespace."
   (when-let* ((project (eglot--project server))
               (root (project-root project))
               ((copilot-cs-eglot--ghcs-root-p root)))

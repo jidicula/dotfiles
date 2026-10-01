@@ -122,6 +122,8 @@ each of these must be set up on the operator's machine:
     TRAMP/`ghcs`, detached jobs, and Codespace-hosted Eglot.
   - `setup/copilot-mcp-lifecycle.el` — keeps the daemon alive with its owning
     Copilot CLI process, then applies the existing orphan grace period.
+  - `setup/copilot-mcp-form-safety.el` — lets the MCP validator check quoted
+    dotted pairs without changing their evaluated values or skipping tail checks.
   - `setup/copilot-cs-jobs.el` — the `copilot-cs-*` command runner the workflow
     is built on, loaded into the daemon at boot.
   - `setup/copilot-cs-endorse` — read-only CI checks, local draft-PR
@@ -198,7 +200,8 @@ each of these must be set up on the operator's machine:
   identities stop the connection. `COPILOT_SECRETIVE_AGENT_SOCKET` selects
   the agent socket (`COPILOT_SECRETIVE_SOCKET` is a compatibility alias), and
   `COPILOT_SECRETIVE_DATA_DIR` overrides Secretive's data directory.
-- Endorsement requires Python 3 with its full standard library, Git, and an OpenSSH `ssh-keygen` supporting
+- Endorsement requires Python 3 with its full standard library, Git with
+  `merge-tree --write-tree` in the Codespace, and an OpenSSH `ssh-keygen` supporting
   `-Y sign`/`-Y verify` both locally and in the Codespace. Keep Stormbreaker's
   user-presence protection enabled. Do not select **Leave Unlocked** when fresh
   Touch ID approval is wanted for each signature. Never change Secretive's key
@@ -307,11 +310,13 @@ whole workflow rather than consulting them only at the end:
 - They **override this skill's defaults** wherever the two conflict — for
   example a named branch changes the `-b` flag in Step 4, and a stated
   test/lint command supersedes the repository's usual one in Step 6.
-- They **do not override the confirmation gates**: still stop and ask before
-  reusing or creating a Codespace (Step 3), and still confirm before starting a
-  billable `Shutdown` Codespace. Instructions may *answer* these questions in
-  advance — if they clearly do (e.g. *"reuse the existing codespace"*), honour
-  that and skip the corresponding prompt.
+- Confirm the **new-versus-existing choice** in Step 3 when a Codespace already
+  exists for the current work. Instructions may answer that choice in advance
+  (e.g. *"reuse the existing codespace"*); honour it without another prompt.
+  Once selected, start or restart that task's Codespace as needed without
+  asking again, including when it is `Shutdown`. This does not authorise
+  stopping unrelated environments, bypassing authentication gates or signing
+  commits without the separate human endorsement.
 - The machine SKU is **not user-configurable**: always select the available
   machine with the most CPUs, breaking ties by memory and then storage. Do not
   prompt for confirmation or accept instructions requesting a smaller machine.
@@ -436,6 +441,10 @@ if [ -n "$ISSUE_NUM" ]; then CS_NAME="${ISSUE_REPO}-${ISSUE_NUM}"; else CS_NAME=
 
 ## Step 3 — Check for an existing Codespace in the target repo
 
+If a Codespace has already been selected for the current work, retain its
+immutable name and continue with it; do not repeat the choice on resume,
+restart or review fixes.
+
 Scope the lookup to the **provided repo** with `-R` and match on display name:
 
 ```bash
@@ -447,8 +456,9 @@ EXISTING=$(gh codespace list -R "$NWO" --json name,displayName,state \
 ```
 
 - **No match:** proceed to Step 4 (create).
-- **Match found:** **STOP and ask the user** with the `ask_user` tool — do not
-  proceed until they answer. Offer exactly two choices:
+- **Existing Codespace for the current work found:** **STOP and ask the user**
+  with the `ask_user` tool unless they already supplied the choice. Offer
+  exactly two choices:
   1. **Use the existing Codespace** `CS_NAME` and make the changes there.
   2. **Create a new Codespace** following the naming convention with an
      additional numeric suffix for disambiguation (`CS_NAME-2`, `CS_NAME-3`, …).
@@ -604,9 +614,23 @@ CS_ID=$(gh codespace list -R "$NWO" --json name,displayName \
 [ -n "$CS_ID" ] || { echo "could not resolve the Codespace id" >&2; exit 1; }
 ```
 
-**Wait until the Codespace is `Available` before connecting.** A freshly created
-Codespace may still be provisioning, and a reused one may be `Shutdown`
-(connecting starts it, but it cannot serve commands until it is ready). Use a
+Start or restart the selected task Codespace as needed without another
+confirmation. Check its current state first. To start it from `Shutdown`,
+initiate one connection through the pinned transport:
+
+```bash
+/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
+```
+
+Do this before waiting for availability; polling alone does not start a
+stopped Codespace. Do not race multiple warm-ups or use a restart as a blind
+retry for an unconfirmed command. Before a necessary restart, inspect active
+jobs and preserve their IDs and diagnostics; afterward, recover their actual
+outcomes rather than assuming they can be replayed. Do not interrupt another
+task's workload or restart an unrelated Codespace.
+
+**Wait until the Codespace is `Available` before sending task commands.**
+A fresh or restarted Codespace may still be provisioning. Use a
 **self-terminating bounded poll** — not `watch`/`watchexec`, which run forever
 and, in `watch`'s case, need a TTY this shell does not have:
 
@@ -630,13 +654,7 @@ last state. Recheck that same Codespace before resuming; a late transition to
 `Available` is not a reason to create a duplicate or wait without a deadline.
 
 Run this as one synchronous shell call with a long `initial_wait` (it returns as
-soon as the state is `Available`), or asynchronously and read once. To start a
-reused `Shutdown` Codespace after the required user confirmation, initiate one
-connection through `setup/copilot-ghcs`, then poll for readiness as above:
-
-```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
-```
+soon as the state is `Available`), or asynchronously and read once.
 
 If starting or creating reports `too many codespaces running`, list running
 Codespaces across all repositories and ask which, if any, the operator wants
@@ -767,11 +785,12 @@ prefers the repository's executable `bin/srb`, falling back to
 `bundle exec srb`, and automatically disables Watchman when it is unavailable.
 
 Codespace Eglot servers do not reconnect automatically after a disconnect:
-opening SSH could restart a billable Codespace without approval. Local and
-other SSH language servers retain their usual reconnection behaviour. Before
-explicitly starting Eglot again, confirm the Codespace is `Available`; obtain
-operator approval if it needs starting. Reloading the shared configuration
-also applies this guard to already connected Codespace servers.
+a background timer could revive a Codespace after its task has stopped.
+Local and other SSH language servers retain their usual reconnection behaviour.
+When continuing the current task, check availability, start its selected
+Codespace if needed without another prompt, and explicitly start Eglot again
+once it is `Available`. Reloading the shared configuration also applies this
+guard to already connected Codespace servers.
 
 The Eglot transport is the sole exception to the rule against direct remote
 processes. The preloaded helper launches a local `copilot-ghcs` process whose
@@ -883,6 +902,11 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   repository, not a different default socket. A command such as `mysqladmin
   ping` can exit successfully after an authentication error; require the
   documented successful response or a read-only application query.
+- Bootstrap and database readiness do not prove that generated ORM schema
+  metadata is current. If a model rejects a column or enum that exists in its
+  configured database, follow the cookbook's
+  [schema-cache readiness guidance](references/emacs-tramp-patterns.md#validation-readiness-and-missing-artifacts)
+  before changing application code or resetting data.
 - Check required executables in the same runner environment used for
   validation. A completed devcontainer bootstrap can omit tools that its CI
   image installs separately. After a missing-dependency failure, use the
@@ -977,10 +1001,10 @@ retain its full URL, immutable Codespace name and checkout, source/base branches
 and OIDs, validation results and relevant session artifact/job paths.
 
 Reuse the existing runner session and approved Codespace for review fixes.
-Do not repeat provisioning, switch another session's checkout or implicitly
-renew lifecycle approvals. Recover a stopped Codespace only through the
-confirmation and authentication gates above. Explicit no-publish/no-endorsement
-instructions remain in force.
+Do not repeat provisioning or switch another session's checkout. Start or
+restart that selected Codespace as needed without another confirmation,
+preserving the availability, authentication and no-replay guards above.
+Explicit no-publish/no-endorsement instructions remain in force.
 
 Use local authenticated `gh` for GitHub control-plane operations and the
 existing `setup/` helpers for Codespace execution and signing. Do not copy
@@ -1012,7 +1036,7 @@ required CI blocks progress; an empty check list is not success.
 
 Use bounded read-only polling for pending CI. Fix failures through the existing
 Codespace workflow, keeping commits unsigned and the PR in draft. Do not
-prepare a plan, ask for attestation or a committer override, or request signatures.
+prepare a plan, ask for attestation, or request signatures.
 
 #### Gate 2 - optional Copilot Code Review
 
@@ -1024,6 +1048,9 @@ requesting, interpreting or resolving a review.
 Check availability for this repository, PR and authenticated operator using
 the target PR's fully paginated `suggestedReviewerActors` connection. Identify
 the actual Copilot reviewer Bot, not a display name or a human comment.
+Check pending Bot requests through the fully paginated GraphQL `reviewRequests`
+connection. REST `requested_reviewers` can omit a pending Copilot request;
+an empty REST list is not evidence that the gate is clear or unavailable.
 
 - **Available:** Copilot is offered as a reviewer, or a current review request
   or in-progress CCR run establishes that this gate is active. Run the loop.
@@ -1048,6 +1075,8 @@ even if CCR has since become unavailable.
    all review threads/comments. Reuse a completed review only when it belongs
    to this head and no newer request/run is pending. Otherwise request CCR for
    this draft, unless an automatic or manual request is already outstanding.
+   Use the reference's `gh pr edit --add-reviewer '@copilot'` command; never
+   pass the discovered Bot ID to GraphQL `requestReviews.userIds`.
    Record the request's head and previous review ID; do not accept that older
    review as the result of a re-request.
 2. Wait with bounded read-only polling. Require a new completed review on the
@@ -1085,19 +1114,28 @@ inspected before another mutation.
 #### Gate 3 - exact-revision human endorsement
 
 Proceed only after CI passes and CCR is either explicitly unavailable,
-approval-recommended or human-review-recommended. Recheck the current head/base
-against the recorded gate evidence. Any changed revision invalidates that
-evidence; return to the quality gates rather than carrying approval forward.
+approval-recommended or human-review-recommended. Recheck the current head and
+base branch against the recorded gate evidence. A changed head or retargeted
+base requires new gates and endorsement. A conflict-free fast-forward of the
+same base branch does not invalidate the reviewed commits, CCR assessment or
+human approval: retain the original plan and check current mergeability and CI.
+Conflicts require further work; unknown mergeability pauses the same plan rather
+than requiring another approval. Base rewrites or rewinds are not advances.
 
 Follow the [endorsement command reference](references/endorsement.md) for the
 complete protocol:
 
 1. Run local `copilot-cs-endorse prepare`, which rechecks required CI, then
-   submit its unchanged JSON to remote `copilot-cs-endorse "plan"`. Compare
-   the prepared revision with the quality-gate revision before submitting it.
-   Save the complete planning result. Preserve committer metadata unless the
-   operator explicitly authorises a name/email override; preserve authors and
-   timestamps in either case.
+   confirm complete Codespace history using the reference's shallow-checkout
+   preflight and submit the unchanged JSON to remote `copilot-cs-endorse "plan"`. Compare
+   the prepared head and base branch with the quality-gate revision before
+   submitting it, applying the clean-base-advance policy above.
+   Save the complete planning result using the reference's persisted-record
+   transfer, not manual JSON transcription. Preserve committer metadata by default.
+   If an override is needed, include the proposed name/email in `prepare` so
+   it is frozen in the plan. Do not ask for separate permission to prepare
+   that proposal; approval belongs in the endorsement request below. Preserve
+   authors and timestamps in either case.
 2. Run local `await-attestation` for that exact plan. It rechecks the revision
    and CI, assigns only the planned operator and confirms the result. Only
    then present the human prompt.
@@ -1107,9 +1145,12 @@ complete protocol:
    stand by every commit in this exact revision, or is further work needed?"**
    Include the CCR outcome and full review link, especially any human-review
    recommendation and unresolved findings; explain an unavailable CCR gate.
-   Show exact head/base OIDs, commit count/range, key fingerprint, plan ID,
-   explicit committer override and material validation limitations. Explain
-   that signatures change OIDs and signed-head CI must pass before readiness.
+   Show the exact head and recorded base OIDs, commit count/range, key fingerprint, plan ID,
+   any proposed committer change (existing identities and proposed name/email)
+   and material validation limitations. State that endorsement also approves
+   the shown metadata change. Include any required verified-email confirmation
+   in this same request, not an earlier prompt. Explain that signatures change
+   OIDs and signed-head CI must pass before readiness.
 4. Offer **"Further work is needed"**, **"Leave this draft unendorsed"**, and
    **"I stand by it: create a replacement -signed draft"**. Offer **"I stand
    by it: update this draft using an exact-head --force-with-lease"** only if
@@ -1142,8 +1183,11 @@ formal approval of its new OIDs; retain their links with the verified mapping.
 For pending signed-head CI, preserve the published draft and receipt. Inspect
 the resulting PR with local `gh`, poll read-only, then repeat only the same
 `finish --receipt ... --approve-plan ...`. Do not sign/push again, create a
-duplicate or bypass readiness with `gh pr ready`. A changed head/base requires
-new quality-gate evidence and a new human plan/answer.
+duplicate or bypass readiness with `gh pr ready`. A changed head, retargeted
+base or rewritten base history requires new quality-gate evidence and a new
+human plan/answer. A clean base advance reuses the existing plan, approval and
+signatures; do not rebase, merge into the source branch or re-sign just to update
+its base. If mergeability is pending, retry the same operation after it settles.
 
 #### Result and resumption
 
@@ -1257,7 +1301,7 @@ Ask the user for the correct commands if none are supplied.
   Once the daemon has exited, a new direct-client invocation rebuilds it; an
   open bridge also recovers an actual daemon exit. Re-select the original
   Codespace and explicitly attach existing remote jobs after checking
-  availability and any needed start approval. Never rerun their commands
+  availability and starting that task's Codespace if needed. Never rerun their commands
   merely because the replacement daemon has an empty registry.
 - **Daemon fails to boot:** run `setup/copilot-emacs-mcp` directly in a terminal
   — it logs to stderr. Usual causes are `emacs`, `emacsclient`, or `socat`
@@ -1356,6 +1400,11 @@ Ask the user for the correct commands if none are supplied.
   `copilot-cs-poll`. The runner now restores the returning job's default id
   after re-entrant waits, but unnamed lookups across separate MCP calls still
   mean the last returned job, not a caller-specific history.
+- **A labelled polling expression reports `Wrong type argument: listp`:**
+  older MCP validators cannot traverse quoted dotted pairs. Reinvoke the
+  canonical client to load the form-safety compatibility helper, then poll the
+  original job ids. The helper preserves the submitted expression and all
+  existing checks; do not rerun the remote commands or disable validation.
 - **A completed job is reported as unknown:** preserve the entire id, including
   its hexadecimal suffix. Use `copilot-cs-job-id` to extract it from the returned
   report instead of manually retyping it. Check `copilot-cs-status` before
@@ -1379,8 +1428,8 @@ Ask the user for the correct commands if none are supplied.
 - **An acknowledged job reports `state=detached`:** its local stream closed,
   and the remote outcome is unconfirmed. Polling is passive and retains the
   existing output; it never starts a stopped Codespace. Check the original
-  Codespace's availability through the local API and obtain approval for any
-  required start, then explicitly call `copilot-cs-attach` with the same id.
+  Codespace's availability through the local API, start it if needed for the
+  current task, then explicitly call `copilot-cs-attach` with the same id.
   Known jobs retain their original target, and live or completed jobs do not
   open duplicate connections.
 - **A command returns rc=1 with no output at all:** you used `bash -lc`. Some
@@ -1509,5 +1558,7 @@ Ask the user for the correct commands if none are supplied.
   descendants to `SIGKILL` after five seconds. Poll the returned cancellation
   job for success, and the original job for its exit code. A nonzero
   cancellation result is a real failure, not confirmation that the job stopped.
-- **Codespace is `Shutdown`:** `gh` will start it on first connect, but it is
-  billable — confirm with the user before starting a stopped Codespace.
+- **The selected task Codespace is `Shutdown`:** start it through
+  `setup/copilot-ghcs` without another confirmation, then wait for availability
+  and repository-service readiness. Recover existing jobs explicitly; do not
+  create a replacement or replay their commands merely because it stopped.

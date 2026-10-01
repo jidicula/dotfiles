@@ -437,8 +437,8 @@ original output is preserved; do not relaunch blindly"
                id (process-exit-status process) elapsed))
       ('detached
        (format "job=%s state=detached elapsed=%.1fs -- the local stream \
-ended; remote outcome is unconfirmed; check Codespace availability and \
-obtain any needed start approval, then recover the log with \
+ended; remote outcome is unconfirmed; check the original Codespace's \
+availability, start it if needed, then recover the log with \
 (copilot-cs-attach \"%s\")" id elapsed id)))
      "\n----\n" output)))
 
@@ -527,16 +527,24 @@ For \"push\" only, TTY supplies a remote PTY for terminal-dependent hooks."
                                               (concat data ":replace")))))
     (error "copilot-cs: explicit approval of this plan and publication method is required"))
   (let* ((program (with-temp-buffer
-                    (insert-file-contents
+                    (set-buffer-multibyte nil)
+                    (insert-file-contents-literally
                      (expand-file-name "copilot-cs-endorse" copilot-cs-setup-dir))
-                    (buffer-string)))
-         ;; Encode once instead of multiplying shell escapes through login/PTY layers.
+                    ;; Keep the encoded SSH command below Linux's argument limit.
+                    (let ((coding-system-for-read 'binary)
+                          (coding-system-for-write 'binary))
+                      (unless (eq 0 (call-process-region
+                                     (point-min) (point-max) "python3" t t nil "-c"
+                                     "import sys, zlib; sys.stdout.buffer.write(zlib.compress(sys.stdin.buffer.read()))"))
+                        (error "copilot-cs: could not compress endorsement helper: %s"
+                               (buffer-string))))
+                    (base64-encode-string (buffer-string) t)))
          (arguments (append
                      (list "python3" "-c"
-                           (concat "import base64, sys; "
-                                   "exec(compile(base64.b64decode(sys.argv.pop(1)), "
+                           (concat "import base64, sys, zlib; "
+                                   "exec(compile(zlib.decompress(base64.b64decode(sys.argv.pop(1))), "
                                    "'copilot-cs-endorse', 'exec'))")
-                           (base64-encode-string (encode-coding-string program 'utf-8) t)
+                           program
                            action
                            (if (equal action "plan") "--request" "--plan") data)
                      (when (member action '("sign" "push"))
@@ -580,7 +588,7 @@ Waits up to WAIT seconds (default `copilot-cs-default-wait', capped at
 `copilot-cs-max-wait') for it to finish before reporting. Polling never opens
 a connection: a disconnected job retains its output and unconfirmed outcome.
 Use `copilot-cs-attach' explicitly after checking Codespace availability and
-obtaining any necessary start approval."
+starting the selected task Codespace if needed."
   (copilot-cs--report
    (copilot-cs--settle (copilot-cs--job id)
                        (or wait copilot-cs-default-wait))))
@@ -603,7 +611,7 @@ obtaining any necessary start approval."
 Jobs run detached, so they outlive the SSH connection, the Emacs daemon,
 and the Copilot session that started them.  Use this to pick a job back up
 after a transport failure or in a later session. Check Codespace availability
-and obtain any necessary start approval first. Known jobs retain their
+and start the selected task Codespace if needed. Known jobs retain their
 original target; live or completed jobs do not open another connection."
   (copilot-cs--check-id id)
   (let* ((known (gethash id copilot-cs--jobs))

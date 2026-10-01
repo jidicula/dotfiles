@@ -158,6 +158,69 @@ def branch_head(repository, branch):
     return commit["sha"]
 
 
+def require_base_compatibility(request, base, mergeable):
+    """Keep the reviewed range fixed while accepting a conflict-free base advance."""
+    require(isinstance(base, str) and OID.fullmatch(base), "invalid current base commit")
+    if base == request["base"]:
+        return
+    comparison = github(
+        f"repos/{request['repository']}/compare/{request['base']}...{base}?per_page=1")
+    require(isinstance(comparison, dict)
+            and comparison.get("status") in ("ahead", "behind", "diverged", "identical")
+            and isinstance(comparison.get("base_commit"), dict)
+            and comparison["base_commit"].get("sha") == request["base"]
+            and isinstance(comparison.get("merge_base_commit"), dict)
+            and isinstance(comparison["merge_base_commit"].get("sha"), str)
+            and OID.fullmatch(comparison["merge_base_commit"]["sha"]),
+            "base ancestry is unconfirmed; retry the same plan when it is available")
+    require(comparison["status"] == "ahead"
+            and comparison["merge_base_commit"]["sha"] == request["base"],
+            "base branch changed without a confirmed fast-forward; obtain a new endorsement")
+    require(mergeable != "CONFLICTING",
+            "base branch changed with merge conflicts; resolve them before endorsement")
+    require(mergeable == "MERGEABLE",
+            "current base mergeability is unconfirmed; retry the same plan when it is available")
+
+
+def confirm_base_compatibility(request, pr):
+    """Check GitHub's mergeability for the exact head and current base, without mutation."""
+    query = """
+        query EndorsementBaseCompatibility($id: ID!) {
+          node(id: $id) {
+            ... on PullRequest {
+              id state headRefOid headRefName baseRefName mergeable
+              baseRef { target { oid } }
+            }
+          }
+        }
+    """
+    for _ in range(3):
+        if branch_head(request["repository"], request["base_branch"]) == request["base"]:
+            return
+        response = github("graphql", "POST", {
+            "query": query, "variables": {"id": pr["node_id"]},
+        })
+        require(isinstance(response, dict) and not response.get("errors")
+                and isinstance(response.get("data"), dict),
+                "GitHub could not confirm base mergeability; retain the same plan")
+        current = response["data"].get("node")
+        require(isinstance(current, dict) and current.get("id") == pr["node_id"]
+                and current.get("state") == "OPEN"
+                and current.get("headRefOid") == pr["head"]["sha"]
+                and current.get("headRefName") == pr["head"]["ref"]
+                and current.get("baseRefName") == request["base_branch"]
+                and isinstance(current.get("baseRef"), dict)
+                and isinstance(current["baseRef"].get("target"), dict),
+                "PR changed or base mergeability is unavailable; quality gate not confirmed")
+        base = current["baseRef"]["target"].get("oid")
+        require_base_compatibility(request, base, current.get("mergeable"))
+        if branch_head(request["repository"], request["base_branch"]) == base:
+            require(branch_head(request["repository"], pr["head"]["ref"]) == pr["head"]["sha"],
+                    "PR head branch changed; quality gate not confirmed")
+            return
+    raise ValueError("base kept advancing during mergeability checks; retry the same plan")
+
+
 def replacement_allowed(repository, branch):
     """Return false on prohibited or uncertain history replacement."""
     path = quote(branch, safe="")
@@ -261,17 +324,57 @@ class Repository:
                             ("source_branch", "base_branch", "target_branch")))
         return {line.split()[1]: line.split()[0] for line in output.decode().splitlines()}
 
-    def snapshot(self, request, *, published=None, publication=None):
+    def ensure_commit(self, oid):
+        object_type = self.git("cat-file", "--batch-check=%(objecttype)",
+                               data=(oid + "\n").encode()).strip()
+        if object_type == (oid + " missing").encode():
+            print(f"[copilot-cs-endorse] fetching base history: {oid}",
+                  file=sys.stderr, flush=True)
+            self.git("fetch", "--progress", "--no-tags", "--no-write-fetch-head",
+                     "--no-recurse-submodules", "--refmap=", "origin", oid)
+            object_type = self.git("cat-file", "--batch-check=%(objecttype)",
+                                   data=(oid + "\n").encode()).strip()
+        require(object_type == b"commit", "base is not an available commit")
+
+    def check_base_merge(self, request, base, head):
+        require(isinstance(base, str) and OID.fullmatch(base),
+                "remote base branch is missing; obtain a new endorsement")
+        self.ensure_commit(request["base"])
+        self.ensure_commit(base)
+        require(self.git("merge-base", request["base"], base).decode().strip() == request["base"],
+                "remote base changed without a fast-forward; obtain a new endorsement")
+        result = subprocess.run(
+            ["git", "merge-tree", "--write-tree", base, head],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, timeout=120,
+        )
+        if result.returncode not in (0, 1):
+            raise RuntimeError(
+                f"git merge-tree failed ({result.returncode}): "
+                + result.stderr.decode("utf-8", errors="replace").strip()
+            )
+        require(result.returncode == 0,
+                "remote base changed with merge conflicts; resolve them before endorsement")
+
+    def snapshot(self, request, *, published=None, publication=None, merge_head=None):
         validate_request(request)
-        require(self.ref("refs/heads/" + request["source_branch"]) == request["head"],
-                "local source branch changed; obtain a new endorsement")
-        refs = self.remote_refs(request)
-        require(refs.get("refs/heads/" + request["base_branch"]) == request["base"],
-                "remote base changed; obtain a new endorsement")
         expected = published if published and publication == "replace" else request["head"]
-        require(refs.get("refs/heads/" + request["source_branch"]) == expected,
-                "remote source branch changed; obtain a new endorsement")
-        return refs
+        for _ in range(3):
+            require(self.ref("refs/heads/" + request["source_branch"]) == request["head"],
+                    "local source branch changed; obtain a new endorsement")
+            refs = self.remote_refs(request)
+            require(refs.get("refs/heads/" + request["source_branch"]) == expected,
+                    "remote source branch changed; obtain a new endorsement")
+            base = refs.get("refs/heads/" + request["base_branch"])
+            if base == request["base"]:
+                return refs
+            self.check_base_merge(request, base, merge_head or published or request["head"])
+            current = self.remote_refs(request)
+            require(current.get("refs/heads/" + request["source_branch"]) == expected
+                    and self.ref("refs/heads/" + request["source_branch"]) == request["head"],
+                    "source branch changed during mergeability checks; obtain a new endorsement")
+            if current.get("refs/heads/" + request["base_branch"]) == base:
+                return current
+        raise ValueError("remote base kept advancing during mergeability checks; retry the same plan")
 
     def commits(self, request):
         return self.git("rev-list", "--reverse", "--topo-order",
@@ -342,18 +445,8 @@ class Repository:
         self.snapshot(request)
         require(not self.git("status", "--porcelain", "--untracked-files=no").strip(),
                 "commit or set aside tracked worktree changes before requesting endorsement")
-        base = request["base"]
-        object_type = self.git("cat-file", "--batch-check=%(objecttype)",
-                               data=(base + "\n").encode()).strip()
-        if object_type == (base + " missing").encode():
-            print(f"[copilot-cs-endorse] fetching reviewed base history: {base}",
-                  file=sys.stderr, flush=True)
-            self.git("fetch", "--progress", "--no-tags", "--no-write-fetch-head",
-                     "--no-recurse-submodules", "--refmap=", "origin", base)
-            self.snapshot(request)
-            object_type = self.git("cat-file", "--batch-check=%(objecttype)",
-                                   data=(base + "\n").encode()).strip()
-        require(object_type == b"commit", "reviewed base is not an available commit")
+        self.ensure_commit(request["base"])
+        self.snapshot(request)
         commits = self.commits(request)
         require(commits, "the draft PR introduces no commits")
         for oid in commits:
@@ -417,7 +510,8 @@ class Repository:
                         "publication choice differs from the existing endorsement; operator decision required")
                 remote_head = self.remote_refs(request).get("refs/heads/" + request["source_branch"])
                 self.snapshot(request, publication=publication,
-                              published=receipt["head"] if remote_head == receipt["head"] else None)
+                              published=receipt["head"] if remote_head == receipt["head"] else None,
+                              merge_head=receipt["head"])
             else:
                 self.snapshot(request)
                 key = public_key(os.environ.get("COPILOT_CS_SIGNING_KEY", ""))
@@ -442,7 +536,7 @@ class Repository:
                             "hash-object", "-t", "commit", "-w", "--stdin",
                             data=signed_commit(payload, signature),
                         ).decode().strip()
-                self.snapshot(request)
+                self.snapshot(request, merge_head=mapping[request["head"]])
                 receipt = {"plan_id": plan_id, "plan": plan, "mapping": mapping,
                            "publication": publication,
                            "head": mapping[request["head"]]}
@@ -468,7 +562,7 @@ class Repository:
                     "the other publication method already published this endorsement; inspect it before proceeding")
             receipt = dict(receipt, publication=publication)
             if refs.get(target) != receipt["head"]:
-                self.snapshot(request)
+                self.snapshot(request, merge_head=receipt["head"])
                 expected = request["head"] if publication == "replace" else ""
                 require(refs.get(target, "") == expected, "remote destination changed; nothing overwritten")
                 # An empty expectation creates a new ref only; it cannot rewrite an existing branch.
@@ -544,7 +638,7 @@ def assignee_logins(pr):
 
 
 def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=False,
-                               require_draft=True):
+                               require_draft=True, merge_pr=None):
     """Change only the planned attestor's assignment, with revision readback."""
     login = request.get("attestor")
     require(login, "plan has no attestor; prepare a new plan before tracking attestation")
@@ -555,7 +649,7 @@ def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=Fal
     def confirm():
         return confirm_ci_revision(
             request, request["pr"], expected, request["source_branch"],
-            require_draft=require_draft, allow_closed=allow_closed,
+            require_draft=require_draft, allow_closed=allow_closed, merge_pr=merge_pr,
         )
 
     pr = confirm()
@@ -614,7 +708,8 @@ def pull_metadata(pr):
     }
 
 
-def confirm_ci_revision(request, number, head, branch, *, require_draft=False, allow_closed=False):
+def confirm_ci_revision(request, number, head, branch, *, require_draft=False, allow_closed=False,
+                        merge_pr=None):
     """Confirm the expected revision, allowing closed originals only on resume."""
     repository = request["repository"]
     current = pull_request(repository, number, require_draft=require_draft)
@@ -623,8 +718,7 @@ def confirm_ci_revision(request, number, head, branch, *, require_draft=False, a
             and current["head"]["ref"] == branch
             and current["base"]["ref"] == request["base_branch"],
             "PR changed or is no longer open; quality gate not confirmed")
-    require(branch_head(repository, request["base_branch"]) == request["base"],
-            "base branch changed; quality gate not confirmed")
+    confirm_base_compatibility(request, merge_pr or current)
     require(branch_head(repository, branch) == head,
             "PR head branch changed; quality gate not confirmed")
     return current
@@ -810,7 +904,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
         query EndorsementRequiredChecks($id: ID!, $cursor: String) {
           node(id: $id) {
             ... on PullRequest {
-              id state headRefOid headRefName baseRefName
+              id state headRefOid headRefName baseRefName mergeable
               baseRef {
                 target { oid }
                 branchProtectionRule { requiresStatusChecks requiredStatusCheckContexts }
@@ -858,9 +952,10 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 and current["headRefOid"] == head and current["headRefName"] == branch
                 and current["baseRefName"] == request["base_branch"]
                 and isinstance(current.get("baseRef"), dict)
-                and isinstance(current["baseRef"].get("target"), dict)
-                and current["baseRef"]["target"]["oid"] == request["base"],
+                and isinstance(current["baseRef"].get("target"), dict),
                 "PR or base changed while checking required CI")
+        require_base_compatibility(
+            request, current["baseRef"]["target"].get("oid"), current.get("mergeable"))
         protection = current["baseRef"]["branchProtectionRule"]
         if protection is not None:
             require(isinstance(protection, dict)
@@ -964,9 +1059,25 @@ def finish(receipt, approval):
     require(pr["head"]["sha"] == expected
             and pr["head"]["ref"] == request["source_branch"]
             and pr["base"]["ref"] == request["base_branch"], "PR changed after endorsement")
-    require(branch_head(repository, request["base_branch"]) == request["base"],
-            "base branch changed after endorsement")
+    marker = f"<!-- copilot-endorsement:{plan_id} -->"
     target = request["source_branch"] if publication == "replace" else request["target_branch"]
+    replacement = None
+    if publication == "replacement":
+        candidates = github_pages(f"repos/{repository}/pulls?state=all&head="
+                                  + quote(repository.split("/")[0] + ":" + target, safe="")
+                                  + "&per_page=100")
+        require(len(candidates) <= 1, "multiple replacement PRs exist; operator decision required")
+        if candidates:
+            require(marker in (candidates[0]["body"] or ""),
+                    "existing PR is not this endorsement's replacement")
+            replacement = pull_request(repository, candidates[0]["number"], require_draft=False)
+            require(replacement["state"] == "open"
+                    and replacement["head"]["sha"] == receipt["head"]
+                    and replacement["head"]["ref"] == target
+                    and replacement["base"]["ref"] == request["base_branch"]
+                    and marker in (replacement["body"] or ""), "replacement draft PR does not match")
+    merge_pr = replacement or pr
+    confirm_base_compatibility(request, merge_pr)
     branch = github(f"repos/{repository}/branches/{quote(target, safe='')}")
     require(branch["commit"]["sha"] == receipt["head"], "published signed branch changed")
     for original in plan["commits"]:
@@ -989,30 +1100,21 @@ def finish(receipt, approval):
         hasher = hashlib.sha1 if len(receipt["mapping"][original]) == 40 else hashlib.sha256
         require(hasher(b"commit " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
                 == receipt["mapping"][original], "GitHub signature payload does not match the signed object")
-    require(branch_head(repository, request["base_branch"]) == request["base"],
-            "base branch changed after endorsement")
+    confirm_base_compatibility(request, merge_pr)
     if "attestor" in request:
         updated = set_attestation_assignment(
             request, False, head=expected, allow_closed=publication == "replacement",
-            require_draft=publication != "replace",
+            require_draft=publication != "replace", merge_pr=merge_pr,
         )
         pr["assignees"] = updated["assignees"]
     if publication == "replace":
         require(pr["state"] == "open", "the original draft PR is no longer open")
         return ready_for_review(request, request["pr"], receipt["head"], target)
 
-    marker = f"<!-- copilot-endorsement:{plan_id} -->"
     title = full_references(pr["title"], repository)
     body = (full_references(pr["body"] or "", repository)
             + f"\n\nSigned replacement for {request['url']}.\n\n{marker}")
-    candidates = github_pages(f"repos/{repository}/pulls?state=all&head="
-                              + quote(repository.split("/")[0] + ":" + target, safe="")
-                              + "&per_page=100")
-    require(len(candidates) <= 1, "multiple replacement PRs exist; operator decision required")
-    if candidates:
-        replacement = candidates[0]
-        require(marker in (replacement["body"] or ""), "existing PR is not this endorsement's replacement")
-    else:
+    if replacement is None:
         require(pr["state"] == "open", "original PR closed before replacement creation")
         replacement = github(f"repos/{repository}/pulls", "POST", {
             "title": title, "body": body,
@@ -1021,8 +1123,7 @@ def finish(receipt, approval):
     replacement = pull_request(repository, replacement["number"], require_draft=False)
     require(replacement["state"] == "open" and replacement["head"]["sha"] == receipt["head"]
             and replacement["base"]["ref"] == request["base_branch"], "replacement draft PR does not match")
-    require(branch_head(repository, request["base_branch"]) == request["base"],
-            "base branch changed after endorsement")
+    confirm_base_compatibility(request, replacement)
     github(f"repos/{repository}/issues/{replacement['number']}", "PATCH", pull_metadata(pr))
     current_reviewers = {user["login"] for user in replacement["requested_reviewers"]}
     current_teams = {team["slug"] for team in replacement["requested_teams"]}
@@ -1052,8 +1153,7 @@ def finish(receipt, approval):
         require(current["title"] == title and current["body"] == body
                 and pull_metadata(current) == pull_metadata(pr),
                 "replacement metadata differs; leaving the original PR open")
-        require(branch_head(repository, request["base_branch"]) == request["base"],
-                "base branch changed after endorsement; leaving the original PR open")
+        confirm_base_compatibility(request, current)
         return latest
 
     confirm_drafts()

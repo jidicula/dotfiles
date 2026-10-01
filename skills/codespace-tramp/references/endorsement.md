@@ -27,20 +27,26 @@ authenticated `gh`:
 
 `prepare` repeats the same required-check policy as the final readiness gate,
 including pagination, missing configured checks, and fail-closed handling of
-unreadable or unsupported policy. It requires an open draft with unchanged
-live head/base refs and performs no PR mutation. Only after CI passes does it
+unreadable or unsupported policy. It requires an open draft with the same head
+and base branch, permits verified clean base advances and performs no PR mutation.
+Only after CI passes does it
 read the signing key, record the authenticated operator as `attestor`, prepare
-publication choices, and emit the request. Compare that head/base with the
-completed quality-gate evidence; changed state must return to those gates.
+publication choices, and emit the request. Compare its head and base branch with
+the completed quality-gate evidence. Head changes or retargeting return to those
+gates; a clean base advance does not discard the existing review.
 
 Pending, failing, missing or absent required checks produce a nonzero result
-and no request. Do not start a remote plan, ask for an endorsement or committer
-override, or forward the signing agent while either pre-endorsement gate is
-blocked. A cached request is not a substitute for checking the current revision.
+and no request. Do not start a remote plan, ask for an endorsement, or forward
+the signing agent while either pre-endorsement gate is blocked. A cached request
+is not a substitute for checking the current revision.
 
-Existing committer identity is preserved unless the operator explicitly
-authorises `--committer-name "<name>" --committer-email "<email>"`. Both values
-are required and become part of the exact plan shown at the approval prompt.
+Preserve existing committer identity by default. If an override is needed,
+pass `--committer-name "<name>" --committer-email "<email>"` to `prepare` as a
+proposal, without a separate permission prompt. Both values are required and
+become part of the immutable plan. Show the existing and proposed identities
+in the endorsement request; its affirmative approval authorises the metadata
+change together with signing and the selected publication method. Preparing
+or planning the proposal changes no commits and grants no approval.
 Preparation checks the selected key against the authenticated operator's
 registered signing keys; the supplied email must belong to that account.
 Authors and all timestamps remain unchanged. Never change attribution or
@@ -48,11 +54,29 @@ Git/Secretive settings automatically to obtain GitHub's verification badge.
 
 `gh api user/emails` is an optional identity diagnostic, not a required
 preparation step. A scope-related 403/404 does not establish whether an address
-is verified. If that lookup is unavailable, ask the operator to confirm a
-verified account email before proposing a committer override, or leave the
-draft unendorsed. Do not refresh authentication scopes, switch accounts or use
-a public profile email as verification evidence. Finalisation still requires
-GitHub to verify the actual published signatures.
+is verified. If that lookup is unavailable, include confirmation of the proposed
+verified account email in the same endorsement request: state that approval
+also confirms the address is verified for the authenticated account. Do not
+ask an earlier identity-confirmation question. If the operator cannot confirm
+it, leave the draft unendorsed. Do not refresh authentication scopes, switch
+accounts or use a public profile email as verification evidence. Finalisation
+still requires GitHub to verify the actual published signatures.
+
+Before planning, check `git rev-parse --is-shallow-repository` in the selected
+Codespace. A shallow checkout cannot establish the full reviewed ancestry.
+If it returns `true`, verify that `origin` matches the prepared repository and
+check free disk space, then restore history through the login-aware runner.
+Replace `BASE_OID` and `HEAD_OID` below with the exact prepared request fields:
+
+```elisp
+(copilot-cs-login-sh "git fetch --progress --unshallow --no-tags --no-write-fetch-head --no-recurse-submodules --refmap= origin BASE_OID HEAD_OID" 10)
+```
+
+This fetch can be large; poll its existing job without a total-duration cap.
+Verify that the checkout is no longer shallow and that the source head, refs,
+index, `FETCH_HEAD` and working tree are unchanged before retrying the original
+request. Do not delete Git's shallow-boundary file, fetch every branch, rebase,
+or relax the complete-history guard to make planning pass.
 
 Pass the successful request as an escaped string, not an Elisp expression or
 shell command, to the already selected Codespace:
@@ -63,7 +87,13 @@ shell command, to the already selected Codespace:
 (copilot-cs-endorsement-result "<planning-job-id>")
 ```
 
-Use the complete result, not a status report's truncated tail. Planning requires
+The runner compresses and base64-encodes the helper before sending it through
+the login/PTY wrappers, keeping the SSH command below Linux's single-argument
+limit. Python's standard-library `zlib` is required locally and in the Codespace;
+a compression or decoding failure stops the action rather than running a partial helper.
+
+Use the complete result, not a status report's truncated tail. Do not manually
+transcribe its JSON; transfer the persisted record as described below. Planning requires
 the local source branch to match the draft head and tracked changes to be
 clean. It snapshots the remote head/base and records every introduced commit
 in topological order. `publication_options` lists what may be offered; it is
@@ -71,9 +101,10 @@ not a publication selection or an approval.
 
 If the prepared base commit is missing, planning fetches that exact OID and
 its history from the verified origin. It does not update local or
-remote-tracking refs, tags, `FETCH_HEAD`, the index or working tree. Source
-and base refs are checked again after the fetch. Failures or concurrent changes
-stop planning without recording a plan; they never refresh reviewed OIDs silently.
+remote-tracking refs, tags, `FETCH_HEAD`, the index or working tree. Source and
+base refs are checked again after the fetch. A changed source stops planning;
+a base advance is checked for ancestry and merge conflicts. Fetch or mergeability
+failures stop planning without changing the requested OIDs.
 
 The history fetch streams progress into its planning job and, like a push,
 has no total-duration cap. A healthy large transfer must not be killed by the
@@ -81,25 +112,68 @@ has no total-duration cap. A healthy large transfer must not be killed by the
 an explicit cancellation rather than starting another plan. Connection setup
 retains its separate deadline.
 
-The reviewed base is the live `refs/heads/<base-branch>` commit, not the PR
-API's potentially historical `base.sha`. Preparation and finalisation read
-the branch ref; remote planning, signing and publication reject any subsequent
-base/source movement. Retargeting either PR also invalidates the endorsement.
+The recorded base is the live `refs/heads/<base-branch>` commit at preparation,
+not the PR API's potentially historical `base.sha`. It permanently defines the
+reviewed commit range; never change that field, the plan ID or the approval token
+just because the base advances.
+
+A fast-forward of the same base branch is allowed when it remains mergeable.
+The Codespace fetches missing base objects by exact OID, checks ancestry, and uses
+`git merge-tree --write-tree` without changing the index, checkout or refs. GitHub
+control-plane checks verify fast-forward ancestry and the current PR's explicit
+mergeability for the expected head and base branch. Publication checks the signed
+head; finalisation uses the open replacement when the original is already closed.
+
+Conflicts block progress until addressed. Unknown mergeability, a failed probe
+or a continuously moving base pauses the same plan; recheck it without requesting
+fresh approval or replaying signatures/publication. A changed source head,
+retargeted base, rewind or rewritten base history still requires a new plan and
+human decision. Do not merge or rebase the source merely to track a clean advance.
+Current required CI, including signed-head CI before readiness, remains mandatory.
 
 ## Assign and request human attestation
 
-Save the complete successful planning result in this session's files area:
+Transfer the successful plan's persisted record into this session's files area;
+never reconstruct its request, key or commit list from displayed text. Set
+`SESSION_FILES` to that existing directory and use the selected immutable
+`CS_ID`. First discover the absolute Git common directory in its worktree:
+
+```elisp
+(copilot-cs-sh "git rev-parse --path-format=absolute --git-common-dir")
+```
+
+Set `COMMON_DIR` to the printed path and `PLAN_ID` to `plan_id` from the complete
+planning result, not the runner job ID. The persisted record omits the result
+envelope's `plan_id`, so add only that field programmatically after the copy
+succeeds:
+
+```sh
+/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+  "remote:$COMMON_DIR/copilot-endorsements/$PLAN_ID.plan.json" \
+  "$SESSION_FILES/endorsement-plan-record.json" &&
+python3 -c '
+import json, sys
+print(json.dumps(dict(plan_id=sys.argv[1], **json.load(sys.stdin))))
+' "$PLAN_ID" < "$SESSION_FILES/endorsement-plan-record.json" \
+  > "$SESSION_FILES/endorsement-plan.json"
+```
+
+Only after both commands succeed, submit that generated file:
 
 ```sh
 /absolute/path/to/skills/codespace-tramp/setup/copilot-cs-endorse \
-  await-attestation --plan "<session-files>/endorsement-plan.json"
+  await-attestation --plan "$SESSION_FILES/endorsement-plan.json"
 ```
 
-This rechecks required CI and the exact head/base, adds only the planned
+This rechecks required CI, the exact head and base compatibility, adds only the planned
 operator's assignment, preserves other assignees and confirms the result.
 It is safe to repeat for an unchanged plan. A failed or stale plan never
 reaches the mutation. Do not present the attestation prompt before success
 or switch the local authenticated account.
+
+If digest verification fails, preserve the error and recover the exact original
+record and plan identifier. Do not shorten fields, compute a replacement plan
+ID, bypass verification or replay planning merely to repair a local copy.
 
 Print the full draft URL on its own line immediately before the interactive
 prompt. Start its message with the same URL and a blank line, followed by:
@@ -107,8 +181,11 @@ prompt. Start its message with the same URL and a blank line, followed by:
 by every commit in this exact revision, or is further work needed?"**
 Include CCR's outcome, full review URL and any unresolved findings, especially
 when human review is recommended. Explain why CCR was skipped if unavailable.
-Show head/base OIDs, commit count/range, key fingerprint, plan ID, any explicit
-committer override and material validation limitations below the question.
+Show head/base OIDs, commit count/range, key fingerprint, plan ID, any proposed
+committer change and material validation limitations below the question.
+For a committer proposal, show the existing identities and proposed name/email,
+confirm that authors and timestamps stay unchanged, and state that endorsement
+also approves this change. Include any verified-email confirmation here.
 
 Offer further work, leaving the draft unendorsed and the permitted publication
 choices from the skill. Preselect no endorsement. Explain that signing changes
@@ -195,8 +272,9 @@ Choose one call, not both. The PTY reaches the Git hook; inspect its output
 and stop if checks were skipped. `replace` uses the exact source-head lease.
 `replacement` uses an empty-expectation destination lease, a create-only guard
 that cannot overwrite even a concurrent fast-forwardable branch. Neither mode
-uses unconditional force. Changed refs or collisions require an operator
-decision; do not refresh the lease expectation automatically.
+uses unconditional force. Changed source/destination refs or collisions require
+an operator decision; do not refresh the lease expectation automatically. A
+verified clean base advance leaves that exact-head lease and approval unchanged.
 
 If the operator explicitly chooses the other permitted method after a failed
 push of the same unchanged plan, reuse signatures with `push` and the new
@@ -244,7 +322,7 @@ block readiness. Completed check runs may be `SUCCESS`, `NEUTRAL` or `SKIPPED`;
 required commit statuses must succeed. Optional failures do not block readiness.
 
 Required workflows must have a successful latest applicable run/attempt for
-that exact PR, head, branch and base. GraphQL provenance must identify the
+that exact PR, head, source branch and base branch. GraphQL provenance must identify the
 configured source repository/file at an immutable revision, matching explicit
 SHA pins. Mutable refs use the successful run's recorded revision; later source
 ref movement does not invalidate it. Same-named ordinary workflows, other PRs,

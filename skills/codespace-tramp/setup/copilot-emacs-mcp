@@ -149,7 +149,7 @@ main() {
 		# Same session reconnecting, e.g. after Copilot CLI killed the previous
 		# wrapper on a slow tool call. Reload helpers without resetting
 		# their defvar-backed target, jobs, or Eglot state.
-		log "reusing Emacs daemon $ID and refreshing its runner and Eglot helpers"
+		log "reusing Emacs daemon $ID and refreshing its runtime helpers"
 		owner="$(emacsclient -s "$ID" -e \
 			"(progn
 			   (load (expand-file-name \"copilot-cs-jobs.el\" copilot-mcp-setup-dir)
@@ -158,8 +158,10 @@ main() {
 			         nil t t)
 			   (load (expand-file-name \"copilot-mcp-lifecycle.el\" copilot-mcp-setup-dir)
 			         nil t t)
+			   (load (expand-file-name \"copilot-mcp-form-safety.el\" copilot-mcp-setup-dir)
+			         nil t t)
 			   (copilot-mcp-attach-parent $$))")" ||
-			die "could not refresh runner, Eglot helpers, and owner on daemon $ID"
+			die "could not refresh runner, Eglot, form-safety helpers, and owner on daemon $ID"
 		[[ -z $owner ]] || log "$owner"
 		;;
 	2)

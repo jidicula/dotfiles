@@ -144,6 +144,22 @@ class EndorsementTestCase(HelperTestCase):
     def remote_head(self, branch):
         return self.git("--git-dir=" + str(self.remote), "rev-parse", "refs/heads/" + branch).strip()
 
+    def advance_base(self, *, conflict=False, parent=None):
+        remote = "--git-dir=" + str(self.remote)
+        blob = self.repository.git(
+            remote, "hash-object", "-w", "--stdin", data=b"upstream content\n",
+        ).decode().strip()
+        path = "tracked" if conflict else "upstream"
+        tree = self.repository.git(
+            remote, "mktree", data=f"100644 blob {blob}\t{path}\n".encode(),
+        ).decode().strip()
+        oid = self.git(remote, "-c", "user.name=Fixture Upstream",
+                       "-c", "user.email=upstream@example.invalid",
+                       "commit-tree", tree, "-p", parent or self.remote_head("main"),
+                       "-m", "advance base").strip()
+        self.git(remote, "update-ref", "refs/heads/main", oid)
+        return oid
+
     def commit_data(self, oid):
         raw = self.repository.git("cat-file", "commit", oid)
         result = json.loads(self.git(
@@ -331,15 +347,97 @@ class SignedHistoryTests(EndorsementTestCase):
             with self.assertRaisesRegex(ValueError, "publication choice differs"):
                 self.repository.sign(self.plan_id, self.approve("replace"))
 
-    def test_stale_local_source_or_remote_base_invalidates_approval(self):
+    def test_stale_local_source_or_conflicting_remote_base_blocks_signing(self):
         self.freeze()
         self.git("update-ref", "refs/heads/feature", self.first)
         with self.assertRaisesRegex(ValueError, "local source branch changed"):
             self.repository.sign(self.plan_id, self.approve())
         self.git("update-ref", "refs/heads/feature", self.head)
-        self.git("push", "--quiet", "origin", f"{self.first}:refs/heads/main")
-        with self.assertRaisesRegex(ValueError, "remote base changed"):
+        self.advance_base(conflict=True)
+        with self.assertRaisesRegex(ValueError, "merge conflicts"):
             self.repository.sign(self.plan_id, self.approve())
+        self.assertFalse(list(self.repository.state.glob("*.receipt.json")))
+
+    def test_clean_base_advances_preserve_the_plan_and_reuse_its_signatures(self):
+        self.freeze()
+        record = self.repository.state / f"{self.plan_id}.plan.json"
+        frozen = record.read_bytes()
+        base = self.advance_base()
+        refs = self.git("show-ref")
+        index = (self.root / ".git" / "index").read_bytes()
+        fetch_head = self.root / ".git" / "FETCH_HEAD"
+        fetch_head.write_text("previous fetch\n")
+        receipt = self.repository.sign(self.plan_id, self.approve())
+        self.assertEqual(record.read_bytes(), frozen)
+        self.assertEqual(receipt["plan"]["request"]["base"], self.base)
+        self.assertEqual(receipt["plan"]["commits"], [self.first, self.head])
+        self.assertEqual((self.root / ".git" / "index").read_bytes(), index)
+        self.assertEqual(fetch_head.read_text(), "previous fetch\n")
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), self.head)
+        self.assertEqual(self.git("show-ref").replace(
+            f"{receipt['head']} refs/heads/feature-signed\n", ""), refs)
+        self.assertEqual(self.git("cat-file", "-t", base).strip(), "commit")
+        self.advance_base()
+        with mock.patch.object(self.helper, "signed_commit", side_effect=AssertionError("resigned")):
+            self.assertEqual(self.repository.sign(self.plan_id, self.approve()), receipt)
+        self.assertEqual(record.read_bytes(), frozen)
+
+    def test_base_advance_during_signing_does_not_discard_signatures(self):
+        self.freeze()
+        original = self.helper.run
+        advanced = False
+
+        def advance_during_signature(arguments, **kwargs):
+            nonlocal advanced
+            if arguments[:3] == ["ssh-keygen", "-Y", "sign"] and not advanced:
+                advanced = True
+                self.advance_base()
+            return original(arguments, **kwargs)
+
+        with mock.patch.object(self.helper, "run", side_effect=advance_during_signature):
+            receipt = self.repository.sign(self.plan_id, self.approve())
+        self.assertEqual(receipt["plan_id"], self.plan_id)
+        self.assertEqual(self.repository.verify(self.plan_id), receipt)
+
+    def test_remote_base_rewind_does_not_reuse_approval(self):
+        self.request["base"] = self.advance_base()
+        self.freeze()
+        self.git("--git-dir=" + str(self.remote), "update-ref", "refs/heads/main", self.base)
+        with self.assertRaisesRegex(ValueError, "without a fast-forward"):
+            self.repository.sign(self.plan_id, self.approve())
+        self.assertFalse(list(self.repository.state.glob("*.receipt.json")))
+
+    def test_base_advance_during_mergeability_check_rechecks_the_same_plan(self):
+        self.freeze()
+        self.advance_base()
+        original = self.repository.check_base_merge
+        advanced = False
+
+        def advance_after_check(*arguments):
+            nonlocal advanced
+            original(*arguments)
+            if not advanced:
+                advanced = True
+                self.advance_base()
+
+        with mock.patch.object(self.repository, "check_base_merge", side_effect=advance_after_check) as probe:
+            self.repository.snapshot(self.request)
+        self.assertEqual(probe.call_count, 2)
+        self.assertEqual(self.repository.load_plan(self.plan_id)["request"], self.request)
+
+    def test_mergeability_command_failure_is_not_a_clean_merge(self):
+        self.freeze()
+        self.advance_base()
+        original = subprocess.run
+
+        def fail_merge(arguments, **kwargs):
+            if arguments[:3] == ["git", "merge-tree", "--write-tree"]:
+                return subprocess.CompletedProcess(arguments, 128, b"", b"fixture merge failure")
+            return original(arguments, **kwargs)
+
+        with mock.patch.object(subprocess, "run", side_effect=fail_merge):
+            with self.assertRaisesRegex(RuntimeError, "git merge-tree failed.*fixture merge failure"):
+                self.repository.sign(self.plan_id, self.approve())
         self.assertFalse(list(self.repository.state.glob("*.receipt.json")))
 
     def test_tracked_worktree_changes_and_existing_signed_branch_stop_planning(self):
@@ -481,13 +579,32 @@ class PlanningTests(EndorsementTestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 120)
         self.assertFalse(run.call_args.kwargs["echo"])
 
-    def test_stale_request_is_rejected_before_fetch(self):
-        self.advance_remote_base(self.request["base"])
-        with mock.patch.object(self.repository, "git", wraps=self.repository.git) as git:
-            with self.assertRaisesRegex(ValueError, "remote base changed"):
-                self.freeze()
-        self.assertFalse(any(call.args[0] == "fetch" for call in git.call_args_list))
-        self.assertFalse(list(self.repository.state.glob("*.plan.json")))
+    def test_clean_base_advance_before_planning_preserves_the_requested_range(self):
+        reviewed = copy.deepcopy(self.request)
+        current = self.advance_remote_base(self.request["base"])
+        self.freeze()
+        self.assertEqual(self.plan["request"], reviewed)
+        self.assertEqual(self.plan["commits"], [self.first, self.head])
+        self.assertEqual(self.git("cat-file", "-t", current).strip(), "commit")
+        self.assertFalse(list(self.repository.state.glob("*.receipt.json")))
+
+    def test_clean_base_advance_during_fetch_preserves_the_request(self):
+        original = self.repository.git
+        advanced = False
+
+        def advance_after_fetch(*arguments, **kwargs):
+            nonlocal advanced
+            result = original(*arguments, **kwargs)
+            if arguments[0] == "fetch" and not advanced:
+                advanced = True
+                self.advance_remote_base(self.request["base"])
+            return result
+
+        reviewed = copy.deepcopy(self.request)
+        with mock.patch.object(self.repository, "git", side_effect=advance_after_fetch):
+            self.freeze()
+        self.assertEqual(self.plan["request"], reviewed)
+        self.assertEqual(self.plan["commits"], [self.first, self.head])
 
     def test_failed_fetch_does_not_record_a_plan_or_change_the_request(self):
         original = self.repository.git
@@ -689,19 +806,54 @@ class PublicationTests(EndorsementTestCase):
                 self.repository.push(self.plan_id, self.approve("replace"))
         self.assertEqual(self.remote_head("feature"), self.first)
 
-    def test_base_change_during_push_does_not_report_publication_complete(self):
+    def test_conflicting_base_change_during_push_does_not_report_publication_complete(self):
         self.sign()
         original_git = self.repository.git
 
         def race(*arguments, **kwargs):
             result = original_git(*arguments, **kwargs)
             if arguments[0] == "push":
-                self.git("--git-dir=" + str(self.remote), "update-ref", "refs/heads/main", self.first)
+                self.advance_base(conflict=True)
             return result
 
         with mock.patch.object(self.repository, "git", side_effect=race):
-            with self.assertRaisesRegex(ValueError, "remote base changed"):
+            with self.assertRaisesRegex(ValueError, "merge conflicts"):
                 self.repository.push(self.plan_id, self.approve())
+        self.assertFalse(list(self.repository.state.glob("*.published.json")))
+
+    def assert_clean_base_advance_during_push(self, publication):
+        self.sign(publication)
+        original_git = self.repository.git
+
+        def race(*arguments, **kwargs):
+            result = original_git(*arguments, **kwargs)
+            if arguments[0] == "push":
+                self.advance_base()
+            return result
+
+        with mock.patch.object(self.repository, "git", side_effect=race):
+            receipt = self.repository.push(self.plan_id, self.approve(publication))
+        target = "feature" if publication == "replace" else "feature-signed"
+        self.assertEqual(self.remote_head(target), receipt["head"])
+        self.assertEqual(receipt["plan"]["request"]["base"], self.base)
+        self.assertEqual(self.git("rev-parse", "feature").strip(), self.head)
+
+    def test_clean_base_advance_during_replacement_push_preserves_approval(self):
+        self.assert_clean_base_advance_during_push("replacement")
+
+    def test_clean_base_advance_during_in_place_push_preserves_approval(self):
+        self.assert_clean_base_advance_during_push("replace")
+
+    def test_conflicting_base_advance_before_push_preserves_the_unpublished_receipt(self):
+        receipt = self.sign()
+        self.advance_base(conflict=True)
+        with self.assertRaisesRegex(ValueError, "merge conflicts"):
+            self.repository.push(self.plan_id, self.approve())
+        self.assertEqual(self.repository.verify(self.plan_id), receipt)
+        self.assertFalse(list(self.repository.state.glob("*.published.json")))
+        self.assertEqual(self.git("--git-dir=" + str(self.remote),
+                                  "for-each-ref", "--format=%(refname)",
+                                  "refs/heads/feature-signed"), "")
 
 
 class GitHubEndorsementTests(EndorsementTestCase):
@@ -721,6 +873,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
         }
         self.replacement = None
         self.live_base = self.base
+        self.mergeable = "MERGEABLE"
+        self.base_relation = "ahead"
         self.operator_keys = [{"key": self.key}]
         self.operator_login = "fixture"
         self.comments = []
@@ -778,6 +932,11 @@ class GitHubEndorsementTests(EndorsementTestCase):
             raise RuntimeError("fixture API failure")
         if endpoint == "user":
             return {"login": self.operator_login}
+        if "/compare/" in endpoint:
+            base, head = endpoint.split("/compare/", 1)[1].split("?", 1)[0].split("...")
+            self.assertEqual(head, self.live_base)
+            return {"status": self.base_relation, "base_commit": {"sha": base},
+                    "merge_base_commit": {"sha": base}}
         if endpoint.startswith("repositories/"):
             parts = endpoint.split("/")
             source = self.workflow_sources[int(parts[1])]
@@ -814,6 +973,14 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 }}}
             pr = (self.original if data["variables"]["id"] == "PR_original"
                   else self.replacement)
+            if "EndorsementBaseCompatibility" in data["query"]:
+                return {"data": {"node": {
+                    "id": pr["node_id"], "state": pr["state"].upper(),
+                    "headRefOid": pr["head"]["sha"], "headRefName": pr["head"]["ref"],
+                    "baseRefName": pr["base"]["ref"],
+                    "baseRef": {"target": {"oid": self.live_base}},
+                    "mergeable": self.mergeable,
+                }}}
             if "markPullRequestReadyForReview" in data["query"]:
                 if self.ready_failure:
                     raise RuntimeError("fixture readiness failure")
@@ -830,6 +997,7 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 "id": pr["node_id"], "state": pr["state"].upper(),
                 "headRefOid": pr["head"]["sha"], "headRefName": pr["head"]["ref"],
                 "baseRefName": pr["base"]["ref"],
+                "mergeable": self.mergeable,
                 "baseRef": {
                     "target": {"oid": self.live_base},
                     "branchProtectionRule": {
@@ -905,17 +1073,24 @@ class GitHubEndorsementTests(EndorsementTestCase):
         with mock.patch.object(self.helper, "replacement_allowed", return_value=True):
             return self.helper.prepare("example/project", 12, str(self.key_file) + ".pub")
 
+    def conflicting_base_advance(self, _pr=None):
+        self.live_base = self.first
+        self.mergeable = "CONFLICTING"
+
+    def assert_read_only_calls(self):
+        self.assertTrue(all(
+            method in ("GET", "GET-PAGES")
+            or (endpoint == "graphql" and any(name in data["query"] for name in (
+                "EndorsementRequiredChecks", "EndorsementWorkflowRun", "EndorsementBaseCompatibility")))
+            for method, endpoint, data in self.calls
+        ))
+
     def assert_read_only_preparation(self):
         self.assertTrue(self.original["draft"])
         self.assertEqual(self.original["state"], "open")
         self.assertIsNone(self.replacement)
         self.assertEqual(self.comments, [])
-        self.assertTrue(all(
-            method in ("GET", "GET-PAGES")
-            or (endpoint == "graphql" and any(name in data["query"] for name in (
-                "EndorsementRequiredChecks", "EndorsementWorkflowRun")))
-            for method, endpoint, data in self.calls
-        ))
+        self.assert_read_only_calls()
 
     def add_required_workflow(self, *, run_id=100, path=".github/workflows/required.yml"):
         source = {"repository": "example/policy", "ref": "refs/heads/main", "sha": "a" * 40}
@@ -1124,7 +1299,7 @@ class GitHubEndorsementTests(EndorsementTestCase):
                     self.prepare()
                 self.assert_read_only_preparation()
         self.failure = None
-        self.mutate_on_workflow = lambda: setattr(self, "live_base", self.first)
+        self.mutate_on_workflow = self.conflicting_base_advance
         with self.assertRaisesRegex(ValueError, "base branch changed"):
             self.prepare()
         self.assert_read_only_preparation()
@@ -1257,6 +1432,22 @@ class GitHubEndorsementTests(EndorsementTestCase):
             self.receipt if receipt is None else receipt,
             self.approve() if approval is None else approval,
         )
+
+    def test_copied_plan_record_preserves_the_complete_attestation_request(self):
+        record = self.root / "copied-plan-record.json"
+        shutil.copyfile(self.repository.state / f"{self.plan_id}.plan.json", record)
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import json, sys\n"
+             "print(json.dumps(dict(plan_id=sys.argv[1], **json.load(sys.stdin))))",
+             self.plan_id],
+            cwd=self.root, env=self.env, input=record.read_text(),
+            text=True, capture_output=True, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        copied = json.loads(result.stdout)
+        self.assertEqual(copied, self.plan)
+        self.assertTrue(self.helper.await_attestation(copied)["awaiting_attestation"])
 
     def test_waiting_for_attestation_assigns_only_the_planned_operator_once(self):
         original = copy.deepcopy(self.original)
@@ -1743,12 +1934,13 @@ class GitHubEndorsementTests(EndorsementTestCase):
             lambda pr: pr["head"].update(ref="another-branch"),
             lambda pr: pr["base"].update(ref="another-base"),
             lambda pr: pr.update(state="closed"),
-            lambda pr: setattr(self, "live_base", self.first),
+            self.conflicting_base_advance,
             lambda pr: setattr(self, "published_head", self.first),
         ):
             with self.subTest(change=change):
                 self.original.update(state="open")
                 self.live_base = self.base
+                self.mergeable = "MERGEABLE"
                 self.published_head = None
                 self.replacement = None
                 self.calls.clear()
@@ -1873,24 +2065,25 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 "replaces": self.request["url"], "ready_for_review": True,
             })
 
-    def test_live_base_change_blocks_finalization_before_metadata_mutation(self):
-        self.live_base = self.first
+    def test_conflicting_base_advance_blocks_finalization_before_metadata_mutation(self):
+        self.conflicting_base_advance()
         with self.assertRaisesRegex(ValueError, "base branch changed"):
             self.finish()
         self.assertIsNone(self.replacement)
         self.assertEqual(self.original["state"], "open")
-        self.assertTrue(all(method == "GET" for method, _, _ in self.calls))
+        self.assert_read_only_calls()
 
-    def test_live_base_change_during_signature_verification_blocks_both_publications(self):
+    def test_conflicting_base_advance_during_signature_verification_blocks_both_publications(self):
         verify = self.helper.verify_signature
 
         def change_base(*arguments):
             verify(*arguments)
-            self.live_base = self.first
+            self.conflicting_base_advance()
 
         for publication in ("replacement", "replace"):
             with self.subTest(publication=publication):
                 self.live_base = self.base
+                self.mergeable = "MERGEABLE"
                 self.calls.clear()
                 self.receipt["publication"] = publication
                 self.original["head"]["sha"] = (
@@ -1900,14 +2093,156 @@ class GitHubEndorsementTests(EndorsementTestCase):
                         self.finish()
                 self.assertIsNone(self.replacement)
                 self.assertEqual(self.original["state"], "open")
-                self.assertTrue(all(method == "GET" for method, _, _ in self.calls))
+                self.assert_read_only_calls()
 
-    def test_live_base_change_after_linking_keeps_original_open(self):
-        self.mutate_on_comment = lambda: setattr(self, "live_base", self.first)
+    def test_conflicting_base_advance_after_linking_keeps_original_open(self):
+        self.mutate_on_comment = self.conflicting_base_advance
         with self.assertRaisesRegex(ValueError, "base branch changed"):
             self.finish()
         self.assertEqual(self.original["state"], "open")
         self.assertEqual(self.replacement["state"], "open")
+
+    def test_clean_base_advance_preserves_the_attestation_plan(self):
+        frozen = copy.deepcopy(self.plan)
+        self.live_base = self.first
+        self.assertTrue(self.helper.await_attestation(self.plan)["awaiting_attestation"])
+        self.assertFalse(self.helper.complete_attestation(
+            self.receipt, self.approve())["awaiting_attestation"])
+        self.assertEqual(self.plan, frozen)
+        self.assertEqual(self.plan["request"]["base"], self.base)
+        self.assertEqual(self.plan["commits"], [self.first, self.head])
+
+    def test_unknown_mergeability_pauses_and_resumes_the_same_plan(self):
+        self.live_base = self.first
+        frozen = copy.deepcopy(self.plan)
+        for mergeable in ("UNKNOWN", None, False, "unexpected"):
+            with self.subTest(mergeable=mergeable):
+                self.mergeable = mergeable
+                with self.assertRaisesRegex(ValueError, "mergeability is unconfirmed.*same plan"):
+                    self.helper.await_attestation(self.plan)
+                self.assertFalse(self.assignment_calls())
+        self.mergeable = "MERGEABLE"
+        self.assertTrue(self.helper.await_attestation(self.plan)["awaiting_attestation"])
+        self.assertEqual(self.plan, frozen)
+
+    def test_base_rewind_or_rewrite_cannot_reuse_attestation(self):
+        self.live_base = self.first
+        for relation in ("behind", "diverged", "identical"):
+            with self.subTest(relation=relation):
+                self.base_relation = relation
+                with self.assertRaisesRegex(ValueError, "without a confirmed fast-forward"):
+                    self.helper.await_attestation(self.plan)
+                self.assertFalse(self.assignment_calls())
+
+    def test_incomplete_base_comparison_pauses_and_resumes_the_same_plan(self):
+        self.live_base = self.first
+        frozen = copy.deepcopy(self.plan)
+        comparison = {"status": "ahead", "base_commit": {"sha": self.base},
+                      "merge_base_commit": {"sha": self.base}}
+        for response in (
+            None, [], {},
+            dict(comparison, status=None),
+            dict(comparison, status="unknown"),
+            dict(comparison, base_commit={"sha": self.head}),
+            dict(comparison, merge_base_commit={}),
+            dict(comparison, merge_base_commit={"sha": "invalid"}),
+        ):
+            with self.subTest(response=response):
+                def incomplete(endpoint, method="GET", data=None):
+                    result = self.api(endpoint, method, data)
+                    return response if "/compare/" in endpoint else result
+
+                with mock.patch.object(self.helper, "github", side_effect=incomplete):
+                    with self.assertRaisesRegex(ValueError, "ancestry is unconfirmed.*same plan"):
+                        self.helper.await_attestation(self.plan)
+                self.assertFalse(self.assignment_calls())
+                self.assertEqual(self.plan, frozen)
+        self.assertTrue(self.helper.await_attestation(self.plan)["awaiting_attestation"])
+        self.assertEqual(self.plan, frozen)
+
+    def test_incomplete_or_mismatched_mergeability_cannot_assign_the_attestor(self):
+        self.live_base = self.first
+        for change in (
+            lambda response: response.update(errors=[{"message": "unavailable"}]),
+            lambda response: response.update(data=None),
+            lambda response: response["data"].update(node=None),
+            lambda response: response["data"]["node"].update(id="PR_other"),
+            lambda response: response["data"]["node"].update(headRefOid=self.first),
+            lambda response: response["data"]["node"].update(headRefName="other"),
+            lambda response: response["data"]["node"].update(baseRefName="other"),
+            lambda response: response["data"]["node"].update(baseRef=None),
+            lambda response: response["data"]["node"]["baseRef"].update(target={}),
+            lambda response: response["data"]["node"].update(state="CLOSED"),
+        ):
+            with self.subTest(change=change):
+                def corrupt(endpoint, method="GET", data=None):
+                    response = self.api(endpoint, method, data)
+                    if endpoint == "graphql" and "EndorsementBaseCompatibility" in data["query"]:
+                        change(response)
+                    return response
+
+                with mock.patch.object(self.helper, "github", side_effect=corrupt):
+                    with self.assertRaises(ValueError):
+                        self.helper.await_attestation(self.plan)
+                self.assertFalse(self.assignment_calls())
+
+    def test_base_advance_during_github_mergeability_rechecks_the_same_plan(self):
+        self.live_base = self.first
+        frozen = copy.deepcopy(self.plan)
+        advanced = False
+
+        def advance_after_comparison(endpoint, method="GET", data=None):
+            nonlocal advanced
+            response = self.api(endpoint, method, data)
+            if "/compare/" in endpoint and not advanced:
+                advanced = True
+                self.live_base = self.head
+            return response
+
+        with mock.patch.object(self.helper, "github", side_effect=advance_after_comparison):
+            self.helper.confirm_ci_revision(self.request, 12, self.head, "feature")
+        comparisons = [endpoint for _, endpoint, _ in self.calls if "/compare/" in endpoint]
+        self.assertEqual(len(comparisons), 2)
+        self.assertEqual(self.plan, frozen)
+        self.assert_read_only_preparation()
+
+    def test_clean_base_advance_during_in_place_verification_preserves_endorsement(self):
+        self.receipt["publication"] = "replace"
+        self.original["head"]["sha"] = self.receipt["head"]
+        original = self.helper.verify_signature
+
+        def advance(*arguments):
+            original(*arguments)
+            self.live_base = self.first
+
+        with mock.patch.object(self.helper, "verify_signature", side_effect=advance):
+            self.assertTrue(self.finish()["ready_for_review"])
+        self.assertEqual(self.receipt["plan"]["request"]["base"], self.base)
+        self.assertIsNone(self.replacement)
+
+    def test_replacement_resumes_after_a_clean_base_advance_with_original_closed(self):
+        self.check_pages[0][0].update(status="IN_PROGRESS", conclusion=None)
+        with self.assertRaisesRegex(ValueError, "required CI"):
+            self.finish()
+        self.assertEqual(self.original["state"], "closed")
+        self.assertTrue(self.replacement["draft"])
+        self.live_base = self.first
+        self.check_pages[0][0].update(status="COMPLETED", conclusion="SUCCESS")
+        self.calls.clear()
+        self.assertTrue(self.finish()["ready_for_review"])
+        self.assertEqual(self.receipt["plan"]["request"]["base"], self.base)
+        self.assertFalse(any(method == "POST" and endpoint.endswith("/pulls")
+                             for method, endpoint, _ in self.calls))
+        merge_queries = [data for _, endpoint, data in self.calls
+                         if endpoint == "graphql" and "EndorsementBaseCompatibility" in data["query"]]
+        self.assertTrue(merge_queries)
+        self.assertTrue(all(data["variables"]["id"] == "PR_replacement" for data in merge_queries))
+
+    def test_clean_base_advance_between_ci_pages_keeps_the_requested_revision(self):
+        self.check_pages.append([])
+        self.mutate_on_checks = lambda pr: setattr(self, "live_base", self.first)
+        self.assertEqual(self.prepare(), self.request)
+        self.assert_read_only_preparation()
 
     def test_a_verified_badge_alone_is_not_an_endorsement(self):
         after = self.commits[self.receipt["head"]]
@@ -2075,12 +2410,13 @@ class GitHubEndorsementTests(EndorsementTestCase):
             lambda pr: pr["base"].update(ref="another-base"),
             lambda pr: pr.update(state="closed"),
             lambda pr: pr.update(draft=False),
-            lambda pr: setattr(self, "live_base", self.first),
+            self.conflicting_base_advance,
             lambda pr: setattr(self, "published_head", self.first),
         ):
             with self.subTest(change=change):
                 self.original = copy.deepcopy(original)
                 self.live_base = self.base
+                self.mergeable = "MERGEABLE"
                 self.published_head = None
                 self.mutate_on_checks = change
                 with self.assertRaisesRegex(ValueError, "changed|open|draft"):
@@ -2241,6 +2577,50 @@ class GitHubEndorsementTests(EndorsementTestCase):
 
 
 class EndorsementRunnerTests(EndorsementTestCase):
+    def test_shipped_helper_fits_the_argument_limit_including_publication_pty(self):
+        output = self.emacs(
+            f"""(progn
+              (require 'cl-lib)
+              (require 'json)
+              (copilot-cs-use "fixture-codespace" {json.dumps(str(self.root))})
+              (cl-letf (((symbol-function 'copilot-cs--run)
+                         (lambda (command &rest _arguments)
+                           (string-bytes (copilot-cs--launcher "job-payload-check" command)))))
+                (let ((plan-id (make-string 64 ?a)))
+                  (princ
+                   (json-encode
+                    (list
+                     (copilot-cs-endorse "plan" {json.dumps(json.dumps(self.request))} nil 0)
+                     (copilot-cs-endorse "sign" plan-id (concat plan-id ":replacement") 0)
+                     (copilot-cs-endorse "verify" plan-id nil 0)
+                     (copilot-cs-endorse "push" plan-id (concat plan-id ":replacement") 0)
+                     (copilot-cs-endorse "push" plan-id (concat plan-id ":replace") 0 t)))))))"""
+        )
+        lengths = json.loads(output)
+        self.assertEqual(len(lengths), 5)
+        for length in lengths:
+            self.assertGreater(length, 0)
+            self.assertLessEqual(length, 120000)
+
+    def test_helper_compression_failure_stops_before_remote_dispatch(self):
+        self.executable(
+            "python3",
+            "import sys\nprint('fixture compression failure', file=sys.stderr)\nraise SystemExit(42)\n",
+        )
+        output = self.emacs(
+            f"""(progn
+              (require 'cl-lib)
+              (copilot-cs-use "fixture-codespace" {json.dumps(str(self.root))})
+              (cl-letf (((symbol-function 'copilot-cs--run)
+                         (lambda (&rest _arguments) (error "unexpected remote dispatch"))))
+                (condition-case err
+                    (copilot-cs-endorse "plan" {json.dumps(json.dumps(self.request))} nil 0)
+                  (error (princ (error-message-string err))))))"""
+        )
+        self.assertIn("could not compress endorsement helper", output)
+        self.assertIn("fixture compression failure", output)
+        self.assertNotIn("unexpected remote dispatch", output)
+
     def test_shipped_helper_runs_through_detached_jobs_and_returns_complete_receipts(self):
         real_git = shutil.which("git")
         self.executable(

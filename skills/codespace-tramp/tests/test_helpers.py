@@ -1625,6 +1625,88 @@ sys.stdin.read()
                 pass
 
 
+class McpFormSafetyTests(HelperTestCase):
+    def check(self, expression):
+        return self.emacs(
+            f"""(progn
+              (defvar checked-forms nil)
+              (defun mcp-server-security--check-form-safety (form)
+                (push form checked-forms)
+                (when (or (eq form 'blocked-fixture)
+                          (eq (car-safe form) 'blocked-fixture))
+                  (error "Fixture function denied"))
+                (when (and (eq (car-safe form) 'find-file)
+                           (equal (cadr form) "/outside"))
+                  (error "Fixture path denied"))
+                (when (consp form)
+                  (dolist (arg (cdr form))
+                    (mcp-server-security--check-form-safety arg))))
+              (load "copilot-mcp-form-safety" nil t)
+              {expression})"""
+        )
+
+    def test_quoted_dotted_pairs_keep_their_evaluated_values(self):
+        output = self.check(
+            """(let* ((form '(mapcar (lambda (entry) (cons (car entry) (cdr entry)))
+                                    '(("race-suite" . "job-a")
+                                      ("workflow-matrix" . "job-b"))))
+                      (before (copy-tree form)))
+                 (mcp-server-security--check-form-safety form)
+                 (unless (equal form before) (error "Input form was changed"))
+                 (unless (member "job-b" checked-forms)
+                   (error "Dotted tail was not checked"))
+                 (prin1 (eval form t)))"""
+        )
+        self.assertEqual(output, '(("race-suite" . "job-a") ("workflow-matrix" . "job-b"))')
+
+    def test_improper_tails_retain_function_and_file_checks(self):
+        self.check(
+            """(dolist (case '(((quote (label . blocked-fixture)) . "Fixture function denied")
+                               ((quote (blocked-fixture . "value")) . "Fixture function denied")
+                               ((quote (find-file . "/outside")) . "Fixture path denied")
+                               ((quote (label value . blocked-fixture)) . "Fixture function denied")))
+                 (let ((failure
+                        (condition-case err
+                            (progn (mcp-server-security--check-form-safety (car case)) nil)
+                          (error (error-message-string err)))))
+                   (unless (equal failure (cdr case))
+                     (error "Expected %S; got %S" (cdr case) failure))))"""
+        )
+
+    def test_proper_forms_are_forwarded_unchanged(self):
+        self.check(
+            """(dolist (form '(nil 7 "text" (list "first" "second") [1 2]))
+                 (let (received)
+                   (unless (eq (copilot-mcp--check-dotted-form
+                                (lambda (value) (setq received value) 'checked) form)
+                               'checked)
+                     (error "Checker result was not preserved"))
+                   (unless (eq received form)
+                     (error "Proper form was copied or rewritten"))))"""
+        )
+
+    def test_circular_list_spines_fail_without_looping(self):
+        self.check(
+            """(let ((form (list 'list "value")))
+                 (setcdr (last form) form)
+                 (let ((failure
+                        (condition-case err
+                            (progn (mcp-server-security--check-form-safety form) nil)
+                          (error (error-message-string err)))))
+                   (unless (equal failure "Security: circular MCP forms are unsupported")
+                     (error "Unexpected circular-form result: %S" failure))))"""
+        )
+
+    def test_reloading_installs_only_one_adapter(self):
+        self.check(
+            """(load "copilot-mcp-form-safety" nil t)
+               (let ((form '(label . "value")))
+                 (mcp-server-security--check-form-safety form)
+                 (unless (equal (reverse checked-forms) '((label "value") "value"))
+                   (error "Unexpected checker calls: %S" checked-forms)))"""
+        )
+
+
 class ShellStartupTests(HelperTestCase):
     @unittest.skipUnless(sys.platform == "darwin", "macOS terminal-session integration")
     def test_macos_session_restore_is_only_enabled_for_real_terminals(self):
@@ -2190,6 +2272,8 @@ os.execv("/bin/sh", ["sh", "-c", command])
                     (unless (and (string-match-p "state=detached" report)
                                  (string-match-p "copilot-cs-attach" report)
                                  (string-match-p "availability" report)
+                                 (string-match-p "start it if needed" report)
+                                 (not (string-match-p "approval" report))
                                  (string-match-p "progress" report))
                       (error "Incorrect passive report: %s" report))))
                 (unless (equal (copilot-cs-output id) "progress")
@@ -2881,6 +2965,9 @@ Path(os.environ["FAKE_SERVED"]).touch()
               (cl-letf (((symbol-function 'process-attributes)
                          (lambda (_pid) '((ppid . 1) (comm . "copilot") (start . 1)))))
                 {refresh})
+              (unless (advice-member-p #'copilot-mcp--check-dotted-form
+                                       'mcp-server-security--check-form-safety)
+                (error "Form-safety compatibility was not refreshed"))
               (unless (and (equal copilot-cs-id "original-codespace")
                            (equal copilot-cs-dir "/workspaces/original")
                            copilot-cs-configured

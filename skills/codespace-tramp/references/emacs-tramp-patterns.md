@@ -96,7 +96,7 @@ transport key, not Stormbreaker;
 an automatic background warm-up used to race that command with a second
 connection and could cause one of the concurrent requests to be refused.
 
-For an explicitly approved Codespace restart, warm up with
+Start or restart the selected task Codespace without another prompt; warm up with
 `setup/copilot-ghcs ssh "<CS_ID>" true`. The same startup recovery now covers
 the first real command and copies, without requiring an extra warm-up or
 Secretive approval before every task.
@@ -396,10 +396,11 @@ without any Copilot-specific setup.
 Automatic reconnection is disabled only for `/ghcs:` servers, including
 already connected servers when this configuration is reloaded. The guard also
 cancels Eglot's delayed autoreconnect timer: otherwise a later timer can undo
-the guard and an SSH reconnect can restart a stopped Codespace. On
-`state=disconnected`, check availability and obtain approval for any restart
-before calling `copilot-cs-eglot-start` again. Local and other SSH servers
-keep their existing reconnection policy.
+the guard and a background SSH reconnect can revive an inactive task's Codespace.
+On `state=disconnected`, check availability and start the selected task's
+Codespace if needed without another prompt before calling
+`copilot-cs-eglot-start` again. Local and other SSH servers keep their existing
+reconnection policy.
 
 ### Recovering from an unavailable optional native tool
 
@@ -583,6 +584,17 @@ and a healthy default socket says nothing about another configured TCP port.
 Require the repository's documented healthy response or a read-only query
 through its application configuration. Do not print credentials or replace
 authentication checks with a TCP-connect-only probe.
+
+After a base/schema refresh, a healthy database and successful bootstrap can
+still leave generated ORM schema metadata stale. For a missing-column or
+undeclared-enum error, compare the live columns through the model's configured
+test connection with its cached column metadata in a fresh process. Check the
+relevant connection role as well; a column in another database is not evidence
+that this model can use it. If the live column exists but the generated cache
+omits it, use the repository's supported schema-cache generation task in the
+correct test environment. Recheck the metadata in a new process and rerun the
+original failing selector. Do not drop databases, delete arbitrary cache files,
+change schemas or add an explicit model attribute just to hide stale metadata.
 
 Docker `healthy` may describe a supervisor or liveness endpoint even while the
 database behind its API is unavailable. A persistent HTTP 503 needs inspection
