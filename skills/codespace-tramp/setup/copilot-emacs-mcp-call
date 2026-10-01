@@ -11,6 +11,7 @@ import select
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 
@@ -125,21 +126,28 @@ def main():
     if not expression.strip():
         return fail("an Elisp expression is required")
 
-    try:
-        timeout = float(os.environ.get("COPILOT_MCP_CALL_TIMEOUT", "30"))
-    except ValueError:
-        return fail("COPILOT_MCP_CALL_TIMEOUT must be a number")
-    if not math.isfinite(timeout) or timeout <= 0:
-        return fail("COPILOT_MCP_CALL_TIMEOUT must be finite and greater than zero")
+    timeouts = {}
+    for name, default in (("COPILOT_MCP_CALL_TIMEOUT", "30"),
+                          ("COPILOT_MCP_QUEUE_TIMEOUT", "120")):
+        try:
+            value = float(os.environ.get(name, default))
+        except ValueError:
+            return fail(f"{name} must be a number")
+        if not math.isfinite(value) or value <= 0:
+            return fail(f"{name} must be finite and greater than zero")
+        timeouts[name] = value
 
     try:
-        with invocation_lock(timeout):
-            return invoke(expression, timeout)
+        with invocation_lock(timeouts["COPILOT_MCP_QUEUE_TIMEOUT"]):
+            return invoke(expression, timeouts["COPILOT_MCP_CALL_TIMEOUT"])
     except (OSError, ValueError, TimeoutError) as error:
         return fail(str(error))
 
 
 def invoke(expression, timeout):
+    invocation = uuid.uuid4().hex
+    initialize_id = invocation + ":initialize"
+    evaluation_id = invocation + ":eval"
     try:
         process = subprocess.Popen(
             [str(BRIDGE)],
@@ -155,7 +163,7 @@ def invoke(expression, timeout):
             process,
             {
                 "jsonrpc": "2.0",
-                "id": 1,
+                "id": initialize_id,
                 "method": "initialize",
                 "params": {
                     "protocolVersion": "2024-11-05",
@@ -167,7 +175,7 @@ def invoke(expression, timeout):
                 },
             },
         )
-        initialization = reader.read(1, timeout)
+        initialization = reader.read(initialize_id, timeout)
         if "error" in initialization:
             return fail(
                 "initialization failed: "
@@ -186,7 +194,7 @@ def invoke(expression, timeout):
             process,
             {
                 "jsonrpc": "2.0",
-                "id": 2,
+                "id": evaluation_id,
                 "method": "tools/call",
                 "params": {
                     "name": "eval-elisp",
@@ -194,7 +202,7 @@ def invoke(expression, timeout):
                 },
             },
         )
-        return print_tool_result(reader.read(2, timeout))
+        return print_tool_result(reader.read(evaluation_id, timeout))
     except (BrokenPipeError, OSError, RuntimeError, TimeoutError) as error:
         return fail(str(error))
     finally:

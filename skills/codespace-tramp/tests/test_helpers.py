@@ -916,7 +916,7 @@ class AuthenticationLimitTests(SecretiveTransportTestCase):
             / "copilot-ghcs-connect.lock"
         )
 
-    def test_queued_connections_stop_after_three_refusals(self):
+    def assert_queued_authentication_limit(self):
         helper = self.load_script("copilot-gh-retry")
         self.gate_path.parent.mkdir()
         processes = []
@@ -943,7 +943,14 @@ class AuthenticationLimitTests(SecretiveTransportTestCase):
                     process.terminate()
                 process.communicate(timeout=10)
 
-    def test_copies_and_commands_share_the_refusal_limit(self):
+    def test_queued_connections_stop_after_three_refusals(self):
+        self.assert_queued_authentication_limit()
+
+    def test_queued_connections_stop_after_three_terminal_denials(self):
+        self.env["FAKE_GH_ERROR"] = "Permission denied (publickey,password)"
+        self.assert_queued_authentication_limit()
+
+    def assert_shared_authentication_limit(self):
         for mode, arguments in (
             ("ssh", ("run-once",)),
             ("cp", ("fixture", "remote:/tmp/fixture")),
@@ -960,7 +967,88 @@ class AuthenticationLimitTests(SecretiveTransportTestCase):
             self.assertEqual(result.returncode, 75, result.stderr)
             self.assertIn("operator approval", result.stderr)
         self.assertEqual(len(self.recorded_calls()), 3)
+        self.assertEqual(self.gate_path.read_text(), "3")
         self.assertFalse(self.sleeps.exists())
+
+    def test_copies_and_commands_share_the_refusal_limit(self):
+        self.assert_shared_authentication_limit()
+
+    def test_copies_and_commands_share_the_terminal_denial_limit(self):
+        self.env["FAKE_GH_ERROR"] = (
+            "WARNING: UNPROTECTED PRIVATE KEY FILE!\n"
+            'Load key "fixture": bad permissions\n'
+            "Permission denied (publickey,password)"
+        )
+        self.assert_shared_authentication_limit()
+
+    def test_terminal_denials_count_once_per_failed_connection(self):
+        self.gate_path.parent.mkdir()
+        errors = (
+            "Permission denied (publickey,password)",
+            "codespace@localhost: Permission denied (publickey).",
+            "codespace@[::1]: Permission denied (publickey,gssapi-keyex,gssapi-with-mic).",
+            "sign_and_send_pubkey: agent refused operation\n"
+            "Permission denied (publickey,password)\n"
+            "Permission denied (publickey,password)",
+        )
+        for error in errors:
+            with self.subTest(error=error):
+                self.gate_path.write_text("0")
+                self.env["FAKE_GH_ERROR"] = error
+                result = self.invoke("ssh", "test-codespace", "run-once")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(self.gate_path.read_text(), "1")
+                self.assertIn("authentication failure 1/3", result.stderr)
+        self.assertEqual(len(self.recorded_calls()), len(errors))
+        self.assertFalse(self.sleeps.exists())
+
+    def test_fragmented_authentication_errors_survive_stderr_capture_overflow(self):
+        self.gate_path.parent.mkdir()
+        errors = (
+            b"codespace@localhost: Permission denied (publickey,password).",
+            b"sign_and_send_pubkey: agent refused operation",
+        )
+        for error in errors:
+            for overflow in (False, True):
+                for authenticated in (False, True):
+                    with self.subTest(
+                        error=error, overflow=overflow, authenticated=authenticated,
+                    ):
+                        self.gate_path.write_text("2")
+                        self.executable(
+                            "gh",
+                            f"""import json, os, sys, time
+with open(os.environ["FAKE_GH_CALLS"], "a") as output:
+    output.write(json.dumps(sys.argv[1:]) + "\\n")
+os.write(2, b"setup diagnostic\\n" * {5000 if overflow else 0})
+if {authenticated!r}:
+    print('Authenticated to localhost ([127.0.0.1]:1234) using "publickey".', file=sys.stderr, flush=True)
+os.write(2, {error[:12]!r})
+time.sleep(0.05)
+os.write(2, {error[12:]!r})
+sys.exit(1)
+""",
+                        )
+                        result = self.invoke("ssh", "test-codespace", "run-once")
+                        self.assertEqual(result.returncode, 1, result.stderr)
+                        self.assertEqual(
+                            self.gate_path.read_text(), "0" if authenticated else "3",
+                        )
+                        if not authenticated:
+                            self.assertIn("authentication failure 3/3", result.stderr)
+        self.assertEqual(len(self.recorded_calls()), 8)
+        self.assertFalse(self.sleeps.exists())
+
+    def test_successful_exit_does_not_count_a_terminal_denial(self):
+        self.gate_path.parent.mkdir()
+        self.gate_path.write_text("2")
+        self.executable(
+            "gh",
+            'import sys\nprint("Permission denied (publickey).", file=sys.stderr)\n',
+        )
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.gate_path.read_text(), "0")
 
     def test_communication_failures_count_toward_the_same_limit(self):
         self.env["FAKE_GH_ERROR"] = (
@@ -1032,10 +1120,17 @@ class AuthenticationLimitTests(SecretiveTransportTestCase):
     def test_remote_signing_errors_do_not_count_as_connection_refusals(self):
         self.assertEqual(self.invoke("ssh", "test-codespace", "first").returncode, 1)
         self.env["FAKE_GH_AUTHENTICATED"] = "1"
-        for _ in range(4):
-            self.assertEqual(self.invoke("ssh", "test-codespace", "remote-command").returncode, 1)
+        for error in (
+            "sign_and_send_pubkey: agent refused operation",
+            "Permission denied (publickey,password)",
+        ):
+            self.env["FAKE_GH_ERROR"] = error
+            for _ in range(4):
+                self.assertEqual(
+                    self.invoke("ssh", "test-codespace", "remote-command").returncode, 1,
+                )
         self.assertEqual(self.gate_path.read_text(), "0")
-        self.assertEqual(len(self.recorded_calls()), 5)
+        self.assertEqual(len(self.recorded_calls()), 9)
 
     def test_remote_output_resets_previous_connection_refusals(self):
         self.assertEqual(self.invoke("ssh", "test-codespace", "first").returncode, 1)
@@ -1057,16 +1152,23 @@ class AuthenticationLimitTests(SecretiveTransportTestCase):
         self.assertEqual(len(self.recorded_calls()), 3)
 
     def test_protocol_and_permission_errors_do_not_count_as_refusals(self):
-        for error in (
+        errors = (
             "Agent returned SSH_AGENT_FAILURE",
             "HTTP 403: Must have admin rights to Repository",
             "WARNING: UNPROTECTED PRIVATE KEY FILE!",
-        ):
+            "cp: /tmp/fixture: Permission denied",
+            "Permission denied, please try again.",
+            "HTTP 403: Permission denied (publickey).",
+            "debug1: Permission denied (publickey).",
+        )
+        self.env["FAKE_GH_FAILURES"] = str(4 * len(errors))
+        for error in errors:
             with self.subTest(error=error):
                 self.env["FAKE_GH_ERROR"] = error
                 for _ in range(4):
                     self.assertEqual(self.invoke("ssh", "test-codespace", "run-once").returncode, 1)
-        self.assertEqual(len(self.recorded_calls()), 12)
+        self.assertEqual(len(self.recorded_calls()), 4 * len(errors))
+        self.assertIn(self.gate_path.read_text(), ("", "0"))
 
     def test_corrupt_refusal_state_fails_closed_until_approved_resume(self):
         self.gate_path.parent.mkdir()
@@ -1138,6 +1240,37 @@ print("completed", flush=True)
         result = self.run_command(self.command(marker="__COPILOT_CS_ACK_job-fixture__"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("completed", result.stdout)
+
+    def test_slow_startup_reports_authentication_and_acknowledgement_without_replaying(self):
+        self.executable(
+            "gh",
+            """import sys, time
+time.sleep(0.22)
+print('Authenticated to localhost ([127.0.0.1]:1234) using "publickey".', file=sys.stderr, flush=True)
+time.sleep(0.22)
+print("__COPILOT_CS_ACK_job-fixture__", flush=True)
+time.sleep(0.7)
+print("completed", flush=True)
+""",
+        )
+        arguments = self.command(marker="__COPILOT_CS_ACK_job-fixture__")[1:]
+        arguments[arguments.index("--startup-timeout") + 1] = "1"
+        result = self.run_command([
+            sys.executable, "-c",
+            """import runpy, sys
+helper = runpy.run_path(sys.argv[1])
+sys.argv = sys.argv[1:]
+helper["run_once"].__globals__["SETUP_PROGRESS_INTERVAL"] = 0.05
+sys.exit(helper["main"]())
+""", *arguments,
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "__COPILOT_CS_ACK_job-fixture__\ncompleted\n")
+        self.assertIn("waiting for API/SSH connection setup", result.stderr)
+        self.assertIn("SSH authenticated after", result.stderr)
+        self.assertIn("waiting for the exact runner acknowledgement", result.stderr)
+        self.assertIn("runner acknowledged after", result.stderr)
+        self.assertNotIn("retrying (", result.stderr)
 
     def test_quiet_authenticated_copy_releases_gate_without_limiting_transfer_time(self):
         self.executable(
@@ -1245,6 +1378,7 @@ class McpFallbackTests(HelperTestCase):
         self.client = self.bin / "copilot-emacs-mcp-call"
         shutil.copyfile(SETUP / "copilot-emacs-mcp-call", self.client)
         self.env["COPILOT_MCP_CALL_TIMEOUT"] = "1"
+        self.env["COPILOT_MCP_QUEUE_TIMEOUT"] = "3"
 
     def invoke(self, expression="(copilot-cs-status)"):
         return self.run_command([sys.executable, str(self.client), expression])
@@ -1259,18 +1393,47 @@ notification = {"jsonrpc": "2.0", "method": "notifications/message", "params": {
 def respond(identifier, result):
     response = {"jsonrpc": "2.0", "id": identifier, "result": result}
     os.write(1, (json.dumps(notification) + "\\n" + json.dumps(response) + "\\n").encode())
-respond(1, {"protocolVersion": "2024-11-05", "capabilities": {}})
+respond(initialization["id"], {"protocolVersion": "2024-11-05", "capabilities": {}})
 assert json.loads(sys.stdin.readline())["method"] == "notifications/initialized"
 call = json.loads(sys.stdin.readline())
 assert call["method"] == "tools/call"
 assert call["params"] == {"name": "eval-elisp", "arguments": {"expression": "(copilot-cs-status)"}}
-respond(2, {"content": [{"type": "text", "text": "fixture jobs"}]})
+respond(call["id"], {"content": [{"type": "text", "text": "fixture jobs"}]})
 sys.stdin.read()
 """,
         )
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "fixture jobs")
+
+    def test_foreign_and_late_responses_cannot_become_another_invocations_receipt(self):
+        self.executable(
+            "copilot-emacs-mcp",
+            """import json, sys
+from pathlib import Path
+def respond(identifier, text):
+    print(json.dumps({"jsonrpc": "2.0", "id": identifier, "result": {
+        "content": [{"type": "text", "text": text}]}}), flush=True)
+initialization = json.loads(sys.stdin.readline())
+respond(initialization["id"], "initialized")
+sys.stdin.readline()
+call = json.loads(sys.stdin.readline())
+record = Path.home() / "request-ids"
+previous = json.loads(record.read_text()) if record.exists() else []
+for identifier in [2, *previous]:
+    respond(identifier, "another invocation's job")
+record.write_text(json.dumps([initialization["id"], call["id"]]))
+respond(call["id"], call["params"]["arguments"]["expression"])
+sys.stdin.read()
+""",
+        )
+        identifiers = []
+        for expression in ("first receipt", "second receipt"):
+            result = self.invoke(expression)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), expression)
+            identifiers.extend(json.loads((self.root / "request-ids").read_text()))
+        self.assertEqual(len(set(identifiers)), 4)
 
     def test_partial_frame_obeys_timeout(self):
         self.env["COPILOT_MCP_CALL_TIMEOUT"] = "0.2"
@@ -1289,12 +1452,14 @@ time.sleep(10)
         self.assertLess(time.monotonic() - started, 2)
 
     def test_nonfinite_timeout_is_rejected_before_starting_bridge(self):
-        for value in ("NaN", "inf", "-inf", "0"):
-            with self.subTest(value=value):
-                self.env["COPILOT_MCP_CALL_TIMEOUT"] = value
-                result = self.invoke()
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("finite and greater than zero", result.stderr)
+        for name in ("COPILOT_MCP_CALL_TIMEOUT", "COPILOT_MCP_QUEUE_TIMEOUT"):
+            for value in ("NaN", "inf", "-inf", "0", "-1", "invalid"):
+                with self.subTest(name=name, value=value):
+                    self.env[name] = value
+                    result = self.invoke()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(name + " must be", result.stderr)
+            self.env[name] = "1"
 
     def test_tool_error_is_not_reported_as_success(self):
         helper = self.load_script("copilot-emacs-mcp-call")
@@ -1392,7 +1557,7 @@ sys.stdin.read()
 
     def test_busy_daemon_lock_times_out_before_starting_the_bridge(self):
         self.env["COPILOT_AGENT_SESSION_ID"] = "mcp-test-shared"
-        self.env["COPILOT_MCP_CALL_TIMEOUT"] = "0.2"
+        self.env["COPILOT_MCP_QUEUE_TIMEOUT"] = "0.2"
         directory = self.root / ".emacs.d"
         directory.mkdir()
         self.executable("copilot-emacs-mcp", "raise RuntimeError('bridge must not start')")
@@ -1402,6 +1567,43 @@ sys.stdin.read()
         self.assertEqual(result.returncode, 1)
         self.assertIn("no evaluation was sent", result.stderr)
         self.assertNotIn("bridge must not start", result.stderr)
+
+    def test_queue_budget_is_separate_from_the_response_deadline(self):
+        self.env["COPILOT_AGENT_SESSION_ID"] = "mcp-test-shared"
+        self.env["COPILOT_MCP_CALL_TIMEOUT"] = "0.2"
+        self.executable(
+            "copilot-emacs-mcp",
+            """import json, sys
+initialization = json.loads(sys.stdin.readline())
+print(json.dumps({"id": initialization["id"], "result": {}}), flush=True)
+sys.stdin.readline()
+call = json.loads(sys.stdin.readline())
+print(json.dumps({"id": call["id"], "result": {"content": [
+    {"type": "text", "text": "queued successfully"}]}}), flush=True)
+sys.stdin.read()
+""",
+        )
+        directory = self.root / ".emacs.d"
+        directory.mkdir()
+        process = None
+        try:
+            with (directory / "copilot-mcp-test.call.lock").open("w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                process = subprocess.Popen(
+                    [sys.executable, str(self.client), "(copilot-cs-status)"],
+                    cwd=self.root, env=self.env, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True,
+                )
+                time.sleep(0.5)
+                self.assertIsNone(process.poll())
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, stderr)
+            self.assertEqual(stdout.strip(), "queued successfully")
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.terminate()
+                process.communicate(timeout=5)
 
     def test_different_daemons_have_independent_invocation_locks(self):
         helper = self.load_script("copilot-emacs-mcp-call")
@@ -1977,7 +2179,25 @@ os.execv("/bin/sh", ["sh", "-c", command])
                     output=output,
                 )
 
-    def test_acknowledged_disconnect_reconnects_to_original_target(self):
+    def test_detached_poll_is_passive_and_preserves_the_original_output(self):
+        self.check_job(
+            """(cl-letf (((symbol-function 'copilot-cs--resume)
+                         (lambda (_) (error "Polling opened a connection")))
+                        ((symbol-function 'copilot-cs--start)
+                         (lambda (&rest _) (error "Polling started a process"))))
+                (dotimes (_ 2)
+                  (let ((report (copilot-cs-poll id 0)))
+                    (unless (and (string-match-p "state=detached" report)
+                                 (string-match-p "copilot-cs-attach" report)
+                                 (string-match-p "availability" report)
+                                 (string-match-p "progress" report))
+                      (error "Incorrect passive report: %s" report))))
+                (unless (equal (copilot-cs-output id) "progress")
+                  (error "Polling discarded the original log")))""",
+            output="__COPILOT_CS_ACK_job-state-fixture__\nprogress\n",
+        )
+
+    def test_explicit_attachment_reconnects_to_original_target(self):
         self.check_job(
             """(let ((copilot-cs-id "different-codespace")
                      (copilot-cs-dir "/workspaces/different")
@@ -1991,8 +2211,11 @@ os.execv("/bin/sh", ["sh", "-c", command])
                                                  (copilot-cs--attach-command id))
                                           (equal label "fixture command"))
                                (error "Reconnect changed target or replayed command"))
-                             (setq refreshed (list :id key :started (float-time))))))
-                  (unless (and (eq (copilot-cs--live job) refreshed)
+                             (setq refreshed (list :id key :started (float-time)))))
+                          ((symbol-function 'copilot-cs--settle)
+                           (lambda (job _) job))
+                          ((symbol-function 'copilot-cs--report) #'identity))
+                  (unless (and (eq (copilot-cs-attach id 0) refreshed)
                                (equal (plist-get refreshed :started)
                                       (plist-get job :started)))
                     (error "Acknowledged job was not resumed"))
@@ -2001,6 +2224,24 @@ os.execv("/bin/sh", ["sh", "-c", command])
                     (error "Reconnect changed the selected target"))))""",
             output="__COPILOT_CS_ACK_job-state-fixture__\nprogress\n",
         )
+
+    def test_attaching_a_live_or_completed_job_does_not_open_another_connection(self):
+        for output, live, expected in (
+            ("", True, "connecting"),
+            ("__COPILOT_CS_ACK_job-state-fixture__\n", True, "running"),
+            ("__COPILOT_CS_DONE_job-state-fixture__:0\n", False, "done"),
+        ):
+            with self.subTest(state=expected):
+                self.check_job(
+                    f"""(cl-letf (((symbol-function 'copilot-cs--start)
+                                  (lambda (&rest _) (error "Duplicate connection")))
+                                 ((symbol-function 'copilot-cs--resume)
+                                  (lambda (_) (error "Duplicate attachment"))))
+                        (unless (string-match-p "state={expected}"
+                                                (copilot-cs-attach id 0))
+                          (error "Existing job state changed")))""",
+                    output=output, live=live,
+                )
 
     def test_detached_job_does_not_claim_remote_execution_continues(self):
         self.check_job(
@@ -2142,6 +2383,244 @@ os.execv("/bin/sh", ["sh", "-c", sys.argv[2], sys.argv[3]])
         )
 
 
+class EglotStartupTests(HelperTestCase):
+    def test_slow_file_preparation_is_bounded_even_inside_a_timer(self):
+        for stage in ("scope", "read", "connect"):
+            with self.subTest(stage=stage):
+                output = self.emacs(
+                    f"""(progn
+                      (require 'copilot-cs-eglot)
+                      (let ((copilot-cs-eglot-preparation-timeout 0.05)
+                            (path "/ghcs:fixture:/workspaces/project/file.rb")
+                            (buffer (generate-new-buffer "eglot-start-fixture"))
+                            (started (float-time)))
+                        (unwind-protect
+                            (cl-letf (((symbol-function 'copilot-cs-eglot--basic-path-p)
+                                       (lambda (_) t))
+                                      ((symbol-function 'copilot-cs-eglot--editable-path-p)
+                                       (lambda (_)
+                                         {('(sleep-for 2)' if stage == 'scope' else '')} t))
+                                      ((symbol-function 'find-file-noselect)
+                                       (lambda (_)
+                                         {('(sleep-for 2)' if stage == 'read' else '')} buffer))
+                                      ((symbol-function 'eglot-current-server) (lambda () nil))
+                                      ((symbol-function 'eglot--guess-contact) (lambda () nil))
+                                      ((symbol-function 'eglot)
+                                       (lambda (&rest _)
+                                         {('(sleep-for 2)' if stage == 'connect' else '')})))
+                              (copilot-cs-eglot-start path 'ruby-mode)
+                              (while (and (eq (plist-get (gethash path copilot-cs-eglot--states)
+                                                        :status) 'starting)
+                                          (< (- (float-time) started) 3))
+                                (accept-process-output nil 0.01))
+                              (unless (< (- (float-time) started) 0.5)
+                                (error "Eglot preparation blocked the daemon"))
+                              (princ (copilot-cs-eglot-status path)))
+                          (kill-buffer buffer))))"""
+                )
+                self.assertIn("state=error", output)
+                self.assertIn("preparation timed out", output)
+
+    def test_initialization_is_nonblocking_and_retains_the_starting_server(self):
+        self.emacs(
+            """(progn
+              (require 'copilot-cs-eglot)
+              (let ((buffer (generate-new-buffer "eglot-start-fixture"))
+                    (path "/ghcs:fixture:/workspaces/project/file.rb")
+                    (eglot-sync-connect t))
+                (unwind-protect
+                    (cl-letf (((symbol-function 'copilot-cs-eglot--editable-path-p)
+                               (lambda (_) t))
+                              ((symbol-function 'find-file-noselect)
+                               (lambda (_)
+                                 (when eglot-sync-connect
+                                   (error "blocking mode-hook handshake"))
+                                 buffer))
+                              ((symbol-function 'eglot-current-server) (lambda () nil))
+                              ((symbol-function 'eglot--guess-contact) (lambda () nil))
+                              ((symbol-function 'eglot)
+                               (lambda (&rest _)
+                                 (when eglot-sync-connect (error "blocking LSP handshake"))
+                                 (run-hook-with-args 'eglot-server-initialized-hook 'fixture-server)
+                                 nil))
+                              ((symbol-function 'copilot-cs-eglot--complete-start) #'ignore))
+                      (copilot-cs-eglot--record path 'starting :mode 'ruby-mode)
+                      (copilot-cs-eglot--start-now path 'ruby-mode)
+                      (let ((state (gethash path copilot-cs-eglot--states)))
+                        (unless (and (eq (plist-get state :status) 'starting)
+                                     (eq (plist-get state :buffer) buffer)
+                                     (eq (plist-get state :server) 'fixture-server))
+                          (error "Lost pending server or startup failed: %S" state)))
+                      (unless eglot-sync-connect
+                        (error "Changed the caller's synchronous-connect policy")))
+                  (kill-buffer buffer))))"""
+        )
+
+    def test_stopping_a_startup_prevents_queued_and_inflight_file_reads_from_connecting(self):
+        for inflight in (False, True):
+            with self.subTest(inflight=inflight):
+                self.emacs(
+                    f"""(progn
+                      (require 'cl-lib)
+                      (require 'copilot-cs-eglot)
+                      (let ((path "/ghcs:fixture:/workspaces/project/file.rb")
+                            (buffer (generate-new-buffer "eglot-cancel-fixture"))
+                            (connections 0))
+                        (unwind-protect
+                            (cl-letf (((symbol-function 'copilot-cs-eglot--basic-path-p)
+                                       (lambda (_) t))
+                                      ((symbol-function 'copilot-cs-eglot--editable-path-p)
+                                       (lambda (_) t))
+                                      ((symbol-function 'find-file-noselect)
+                                       (lambda (_)
+                                         (copilot-cs-eglot-stop path)
+                                         buffer))
+                                      ((symbol-function 'eglot)
+                                       (lambda (&rest _) (cl-incf connections))))
+                              (copilot-cs-eglot-start path 'ruby-mode)
+                              {('' if inflight else '(copilot-cs-eglot-stop path)')}
+                              (sleep-for 0.1)
+                              (unless (and (zerop connections)
+                                           (eq (plist-get (gethash path copilot-cs-eglot--states)
+                                                          :status) 'stopped))
+                                (error "Cancelled startup opened another connection")))
+                          (kill-buffer buffer))))"""
+                )
+
+    def test_repeated_start_does_not_queue_another_connection(self):
+        self.emacs(
+            """(progn
+              (require 'copilot-cs-eglot)
+              (let ((path "/ghcs:fixture:/workspaces/project/file.rb")
+                    (timers 0))
+                (cl-letf (((symbol-function 'copilot-cs-eglot--basic-path-p) (lambda (_) t))
+                          ((symbol-function 'run-at-time)
+                           (lambda (&rest _) (cl-incf timers))))
+                  (copilot-cs-eglot-start path 'ruby-mode)
+                  (copilot-cs-eglot-start path 'ruby-mode)
+                  (let ((rejected nil))
+                    (condition-case nil (copilot-cs-eglot-start path 'go-mode)
+                      (error (setq rejected t)))
+                    (unless (and (= timers 1) rejected)
+                      (error "Repeated startup changed mode or queued a connection"))))))"""
+        )
+
+    def test_failed_server_is_reported_immediately_with_its_stderr(self):
+        output = self.emacs(
+            """(progn
+              (require 'copilot-cs-eglot)
+              (let ((path "/ghcs:fixture:/workspaces/project/file.rb")
+                    (buffer (generate-new-buffer "eglot-start-fixture"))
+                    (stderr (generate-new-buffer "eglot-stderr-fixture")))
+                (unwind-protect
+                    (cl-letf (((symbol-function 'eglot-current-server) (lambda () nil))
+                              ((symbol-function 'eglot-managed-p) (lambda () nil))
+                              ((symbol-function 'jsonrpc-running-p) (lambda (_) nil))
+                              ((symbol-function 'jsonrpc-stderr-buffer) (lambda (_) stderr)))
+                      (with-current-buffer stderr (insert "fixture language-server failure"))
+                      (copilot-cs-eglot--record path 'starting :mode 'ruby-mode
+                                               :buffer buffer :server 'fixture-server :owned t)
+                      (copilot-cs-eglot--complete-start path 'ruby-mode buffer (+ (float-time) 60))
+                      (princ (copilot-cs-eglot-status path)))
+                  (kill-buffer buffer)
+                  (kill-buffer stderr))))"""
+        )
+        self.assertIn("state=error", output)
+        self.assertIn("exited during startup", output)
+        self.assertIn("fixture language-server failure", output)
+
+    def test_old_completion_cannot_overwrite_a_new_start(self):
+        self.emacs(
+            """(progn
+              (require 'copilot-cs-eglot)
+              (let* ((path "/ghcs:fixture:/workspaces/project/file.rb")
+                     (token (make-symbol "new-start"))
+                     (state (copilot-cs-eglot--record path 'starting :mode 'ruby-mode
+                                                    :token token)))
+                (copilot-cs-eglot--complete-start path 'ruby-mode nil 0 'old-start)
+                (unless (eq state (gethash path copilot-cs-eglot--states))
+                  (error "Old startup completion overwrote the new attempt"))))"""
+        )
+
+    def test_preparation_timeout_stops_only_the_server_created_by_that_attempt(self):
+        self.emacs(
+            """(progn
+              (require 'copilot-cs-eglot)
+              (let* ((path "/ghcs:fixture:/workspaces/project/file.rb")
+                     (buffer (generate-new-buffer "eglot-start-fixture"))
+                     (process (make-process :name "eglot-timeout-fixture" :command '("cat")
+                                            :connection-type 'pipe :noquery t))
+                     (server (make-instance 'eglot-lsp-server :name "eglot-timeout-fixture"
+                                            :process process :on-shutdown #'ignore))
+                     (copilot-cs-eglot-preparation-timeout 0.05))
+                (unwind-protect
+                    (cl-letf (((symbol-function 'copilot-cs-eglot--editable-path-p)
+                               (lambda (_) t))
+                              ((symbol-function 'find-file-noselect) (lambda (_) buffer))
+                              ((symbol-function 'eglot-current-server) (lambda () nil))
+                              ((symbol-function 'eglot--guess-contact) (lambda () nil))
+                              ((symbol-function 'eglot)
+                               (lambda (&rest _)
+                                 (run-hook-with-args 'eglot-server-initialized-hook server)
+                                 (sleep-for 2))))
+                      (copilot-cs-eglot--record path 'starting :mode 'ruby-mode)
+                      (copilot-cs-eglot--start-now path 'ruby-mode)
+                      (unless (and (not (process-live-p process))
+                                   (eglot--inhibit-autoreconnect server)
+                                   (eq (plist-get (gethash path copilot-cs-eglot--states)
+                                                  :status) 'error))
+                        (error "Timed-out startup retained a live language server")))
+                  (when (process-live-p process) (delete-process process))
+                  (kill-buffer buffer))))"""
+        )
+
+    def test_remote_sorbet_prefers_repository_binstub(self):
+        (self.root / "sorbet").mkdir()
+        (self.root / "sorbet" / "config").touch()
+        self.executable("srb", "import json, sys\nprint(json.dumps(sys.argv[1:]))")
+        self.executable("bundle", "raise SystemExit('must use the repository binstub')")
+        self.env["PATH"] = str(self.bin)
+        command = self.emacs(
+            """(progn
+              (require 'copilot-cs-eglot)
+              (cl-letf (((symbol-function 'copilot-cs-eglot--project-root)
+                         (lambda (_) "/ghcs:fixture:/workspaces/project/"))
+                        ((symbol-function 'copilot-cs-eglot--ghcs-root-p) (lambda (_) t))
+                        ((symbol-function 'copilot-cs-eglot--remote-contact)
+                         (lambda (_project command &optional _login) command)))
+                (princ (copilot-cs-eglot-ruby-contact))))"""
+        )
+        result = self.run_command(["/bin/sh", "-c", command])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         ["typecheck", "--lsp", "--cache-dir", "tmp/sorbet", "--disable-watchman"])
+
+        (self.bin / "srb").chmod(0o600)
+        self.executable("bundle", "import json, sys\nprint(json.dumps(sys.argv[1:]))")
+        self.executable("watchman", "raise SystemExit(0)")
+        result = self.run_command(["/bin/sh", "-c", command])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         ["exec", "srb", "typecheck", "--lsp", "--cache-dir", "tmp/sorbet"])
+
+        (self.root / "sorbet" / "config").unlink()
+        self.executable("ruby-lsp", "print('ruby-lsp fixture')")
+        result = self.run_command(["/bin/sh", "-c", command])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "ruby-lsp fixture")
+
+    def test_local_sorbet_also_prefers_the_repository_binstub(self):
+        (self.root / "sorbet").mkdir()
+        (self.root / "sorbet" / "config").touch()
+        self.executable("srb", "raise SystemExit(0)")
+        project = f"(cons 'transient {json.dumps(str(self.root) + '/')})"
+        output = self.emacs(
+            f"""(progn (require 'copilot-cs-eglot)
+                 (prin1 (copilot-cs-eglot-ruby-contact nil {project})))"""
+        )
+        self.assertEqual(output, '("bin/srb" "typecheck" "--lsp" "--cache-dir" "tmp/sorbet")')
+
+
 class EglotReconnectTests(HelperTestCase):
     def test_codespace_servers_cannot_autoreconnect_after_shutdown(self):
         for root in ("/ghcs:test-codespace:/workspaces/test/",
@@ -2203,6 +2682,138 @@ class EglotReconnectTests(HelperTestCase):
                         self.assertEqual(output, expected)
 
 
+class DaemonLifecycleTests(HelperTestCase):
+    def lifecycle(self, expression, setup=""):
+        self.env["COPILOT_MCP_PARENT_PID"] = "101"
+        init = (SETUP / "copilot-mcp-init.el").read_text()
+        lifecycle = init.split(";;; Lifecycle\n", 1)[1].split(";;; MCP server\n", 1)[0]
+        return self.emacs(
+            f"""(progn
+              (require 'cl-lib)
+              (let ((attributes '((101 (ppid . 202) (comm . "bash") (start . 10))
+                                  (202 (ppid . 303) (comm . "python3") (start . 20))
+                                  (303 (ppid . 404) (comm . "/bin/copilot") (start . 30))
+                                  (404 (ppid . 1) (comm . "zsh") (start . 40))))
+                    (now 100)
+                    (stops 0))
+                (cl-letf (((symbol-function 'process-attributes)
+                           (lambda (pid) (cdr (assq pid attributes))))
+                          ((symbol-function 'float-time) (lambda (&rest _) now))
+                          ((symbol-function 'kill-emacs) (lambda (&rest _) (cl-incf stops))))
+                  {setup}
+                  {lifecycle}
+                  {expression})))"""
+        )
+
+    def test_live_cli_preserves_state_after_its_bridge_exits(self):
+        output = self.lifecycle(
+            """(setq attributes (assq-delete-all 101 (assq-delete-all 202 attributes))
+                     copilot-cs-id "original-codespace"
+                     copilot-cs-dir "/workspaces/original"
+                     copilot-cs-configured t)
+               (puthash "original-job" '(:id "original-job") copilot-cs--jobs)
+               (copilot-mcp-watch-parent)
+               (setq now 10000)
+               (copilot-mcp-watch-parent)
+               (prin1 (list copilot-mcp-parent-pid stops copilot-mcp--orphaned-since
+                            copilot-cs-id copilot-cs-dir copilot-cs-configured
+                            (gethash "original-job" copilot-cs--jobs)))"""
+        )
+        self.assertEqual(
+            output,
+            '(303 0 nil "original-codespace" "/workspaces/original" t (:id "original-job"))',
+        )
+
+    def test_grace_starts_when_cli_exits_not_when_bridge_exits(self):
+        output = self.lifecycle(
+            """(setq attributes (assq-delete-all 101 (assq-delete-all 202 attributes)))
+               (copilot-mcp-watch-parent)
+               (setq now 10000 attributes (assq-delete-all 303 attributes))
+               (copilot-mcp-watch-parent)
+               (setq now 13599)
+               (copilot-mcp-watch-parent)
+               (prin1 (list stops copilot-mcp--orphaned-since))
+               (setq now 13600)
+               (copilot-mcp-watch-parent)
+               (prin1 (list stops))"""
+        )
+        self.assertEqual(output, "(0 10000)(1)")
+
+    def test_reused_cli_pid_does_not_keep_an_orphan_alive(self):
+        output = self.lifecycle(
+            """(setf (alist-get 'start (cdr (assq 303 attributes))) 31)
+               (copilot-mcp-watch-parent)
+               (setq now 3700)
+               (copilot-mcp-watch-parent)
+               (prin1 (list stops))"""
+        )
+        self.assertEqual(output, "(1)")
+
+    def test_zombie_cli_does_not_keep_an_orphan_alive(self):
+        output = self.lifecycle(
+            """(setf (alist-get 'state (cdr (assq 303 attributes))) "Z")
+               (copilot-mcp-watch-parent)
+               (setq now 3700)
+               (copilot-mcp-watch-parent)
+               (prin1 (list stops))"""
+        )
+        self.assertEqual(output, "(1)")
+
+    def test_manual_client_retains_bridge_based_grace(self):
+        output = self.lifecycle(
+            """(setq attributes (assq-delete-all 101 attributes))
+               (copilot-mcp-watch-parent)
+               (setq now 3699)
+               (copilot-mcp-watch-parent)
+               (prin1 (list copilot-mcp-parent-pid stops))
+               (setq now 3700)
+               (copilot-mcp-watch-parent)
+               (prin1 (list stops))""",
+            setup='(setf (alist-get \'comm (cdr (assq 303 attributes))) "unrelated")',
+        )
+        self.assertEqual(output, "(101 0)(1)")
+
+    def test_live_runner_outlives_the_owner_grace(self):
+        output = self.lifecycle(
+            """(setq attributes nil)
+               (puthash "active-job" '(:process fixture) copilot-cs--jobs)
+               (cl-letf (((symbol-function 'process-live-p) (lambda (p) (eq p 'fixture))))
+                 (copilot-mcp-watch-parent)
+                 (setq now 3700)
+                 (copilot-mcp-watch-parent)
+                 (prin1 (list stops))
+                 (remhash "active-job" copilot-cs--jobs)
+                 (copilot-mcp-watch-parent)
+                 (prin1 (list stops)))"""
+        )
+        self.assertEqual(output, "(0)(1)")
+
+    def test_reattachment_refreshes_owner_without_resetting_state(self):
+        output = self.lifecycle(
+            """(setq attributes nil)
+               (copilot-mcp-watch-parent)
+               (setq attributes '((111 (ppid . 999) (comm . "bash") (start . 50))
+                                  (999 (ppid . 1) (comm . "copilot") (start . 60)))
+                     copilot-cs-id "original-codespace")
+               (copilot-mcp-attach-parent 111)
+               (setq now 10000 attributes (assq-delete-all 111 attributes))
+               (copilot-mcp-watch-parent)
+               (prin1 (list copilot-mcp-parent-pid stops copilot-mcp--orphaned-since
+                            copilot-cs-id))"""
+        )
+        self.assertEqual(output, '(999 0 nil "original-codespace")')
+
+    def test_missing_bridge_identity_fails_without_replacing_owner(self):
+        output = self.lifecycle(
+            """(let ((owner copilot-mcp-parent-pid) (failed nil))
+                 (condition-case err
+                     (copilot-mcp-attach-parent 111)
+                   (error (setq failed (error-message-string err))))
+                 (prin1 (list failed (equal owner copilot-mcp-parent-pid))))"""
+        )
+        self.assertEqual(output, '("Cannot identify MCP bridge process 111" t)')
+
+
 class DaemonReuseTests(HelperTestCase):
     def setUp(self):
         super().setUp()
@@ -2222,9 +2833,16 @@ class DaemonReuseTests(HelperTestCase):
         )
         self.executable(
             "emacsclient",
-            """import json, os, sys
+            """import json, os, sys, time
 with open(os.environ["FAKE_CLIENT_CALLS"], "a") as output:
     output.write(json.dumps(sys.argv[1:]) + "\\n")
+if sys.argv[-1] == "t":
+    with open(os.environ["FAKE_CLIENT_CALLS"]) as calls:
+        probes = sum(json.loads(line)[-1] == "t" for line in calls)
+    if probes > int(os.environ.get("FAKE_PROBE_DELAY_AFTER", "0")):
+        time.sleep(float(os.environ.get("FAKE_PROBE_DELAY", "0")))
+    if os.environ.get("FAKE_PROBE_UNREACHABLE"):
+        sys.exit(1)
 if os.environ["FAKE_FAIL_REFRESH"] and "copilot-cs-jobs.el" in sys.argv[-1]:
     sys.exit(1)
 """,
@@ -2260,7 +2878,9 @@ Path(os.environ["FAKE_SERVED"]).touch()
               (puthash "original-server" '(:state ready) copilot-cs-eglot--states)
               (fset 'copilot-cs--login-shell-command (lambda (_) "stale"))
               (fset 'copilot-cs-eglot--login-command (lambda (_root _command) "stale"))
-              {refresh}
+              (cl-letf (((symbol-function 'process-attributes)
+                         (lambda (_pid) '((ppid . 1) (comm . "copilot") (start . 1)))))
+                {refresh})
               (unless (and (equal copilot-cs-id "original-codespace")
                            (equal copilot-cs-dir "/workspaces/original")
                            copilot-cs-configured
@@ -2280,6 +2900,121 @@ Path(os.environ["FAKE_SERVED"]).touch()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("could not refresh runner", result.stderr)
         self.assertFalse(self.served.exists())
+
+    def test_busy_daemon_survives_a_probe_timeout_and_is_reused_when_responsive(self):
+        for probes_before_delay in (0, 1):
+            with self.subTest(probes_before_delay=probes_before_delay):
+                self.calls.unlink(missing_ok=True)
+                self.served.unlink(missing_ok=True)
+                daemon = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+                pidfile = self.root / "sockets" / "emacs-mcp-server-copilot-test0001.pid"
+                pidfile.write_text(str(daemon.pid))
+                self.env.update(COPILOT_MCP_PROBE_TIMEOUT="1", FAKE_PROBE_DELAY="2",
+                                FAKE_PROBE_DELAY_AFTER=str(probes_before_delay))
+                try:
+                    result = self.invoke()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("preserving its state", result.stderr)
+                    self.assertIsNone(daemon.poll(), result.stderr)
+                    self.assertEqual(pidfile.read_text(), str(daemon.pid))
+                    self.assertTrue(pidfile.with_suffix(".sock").exists(), result.stderr)
+                    self.assertEqual(self.served.exists(), bool(probes_before_delay))
+                    self.assertNotIn("replacing", result.stderr)
+                    self.env["FAKE_PROBE_DELAY"] = "0"
+                    recovered = self.invoke()
+                    self.assertEqual(recovered.returncode, 0, recovered.stderr)
+                    self.assertIn("reusing Emacs daemon", recovered.stderr)
+                    self.assertIsNone(daemon.poll())
+                finally:
+                    if daemon.poll() is None:
+                        daemon.terminate()
+                    daemon.wait(timeout=5)
+
+    def test_unreachable_server_does_not_replace_a_live_daemon(self):
+        daemon = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        pidfile = self.root / "sockets" / "emacs-mcp-server-copilot-test0001.pid"
+        pidfile.write_text(str(daemon.pid))
+        self.env["FAKE_PROBE_UNREACHABLE"] = "1"
+        try:
+            result = self.invoke()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("preserving its state", result.stderr)
+            self.assertIsNone(daemon.poll(), result.stderr)
+            self.assertEqual(pidfile.read_text(), str(daemon.pid))
+            self.assertTrue(pidfile.with_suffix(".sock").exists(), result.stderr)
+        finally:
+            if daemon.poll() is None:
+                daemon.terminate()
+            daemon.wait(timeout=5)
+
+    def test_missing_mcp_socket_does_not_replace_a_responding_daemon(self):
+        daemon = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        pidfile = self.root / "sockets" / "emacs-mcp-server-copilot-test0001.pid"
+        pidfile.write_text(str(daemon.pid))
+        pidfile.with_suffix(".sock").unlink()
+        try:
+            result = self.invoke()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("MCP socket is missing", result.stderr)
+            self.assertIn("preserving its state", result.stderr)
+            self.assertIsNone(daemon.poll(), result.stderr)
+            self.assertEqual(pidfile.read_text(), str(daemon.pid))
+            self.assertFalse(self.served.exists())
+        finally:
+            if daemon.poll() is None:
+                daemon.terminate()
+            daemon.wait(timeout=5)
+
+    def test_exited_daemon_rebuild_preserves_live_peers(self):
+        self.executable(
+            "emacsclient",
+            """import os
+from pathlib import Path
+raise SystemExit(0 if (Path(os.environ["HOME"]) / "daemon-started").exists() else 1)
+""",
+        )
+        self.executable(
+            "emacs",
+            """import os, socket
+from pathlib import Path
+root = Path(os.environ["HOME"])
+(root / "daemon-started").touch()
+server = socket.socket(socket.AF_UNIX)
+server.bind(str(root / "sockets" / "emacs-mcp-server-copilot-test0001.sock"))
+""",
+        )
+        exited = subprocess.Popen([sys.executable, "-c", "pass"])
+        exited.wait(timeout=5)
+        pidfile = self.root / "sockets" / "emacs-mcp-server-copilot-test0001.pid"
+        pidfile.write_text(str(exited.pid))
+        peer = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        live_peer = self.root / "sockets" / "emacs-mcp-server-copilot-live0001.pid"
+        dead_peer = self.root / "sockets" / "emacs-mcp-server-copilot-dead0001.pid"
+        try:
+            for path, pid in ((live_peer, peer.pid), (dead_peer, exited.pid)):
+                path.write_text(str(pid))
+                self.unix_socket(path.with_suffix(".sock"))
+            result = self.invoke()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((self.root / "daemon-started").exists())
+            self.assertTrue(self.served.exists())
+            self.assertIsNone(peer.poll(), result.stderr)
+            self.assertEqual(live_peer.read_text(), str(peer.pid))
+            self.assertTrue(live_peer.with_suffix(".sock").exists())
+            self.assertFalse(dead_peer.exists())
+            self.assertFalse(dead_peer.with_suffix(".sock").exists())
+        finally:
+            if peer.poll() is None:
+                peer.terminate()
+            peer.wait(timeout=5)
+
+    def test_reusing_a_healthy_daemon_does_not_probe_other_sessions(self):
+        self.unix_socket(self.root / "sockets" / "emacs-mcp-server-copilot-other000.sock")
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertTrue(calls)
+        self.assertTrue(all(call[:2] == ["-s", "copilot-test0001"] for call in calls), calls)
 
 
 class JobCancellationTests(HelperTestCase):
@@ -2478,8 +3213,7 @@ os.execv({real_ps!r}, ["ps", *sys.argv[1:]])
               (setq copilot-cs-id "new-codespace" copilot-cs-dir "/workspaces/new")
               (puthash "original" '(:id "original" :cs "old-codespace"
                                    :dir "/workspaces/old") copilot-cs--jobs)
-              (cl-letf (((symbol-function 'copilot-cs--live) #'identity)
-                        ((symbol-function 'copilot-cs-sh)
+              (cl-letf (((symbol-function 'copilot-cs-sh)
                          (lambda (_command _wait)
                            (list copilot-cs-id copilot-cs-dir))))
                 (unless (equal (copilot-cs-stop "original")

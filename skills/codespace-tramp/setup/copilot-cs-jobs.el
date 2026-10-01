@@ -379,15 +379,6 @@ listening is lost.  Returns the refreshed job plist."
     (when (buffer-live-p stale) (kill-buffer stale))
     (plist-put fresh :started (plist-get job :started))))
 
-(defun copilot-cs--live (job)
-  "Return JOB, reconnecting an acknowledged job whose stream has gone away.
-Without an acknowledgement, preserve the original connection failure instead
-of replacing it with an attach error. The command may have started before
-the connection failed, so its outcome remains unconfirmed."
-  (if (eq (copilot-cs--state job) 'detached)
-      (copilot-cs--resume job)
-    job))
-
 (defun copilot-cs--bounded-wait (seconds)
   "Return SECONDS constrained to the safe wait interval."
   (unless (numberp seconds)
@@ -446,8 +437,9 @@ original output is preserved; do not relaunch blindly"
                id (process-exit-status process) elapsed))
       ('detached
        (format "job=%s state=detached elapsed=%.1fs -- the local stream \
-ended; remote outcome is unconfirmed; recover the log with \
-(copilot-cs-poll \"%s\")" id elapsed id)))
+ended; remote outcome is unconfirmed; check Codespace availability and \
+obtain any needed start approval, then recover the log with \
+(copilot-cs-attach \"%s\")" id elapsed id)))
      "\n----\n" output)))
 
 ;;; Public API
@@ -515,7 +507,8 @@ exit 127; }; timeout --verbose --kill-after=5s %ds %s"
 (defun copilot-cs-endorse (action data &optional approved-plan wait tty)
   "Run endorsement ACTION using DATA inside the selected Codespace.
 ACTION is \"plan\", \"sign\", \"verify\", or \"push\".  DATA is the local
-prepare command's JSON request for \"plan\", otherwise the exact plan id.
+prepare command's JSON request after required CI passes for \"plan\",
+otherwise the exact plan id.
 Signing and pushing require APPROVED-PLAN to be \"ID:replacement\" or
 \"ID:replace\", matching the revision and publication method explicitly chosen
 by the operator.  Only \"sign\" forwards the agent.  WAIT is a polling budget.
@@ -584,12 +577,12 @@ output directly; longer ones return a job id to hand to `copilot-cs-poll'."
 (defun copilot-cs-poll (&optional id wait)
   "Report on job ID, defaulting to the most recent job.
 Waits up to WAIT seconds (default `copilot-cs-default-wait', capped at
-`copilot-cs-max-wait') for it to finish before reporting. If the connection
-carrying an acknowledged job's output has died, this reconnects to its log.
-An unacknowledged connection failure is preserved without reconnecting or
-replaying the command; its remote outcome remains unconfirmed."
+`copilot-cs-max-wait') for it to finish before reporting. Polling never opens
+a connection: a disconnected job retains its output and unconfirmed outcome.
+Use `copilot-cs-attach' explicitly after checking Codespace availability and
+obtaining any necessary start approval."
   (copilot-cs--report
-   (copilot-cs--settle (copilot-cs--live (copilot-cs--job id))
+   (copilot-cs--settle (copilot-cs--job id)
                        (or wait copilot-cs-default-wait))))
 
 (defun copilot-cs-job-id (report)
@@ -609,10 +602,18 @@ replaying the command; its remote outcome remains unconfirmed."
 
 Jobs run detached, so they outlive the SSH connection, the Emacs daemon,
 and the Copilot session that started them.  Use this to pick a job back up
-after a transport failure or in a later session."
+after a transport failure or in a later session. Check Codespace availability
+and obtain any necessary start approval first. Known jobs retain their
+original target; live or completed jobs do not open another connection."
   (copilot-cs--check-id id)
-  (let ((job (copilot-cs--start id (copilot-cs--attach-command id)
-                                "(re-attached)")))
+  (let* ((known (gethash id copilot-cs--jobs))
+         (job (cond
+               ((and known (memq (copilot-cs--state known)
+                                 '(connecting running done)))
+                known)
+               (known (copilot-cs--resume known))
+               (t (copilot-cs--start id (copilot-cs--attach-command id)
+                                    "(re-attached)")))))
     (copilot-cs--report
      (copilot-cs--settle job (or wait copilot-cs-default-wait)))))
 
@@ -622,7 +623,7 @@ Signals the entire descendant tree but spares the wrapper recording its
 exit code.  After a grace period, kills descendants that ignored SIGTERM.
 The returned cancellation job reports failure if any descendants survive;
 poll the original job separately for its exit code."
-  (let* ((job (copilot-cs--live (copilot-cs--job id)))
+  (let* ((job (copilot-cs--job id))
          (key (copilot-cs--check-id (plist-get job :id)))
          (rc (copilot-cs--rc job))
          ;; Pid files outlive the jobs that wrote them, so signalling a job

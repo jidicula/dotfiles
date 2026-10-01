@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan, sign, and publish a revision-specific Codespace endorsement."""
+"""Plan, sign, publish, and finalise a revision-specific Codespace endorsement."""
 
 import argparse
 import base64
@@ -54,17 +54,16 @@ def fingerprint(key):
 
 
 def run(arguments, *, data=None, env=None, timeout=120, echo=False):
-    result = subprocess.run(arguments, input=data, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, env=env, timeout=timeout)
-    if echo:
-        sys.stdout.write(result.stdout.decode("utf-8", errors="replace"))
-        sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
+    output = None if echo else subprocess.PIPE
+    result = subprocess.run(arguments, input=data, stdout=output,
+                            stderr=output, env=env, timeout=timeout)
     if result.returncode:
+        detail = ("see command output above" if echo else
+                  result.stderr.decode("utf-8", errors="replace").strip())
         raise RuntimeError(
-            f"{arguments[0]} failed ({result.returncode}): "
-            + result.stderr.decode("utf-8", errors="replace").strip()
+            f"{arguments[0]} failed ({result.returncode}): {detail}"
         )
-    return result.stdout
+    return result.stdout or b""
 
 
 def github(endpoint, method="GET", data=None):
@@ -74,13 +73,29 @@ def github(endpoint, method="GET", data=None):
     return json.loads(run(arguments, data=canonical(data).encode() if data is not None else None))
 
 
-def github_pages(endpoint):
+def github_pages(endpoint, *, field=None):
     pages = json.loads(run([
         "gh", "api", "--hostname", "github.com", "--paginate", "--slurp", endpoint,
     ]))
-    require(isinstance(pages, list) and all(isinstance(page, list) for page in pages),
-            "invalid paginated GitHub response")
+    require(isinstance(pages, list) and pages, "invalid paginated GitHub response")
+    if field is not None:
+        require(all(isinstance(page, dict) and isinstance(page.get(field), list)
+                    and type(page.get("total_count")) is int for page in pages),
+                "invalid paginated GitHub response")
+        require(all(page["total_count"] == pages[0]["total_count"] for page in pages)
+                and sum(len(page[field]) for page in pages) == pages[0]["total_count"],
+                "incomplete or changing paginated GitHub response")
+        pages = [page[field] for page in pages]
+    require(all(isinstance(page, list) for page in pages), "invalid paginated GitHub response")
     return [item for page in pages for item in page]
+
+
+def authenticated_operator():
+    operator = github("user")
+    require(isinstance(operator, dict) and isinstance(operator.get("login"), str)
+            and re.fullmatch(r"[A-Za-z0-9-]+", operator["login"]),
+            "cannot identify the authenticated operator")
+    return operator["login"]
 
 
 def validate_request(request):
@@ -103,18 +118,44 @@ def validate_request(request):
             "signed branch must append -signed to the source branch")
     require(request.get("publication_options") in (["replacement"], ["replacement", "replace"]),
             "invalid publication options")
+    if "attestor" in request:
+        require(isinstance(request["attestor"], str)
+                and re.fullmatch(r"[A-Za-z0-9-]+", request["attestor"]), "invalid attestor login")
+    if "committer" in request:
+        committer = request["committer"]
+        require(isinstance(committer, dict) and set(committer) == {"name", "email"},
+                "committer requires only an explicit name and email")
+        require(isinstance(committer["name"], str) and committer["name"].strip()
+                and committer["name"] == committer["name"].strip()
+                and not re.search(r"[\x00-\x1f\x7f<>]", committer["name"]),
+                "invalid committer name")
+        require(isinstance(committer["email"], str)
+                and re.fullmatch(r"[^\s\x00-\x1f\x7f<>@]+@[^\s\x00-\x1f\x7f<>@]+",
+                                 committer["email"]), "invalid committer email")
     require(request.get("key") == public_key(request.get("key", "")), "noncanonical signing key")
     require(request.get("fingerprint") == fingerprint(request["key"]), "signing fingerprint mismatch")
 
 
-def pull_request(repository, number):
+def pull_request(repository, number, *, require_draft=True):
     pr = github(f"repos/{repository}/pulls/{number}")
     require(pr["head"]["repo"] is not None
             and pr["head"]["repo"]["full_name"] == repository
             and pr["base"]["repo"]["full_name"] == repository,
             "endorsement currently requires a same-repository pull request")
-    require(pr["draft"] and not pr["merged"], "endorsement requires an unmerged draft pull request")
+    require(not pr["merged"], "endorsement requires an unmerged pull request")
+    require(not require_draft or pr["draft"], "endorsement requires a draft pull request")
     return pr
+
+
+def branch_head(repository, branch):
+    """Read the live tip; a PR's base.sha may be a historical snapshot."""
+    ref = github(f"repos/{repository}/git/ref/heads/{quote(branch, safe='')}")
+    require(isinstance(ref, dict) and ref.get("ref") == "refs/heads/" + branch
+            and isinstance(ref.get("object"), dict), "invalid live branch reference")
+    commit = ref["object"]
+    require(commit.get("type") == "commit" and isinstance(commit.get("sha"), str)
+            and OID.fullmatch(commit["sha"]), "invalid live branch commit")
+    return commit["sha"]
 
 
 def replacement_allowed(repository, branch):
@@ -140,20 +181,40 @@ def replacement_allowed(repository, branch):
         return False
 
 
-def prepare(repository, number, key_path):
+def check_ci(repository, number):
+    """Check an unsigned draft without starting endorsement preparation."""
     pr = pull_request(repository, number)
     require(pr["state"] == "open", "the original draft PR is not open")
-    key = public_key(Path(key_path).expanduser().read_text())
     source = pr["head"]["ref"]
+    base_branch = pr["base"]["ref"]
     request = {
-        "version": 1, "repository": repository, "pr": number, "url": pr["html_url"],
-        "source_branch": source, "target_branch": source + "-signed",
-        "base_branch": pr["base"]["ref"], "head": pr["head"]["sha"], "base": pr["base"]["sha"],
-        "publication_options": ["replacement"] + (
-            ["replace"] if replacement_allowed(repository, source) else []),
-        "key": key, "fingerprint": fingerprint(key),
+        "repository": repository, "pr": number, "url": pr["html_url"],
+        "source_branch": source,
+        "base_branch": base_branch, "head": pr["head"]["sha"],
+        "base": branch_head(repository, base_branch),
     }
+    require_passing_checks(request, number, request["head"], source, require_draft=True)
+    return request
+
+
+def prepare(repository, number, key_path, *, committer=None):
+    request = check_ci(repository, number)
+    source = request["source_branch"]
+    key = public_key(Path(key_path).expanduser().read_text())
+    request.update(
+        version=1, target_branch=source + "-signed",
+        publication_options=["replacement"] + (
+            ["replace"] if replacement_allowed(repository, source) else []),
+        key=key, fingerprint=fingerprint(key), attestor=authenticated_operator(),
+    )
+    if committer is not None:
+        request["committer"] = committer
     validate_request(request)
+    if committer is not None:
+        keys = github_pages("users/" + quote(request["attestor"], safe="")
+                            + "/ssh_signing_keys?per_page=100")
+        require(any(public_key(item["key"]) == key for item in keys),
+                "the operator has not registered this SSH signing key")
     return request
 
 
@@ -172,9 +233,9 @@ class Repository:
         self.state.mkdir(mode=0o700, exist_ok=True)
 
     def git(self, *arguments, data=None):
-        pushing = arguments[0] == "push"
-        return run(["git", *arguments], data=data, env=self.env, echo=pushing,
-                   timeout=None if pushing else 120)
+        streaming = arguments[0] in ("fetch", "push")
+        return run(["git", *arguments], data=data, env=self.env, echo=streaming,
+                   timeout=None if streaming else 120)
 
     def ref(self, name):
         return self.git("rev-parse", "--verify", name).decode().strip()
@@ -232,16 +293,27 @@ class Repository:
                 "signed merge tags require manual handling; no commits were published")
         return blocks, message
 
-    def payload(self, oid, mapping):
+    def payload(self, oid, mapping, committer=None):
         blocks, message = self.commit(oid)
         rewritten = []
+        committer_count = 0
         for block in blocks:
             if block.startswith((b"gpgsig ", b"gpgsig-sha256 ")):
                 continue
             if block.startswith(b"parent "):
                 parent = block[7:].decode("ascii")
                 block = b"parent " + mapping.get(parent, parent).encode("ascii")
+            if committer is not None and block.startswith(b"committer "):
+                parts = block.rsplit(b" ", 2)
+                require(len(parts) == 3 and re.fullmatch(rb"[+-]?\d+", parts[1])
+                        and re.fullmatch(rb"[+-]\d{4}", parts[2]),
+                        "unsupported committer timestamp")
+                identity = f"committer {committer['name']} <{committer['email']}>".encode()
+                block = b" ".join((identity, parts[1], parts[2]))
+                committer_count += 1
             rewritten.append(block)
+        require(committer is None or committer_count == 1,
+                "expected exactly one committer header")
         return b"\n".join(rewritten) + b"\n\n" + message
 
     def write_record(self, name, value):
@@ -261,8 +333,7 @@ class Repository:
     def load_plan(self, plan_id):
         require(isinstance(plan_id, str) and PLAN_ID.fullmatch(plan_id), "invalid plan id")
         plan = json.loads((self.state / f"{plan_id}.plan.json").read_text())
-        require(digest(plan) == plan_id, "endorsement plan changed")
-        validate_request(plan["request"])
+        reviewed_plan_request(plan, plan_id)
         require(plan["root"] == self.root, "select the worktree where this plan was reviewed")
         require(plan["commits"] == self.commits(plan["request"]), "reviewed commit range changed")
         return plan
@@ -271,6 +342,18 @@ class Repository:
         self.snapshot(request)
         require(not self.git("status", "--porcelain", "--untracked-files=no").strip(),
                 "commit or set aside tracked worktree changes before requesting endorsement")
+        base = request["base"]
+        object_type = self.git("cat-file", "--batch-check=%(objecttype)",
+                               data=(base + "\n").encode()).strip()
+        if object_type == (base + " missing").encode():
+            print(f"[copilot-cs-endorse] fetching reviewed base history: {base}",
+                  file=sys.stderr, flush=True)
+            self.git("fetch", "--progress", "--no-tags", "--no-write-fetch-head",
+                     "--no-recurse-submodules", "--refmap=", "origin", base)
+            self.snapshot(request)
+            object_type = self.git("cat-file", "--batch-check=%(objecttype)",
+                                   data=(base + "\n").encode()).strip()
+        require(object_type == b"commit", "reviewed base is not an available commit")
         commits = self.commits(request)
         require(commits, "the draft PR introduces no commits")
         for oid in commits:
@@ -298,7 +381,8 @@ class Repository:
             print(f"[copilot-cs-endorse] verifying {index}/{len(plan['commits'])}: {original}",
                   flush=True)
             signed = mapping[original]
-            require(self.payload(signed, {}) == self.payload(original, mapping),
+            require(self.payload(signed, {}) ==
+                    self.payload(original, mapping, plan["request"].get("committer")),
                     f"signed commit content or metadata differs: {original}")
             blocks, _ = self.commit(signed)
             signatures = [block[7:].replace(b"\n ", b"\n") + b"\n"
@@ -348,7 +432,7 @@ class Repository:
                     for index, original in enumerate(plan["commits"], 1):
                         print(f"[copilot-cs-endorse] signing {index}/{len(plan['commits'])}: {original}",
                               flush=True)
-                        payload = self.payload(original, mapping)
+                        payload = self.payload(original, mapping, request.get("committer"))
                         signature = run(
                             ["ssh-keygen", "-Y", "sign", "-n", "git", "-f", str(key_file)],
                             data=payload, env=environment,
@@ -422,6 +506,96 @@ def approved_publication(plan_id, request, approval):
     raise ValueError("explicit approval of this exact plan AND publication method is required")
 
 
+def reviewed_plan_request(plan, plan_id):
+    require(isinstance(plan, dict) and isinstance(plan_id, str)
+            and PLAN_ID.fullmatch(plan_id) and digest(plan) == plan_id,
+            "endorsement plan changed or its digest is invalid")
+    request = plan.get("request")
+    validate_request(request)
+    commits = plan.get("commits")
+    require(isinstance(plan.get("root"), str) and plan["root"].startswith("/")
+            and isinstance(commits, list) and commits
+            and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in commits)
+            and len(set(commits)) == len(commits) and commits[-1] == request["head"],
+            "invalid reviewed commit range")
+    return request
+
+
+def signed_receipt_request(receipt, approval):
+    require(isinstance(receipt, dict), "expected an endorsement receipt")
+    request = reviewed_plan_request(receipt.get("plan"), receipt.get("plan_id"))
+    publication = approved_publication(receipt["plan_id"], request, approval)
+    require(receipt.get("publication") == publication,
+            "publication choice differs from the signed receipt")
+    mapping = receipt.get("mapping")
+    require(isinstance(mapping, dict) and set(mapping) == set(receipt["plan"]["commits"])
+            and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in mapping.values())
+            and receipt.get("head") == mapping.get(request["head"]),
+            "incomplete signed commit receipt")
+    return request, publication
+
+
+def assignee_logins(pr):
+    require(isinstance(pr, dict) and isinstance(pr.get("assignees"), list)
+            and all(isinstance(user, dict) and isinstance(user.get("login"), str)
+                    and user["login"] for user in pr["assignees"]),
+            "invalid PR assignees")
+    return {user["login"].casefold() for user in pr["assignees"]}
+
+
+def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=False,
+                               require_draft=True):
+    """Change only the planned attestor's assignment, with revision readback."""
+    login = request.get("attestor")
+    require(login, "plan has no attestor; prepare a new plan before tracking attestation")
+    require(authenticated_operator().casefold() == login.casefold(),
+            "authenticated operator differs from the planned attestor")
+    expected = head if head is not None else request["head"]
+
+    def confirm():
+        return confirm_ci_revision(
+            request, request["pr"], expected, request["source_branch"],
+            require_draft=require_draft, allow_closed=allow_closed,
+        )
+
+    pr = confirm()
+    before = assignee_logins(pr)
+    assignee = login.casefold()
+    if (assignee in before) != awaiting:
+        response = github(
+            f"repos/{request['repository']}/issues/{request['pr']}/assignees",
+            "POST" if awaiting else "DELETE", {"assignees": [login]},
+        )
+        require((assignee in assignee_logins(response)) == awaiting,
+                f"attestation assignment was not confirmed for {request['url']}")
+    pr = confirm()
+    after = assignee_logins(pr)
+    require((assignee in after) == awaiting,
+            f"attestation assignment was not confirmed for {request['url']}")
+    require(before - {assignee} <= after, "other PR assignees changed during attestation update")
+    return pr
+
+
+def await_attestation(result):
+    require(isinstance(result, dict) and all(key in result for key in
+            ("request", "root", "commits", "plan_id")), "expected the complete planning result")
+    plan = {key: result[key] for key in ("request", "root", "commits")}
+    request = reviewed_plan_request(plan, result["plan_id"])
+    require_passing_checks(request, request["pr"], request["head"], request["source_branch"],
+                           require_draft=True)
+    set_attestation_assignment(request, True)
+    return {"url": request["url"], "head": request["head"],
+            "attestor": request["attestor"], "awaiting_attestation": True}
+
+
+def complete_attestation(receipt, approval):
+    """Clear the wait using the successful Codespace sign/verify receipt."""
+    request, _ = signed_receipt_request(receipt, approval)
+    set_attestation_assignment(request, False)
+    return {"url": request["url"], "head": request["head"],
+            "attestor": request["attestor"], "awaiting_attestation": False}
+
+
 def full_references(text, repository):
     text = re.sub(r"(?<![\w/])(?:([\w.-]+/[\w.-]+))?#(\d+)\b",
                   lambda match: f"https://github.com/{match[1] or repository}/issues/{match[2]}",
@@ -440,33 +614,369 @@ def pull_metadata(pr):
     }
 
 
-def finish(receipt, approval):
-    require(isinstance(receipt, dict) and isinstance(receipt.get("plan"), dict),
-            "expected an endorsement receipt")
-    plan = receipt["plan"]
-    plan_id = digest(plan)
-    require(plan_id == receipt["plan_id"], "receipt plan digest does not match")
-    request = plan["request"]
-    validate_request(request)
-    publication = approved_publication(plan_id, request, approval)
-    require(receipt["publication"] == publication, "publication choice differs from the signed receipt")
+def confirm_ci_revision(request, number, head, branch, *, require_draft=False, allow_closed=False):
+    """Confirm the expected revision, allowing closed originals only on resume."""
     repository = request["repository"]
-    require(set(receipt["mapping"]) == set(plan["commits"])
-            and receipt["head"] == receipt["mapping"].get(request["head"]),
-            "incomplete signed commit receipt")
-    pr = pull_request(repository, request["pr"])
+    current = pull_request(repository, number, require_draft=require_draft)
+    require(current["state"] in (("open", "closed") if allow_closed else ("open",))
+            and current["head"]["sha"] == head
+            and current["head"]["ref"] == branch
+            and current["base"]["ref"] == request["base_branch"],
+            "PR changed or is no longer open; quality gate not confirmed")
+    require(branch_head(repository, request["base_branch"]) == request["base"],
+            "base branch changed; quality gate not confirmed")
+    require(branch_head(repository, branch) == head,
+            "PR head branch changed; quality gate not confirmed")
+    return current
+
+
+def require_passing_workflows(request, number, head, branch, workflows):
+    """Verify required workflow provenance, latest attempts, and the exact PR."""
+    repository = request["repository"]
+    expected = set()
+    sources = {}
+    for workflow in workflows:
+        require(isinstance(workflow, dict)
+                and type(workflow.get("repository_id")) is int and workflow["repository_id"] > 0
+                and isinstance(workflow.get("path"), str)
+                and re.fullmatch(r"\.github/workflows/[^/\x00-\x1f]+\.(?:yml|yaml)", workflow["path"]),
+                "invalid required workflow rules")
+        sha, ref = workflow.get("sha"), workflow.get("ref")
+        require((sha is None or isinstance(sha, str) and OID.fullmatch(sha))
+                and (isinstance(ref, str) and ref or sha is not None),
+                "invalid required workflow revision")
+        source_id = workflow["repository_id"]
+        if source_id not in sources:
+            source = github(f"repositories/{source_id}")
+            require(isinstance(source, dict) and source.get("id") == source_id
+                    and isinstance(source.get("full_name"), str)
+                    and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source["full_name"]),
+                    "invalid required workflow source repository")
+            sources[source_id] = source["full_name"]
+        expected.add((sources[source_id], workflow["path"], sha or ""))
+
+    runs = github_pages(
+        f"repos/{repository}/actions/runs?head_sha={head}&per_page=100", field="workflow_runs")
+    latest = {}
+    paths = {path for _, path, _ in expected}
+    identities = {(repo, path) for repo, path, _ in expected}
+    observations = {path: [] for path in paths}
+    query = """
+        query EndorsementWorkflowRun($id: ID!) {
+          node(id: $id) {
+            ... on CheckSuite {
+              workflowRun {
+                databaseId runAttempt event
+                file { path repositoryName repositoryFileUrl }
+                workflow { databaseId resourcePath }
+              }
+            }
+          }
+        }
+    """
+    for candidate in runs:
+        require(isinstance(candidate, dict) and isinstance(candidate.get("path"), str),
+                "invalid required workflow run")
+        if candidate["path"] not in paths:
+            continue
+        observation = {
+            "run_id": candidate.get("id") if type(candidate.get("id")) is int else None,
+            "rejected_by": [],
+        }
+        observations[candidate["path"]].append(observation)
+        workflow_id = candidate.get("workflow_id")
+        required_url = (f"https://api.github.com/repos/{repository}/actions/"
+                        f"required_workflows/{workflow_id}")
+        if candidate.get("workflow_url") != required_url:
+            observation["rejected_by"] = ["workflow-url"]
+            continue
+        require(isinstance(candidate.get("repository"), dict)
+                and isinstance(candidate.get("pull_requests"), list),
+                "invalid required workflow PR association")
+        observation["rejected_by"] = [
+            name for name, matches in (
+                ("head-sha", candidate.get("head_sha") == head),
+                ("head-branch", candidate.get("head_branch") == branch),
+                ("event", candidate.get("event") in ("pull_request", "pull_request_target")),
+                ("repository", candidate["repository"].get("full_name") == repository),
+                ("pull-request-association", any(
+                    isinstance(pr, dict) and pr.get("number") == number
+                    and isinstance(pr.get("head"), dict) and pr["head"].get("sha") == head
+                    and isinstance(pr.get("base"), dict)
+                    and pr["base"].get("ref") == request["base_branch"]
+                    for pr in candidate["pull_requests"])),
+            ) if not matches
+        ]
+        if observation["rejected_by"]:
+            continue
+        require(type(candidate.get("id")) is int and candidate["id"] > 0
+                and type(workflow_id) is int and workflow_id > 0
+                and type(candidate.get("run_attempt")) is int and candidate["run_attempt"] > 0
+                and isinstance(candidate.get("check_suite_node_id"), str)
+                and candidate["check_suite_node_id"], "invalid required workflow run identity")
+        response = github("graphql", "POST", {
+            "query": query, "variables": {"id": candidate["check_suite_node_id"]},
+        })
+        require(isinstance(response, dict) and not response.get("errors")
+                and isinstance(response.get("data"), dict)
+                and isinstance(response["data"].get("node"), dict),
+                "GitHub could not verify required workflow provenance")
+        provenance = response["data"]["node"].get("workflowRun")
+        require(isinstance(provenance, dict)
+                and provenance.get("databaseId") == candidate["id"]
+                and provenance.get("runAttempt") == candidate["run_attempt"]
+                and provenance.get("event") == candidate["event"]
+                and isinstance(provenance.get("workflow"), dict)
+                and provenance["workflow"].get("databaseId") == workflow_id
+                and isinstance(provenance.get("file"), dict),
+                "required workflow run changed or its provenance is unavailable")
+        source = provenance["file"]
+        require(isinstance(source.get("repositoryName"), str)
+                and isinstance(source.get("path"), str),
+                "invalid required workflow source identity")
+        key = (source.get("repositoryName"), source.get("path"))
+        observation["source"] = {"repository": key[0], "path": key[1]}
+        if key not in identities:
+            observation["rejected_by"] = ["source-identity"]
+            continue
+        require(source["path"] == candidate["path"]
+                and provenance["workflow"].get("resourcePath")
+                == f"/{repository}/actions/workflows/required/{key[0]}/{key[1]}",
+                "required workflow source does not match its enforced workflow")
+        if key not in latest or candidate["id"] > latest[key][0]["id"]:
+            latest[key] = (candidate, source)
+
+    for source_repository, path, sha in sorted(expected):
+        key = (source_repository, path)
+        label = f"{source_repository}/{path}"
+        require(key in latest, f"missing required workflow {label}; quality gate blocked; "
+                "workflow selection: " + canonical({
+                    "repository": repository, "pr": number, "head": head, "branch": branch,
+                    "base_branch": request["base_branch"], "required_source": label,
+                    "runs_returned": len(runs), "candidates": observations[path],
+                }))
+        candidate, source = latest[key]
+        file_url = source.get("repositoryFileUrl")
+        prefix = f"https://github.com/{source_repository}/blob/"
+        suffix = f"/{quote(path, safe='/')}"
+        require(isinstance(file_url, str),
+                f"invalid required workflow source revision for {label}; quality gate blocked")
+        recorded_sha = file_url[len(prefix):-len(suffix)]
+        require(OID.fullmatch(recorded_sha) and file_url == f"{prefix}{recorded_sha}{suffix}",
+                f"invalid required workflow source revision for {label}; quality gate blocked")
+        require(not sha or recorded_sha == sha,
+                f"required workflow pinned source revision changed for {label}; quality gate blocked")
+        current = github(f"repos/{repository}/actions/runs/{candidate['id']}")
+        require(isinstance(current, dict) and all(
+            current.get(field) == candidate.get(field) for field in (
+                "id", "workflow_id", "workflow_url", "check_suite_node_id", "run_attempt",
+                "head_sha", "head_branch", "event", "path", "repository", "pull_requests")),
+            f"required workflow changed for {label}; quality gate blocked")
+        require(current.get("status") == "completed" and current.get("conclusion") == "success",
+                f"required workflow is not succeeding for {label}: "
+                f"{current.get('conclusion') or current.get('status')}; quality gate blocked")
+
+
+def require_passing_checks(request, number, head, branch, *, require_draft=False):
+    """Read the exact revision's required CI without changing its PR."""
+    repository = request["repository"]
+    pr = confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
+    url = pr["html_url"]
+    expected = set()
+    workflows = []
+    rules = github_pages(
+        f"repos/{repository}/rules/branches/{quote(request['base_branch'], safe='')}?per_page=100")
+    for rule in rules:
+        require(isinstance(rule, dict) and isinstance(rule.get("type"), str),
+                "invalid required-check policy")
+        if rule["type"] == "workflows":
+            parameters = rule.get("parameters")
+            require(isinstance(parameters, dict)
+                    and isinstance(parameters.get("workflows"), list) and parameters["workflows"],
+                    "invalid required workflow rules")
+            workflows.extend(parameters["workflows"])
+        if rule["type"] == "required_status_checks":
+            parameters = rule.get("parameters")
+            require(isinstance(parameters, dict)
+                    and isinstance(parameters.get("required_status_checks"), list),
+                    "invalid required status-check policy")
+            checks = parameters["required_status_checks"]
+            for check in checks:
+                require(isinstance(check, dict) and isinstance(check.get("context"), str)
+                        and check["context"], "invalid required status-check context")
+                expected.add(check["context"])
+
+    query = """
+        query EndorsementRequiredChecks($id: ID!, $cursor: String) {
+          node(id: $id) {
+            ... on PullRequest {
+              id state headRefOid headRefName baseRefName
+              baseRef {
+                target { oid }
+                branchProtectionRule { requiresStatusChecks requiredStatusCheckContexts }
+              }
+              commits(last: 1) {
+                nodes {
+                  commit {
+                    oid
+                    statusCheckRollup {
+                      contexts(first: 100, after: $cursor) {
+                        nodes {
+                          __typename
+                          ... on CheckRun {
+                            name status conclusion isRequired(pullRequestId: $id)
+                          }
+                          ... on StatusContext {
+                            context state isRequired(pullRequestId: $id)
+                          }
+                        }
+                        pageInfo { hasNextPage endCursor }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+    """
+    reported = set()
+    failures = []
+    cursor = None
+    cursors = set()
+    while True:
+        response = github("graphql", "POST", {
+            "query": query, "variables": {"id": pr["node_id"], "cursor": cursor},
+        })
+        require(isinstance(response, dict) and not response.get("errors"),
+                "GitHub could not resolve required CI checks")
+        require(isinstance(response.get("data"), dict),
+                "GitHub did not return required CI data")
+        current = response["data"]["node"]
+        require(isinstance(current, dict) and current.get("id") == pr["node_id"]
+                and current["state"] == "OPEN"
+                and current["headRefOid"] == head and current["headRefName"] == branch
+                and current["baseRefName"] == request["base_branch"]
+                and isinstance(current.get("baseRef"), dict)
+                and isinstance(current["baseRef"].get("target"), dict)
+                and current["baseRef"]["target"]["oid"] == request["base"],
+                "PR or base changed while checking required CI")
+        protection = current["baseRef"]["branchProtectionRule"]
+        if protection is not None:
+            require(isinstance(protection, dict)
+                    and type(protection.get("requiresStatusChecks")) is bool,
+                    "invalid classic required-check policy")
+            if protection["requiresStatusChecks"]:
+                contexts = protection["requiredStatusCheckContexts"]
+                require(isinstance(contexts, list)
+                        and all(isinstance(name, str) and name for name in contexts),
+                        "invalid classic required status-check contexts")
+                expected.update(contexts)
+        commits = current["commits"]["nodes"]
+        require(isinstance(commits, list) and len(commits) == 1
+                and commits[0]["commit"]["oid"] == head,
+                "CI results do not belong to the expected PR head")
+        rollup = commits[0]["commit"]["statusCheckRollup"]
+        require(isinstance(rollup, dict), f"no required CI checks reported for {url}; quality gate blocked")
+        contexts = rollup["contexts"]
+        require(isinstance(contexts, dict) and isinstance(contexts.get("nodes"), list),
+                "invalid required CI response")
+        for check in contexts["nodes"]:
+            require(isinstance(check, dict) and type(check.get("isRequired")) is bool,
+                    "invalid required CI result")
+            if not check["isRequired"]:
+                continue
+            if check["__typename"] == "CheckRun":
+                name = check["name"]
+                passed = (check["status"] == "COMPLETED"
+                          and check["conclusion"] in ("SUCCESS", "NEUTRAL", "SKIPPED"))
+                state = (check["conclusion"] or check["status"]
+                         if check["status"] == "COMPLETED" else check["status"])
+            else:
+                require(check["__typename"] == "StatusContext", "unknown required CI result type")
+                name, state = check["context"], check["state"]
+                passed = state == "SUCCESS"
+            require(isinstance(name, str) and name, "missing required CI check name")
+            reported.add(name)
+            if not passed:
+                failures.append(f"{name}: {state}")
+        page = contexts["pageInfo"]
+        require(isinstance(page, dict) and type(page.get("hasNextPage")) is bool,
+                "invalid CI pagination")
+        if not page["hasNextPage"]:
+            break
+        cursor = page["endCursor"]
+        require(isinstance(cursor, str) and cursor and cursor not in cursors,
+                "invalid CI pagination cursor")
+        cursors.add(cursor)
+
+    require(not expected - reported,
+            f"missing required CI checks for {url}: {', '.join(sorted(expected - reported))}; quality gate blocked")
+    require(not failures,
+            f"required CI is not succeeding for {url}: {'; '.join(failures)}; quality gate blocked")
+    if workflows:
+        require_passing_workflows(request, number, head, branch, workflows)
+    require(reported or workflows,
+            f"no required CI checks reported for {url}; quality gate blocked")
+    return confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
+
+
+def ready_for_review(request, number, head, branch):
+    """Promote only the verified signed revision with passing required CI."""
+    pr = require_passing_checks(request, number, head, branch)
+    attestor = request.get("attestor")
+    require(attestor is None or attestor.casefold() not in assignee_logins(pr),
+            "attestor is still assigned; clear the attestation wait before readiness")
+    if pr["draft"]:
+        response = github("graphql", "POST", {
+            "query": """
+                mutation EndorsementReady($id: ID!) {
+                  markPullRequestReadyForReview(input: {pullRequestId: $id}) {
+                    pullRequest { id isDraft }
+                  }
+                }
+            """,
+            "variables": {"id": pr["node_id"]},
+        })
+        require(isinstance(response, dict) and not response.get("errors"),
+                "GitHub did not confirm the ready-for-review mutation")
+        require(isinstance(response.get("data"), dict)
+                and isinstance(response["data"].get("markPullRequestReadyForReview"), dict),
+                "ready-for-review transition not confirmed")
+        updated = response["data"]["markPullRequestReadyForReview"]["pullRequest"]
+        require(isinstance(updated, dict)
+                and updated["id"] == pr["node_id"] and updated["isDraft"] is False,
+                "ready-for-review transition not confirmed")
+    current = confirm_ci_revision(request, number, head, branch)
+    require(current["draft"] is False, "ready-for-review transition not confirmed")
+    require(attestor is None or attestor.casefold() not in assignee_logins(current),
+            "attestor was assigned during the ready-for-review transition")
+    return {"url": pr["html_url"], "head": head, "ready_for_review": True}
+
+
+def finish(receipt, approval):
+    request, publication = signed_receipt_request(receipt, approval)
+    plan = receipt["plan"]
+    plan_id = receipt["plan_id"]
+    repository = request["repository"]
+    pr = pull_request(repository, request["pr"], require_draft=publication != "replace")
     expected = receipt["head"] if publication == "replace" else request["head"]
-    require(pr["head"]["sha"] == expected and pr["base"]["sha"] == request["base"]
+    require(pr["head"]["sha"] == expected
             and pr["head"]["ref"] == request["source_branch"]
             and pr["base"]["ref"] == request["base_branch"], "PR changed after endorsement")
+    require(branch_head(repository, request["base_branch"]) == request["base"],
+            "base branch changed after endorsement")
     target = request["source_branch"] if publication == "replace" else request["target_branch"]
     branch = github(f"repos/{repository}/branches/{quote(target, safe='')}")
     require(branch["commit"]["sha"] == receipt["head"], "published signed branch changed")
     for original in plan["commits"]:
         before = github(f"repos/{repository}/git/commits/{original}")
         after = github(f"repos/{repository}/git/commits/{receipt['mapping'][original]}")
+        require(isinstance(before["committer"], dict), "invalid reviewed committer metadata")
+        expected_committer = {**before["committer"], **request.get("committer", {})}
         require(before["tree"]["sha"] == after["tree"]["sha"]
-                and all(before[field] == after[field] for field in ("message", "author", "committer"))
+                and all(before[field] == after[field] for field in ("message", "author"))
+                and after["committer"] == expected_committer
                 and [receipt["mapping"].get(parent["sha"], parent["sha"]) for parent in before["parents"]]
                 == [parent["sha"] for parent in after["parents"]],
                 f"published commit differs from reviewed commit: {original}")
@@ -479,9 +989,17 @@ def finish(receipt, approval):
         hasher = hashlib.sha1 if len(receipt["mapping"][original]) == 40 else hashlib.sha256
         require(hasher(b"commit " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
                 == receipt["mapping"][original], "GitHub signature payload does not match the signed object")
+    require(branch_head(repository, request["base_branch"]) == request["base"],
+            "base branch changed after endorsement")
+    if "attestor" in request:
+        updated = set_attestation_assignment(
+            request, False, head=expected, allow_closed=publication == "replacement",
+            require_draft=publication != "replace",
+        )
+        pr["assignees"] = updated["assignees"]
     if publication == "replace":
         require(pr["state"] == "open", "the original draft PR is no longer open")
-        return {"url": pr["html_url"], "head": receipt["head"]}
+        return ready_for_review(request, request["pr"], receipt["head"], target)
 
     marker = f"<!-- copilot-endorsement:{plan_id} -->"
     title = full_references(pr["title"], repository)
@@ -500,10 +1018,11 @@ def finish(receipt, approval):
             "title": title, "body": body,
             "base": request["base_branch"], "head": target, "draft": True,
         })
-    replacement = pull_request(repository, replacement["number"])
+    replacement = pull_request(repository, replacement["number"], require_draft=False)
     require(replacement["state"] == "open" and replacement["head"]["sha"] == receipt["head"]
-            and replacement["base"]["ref"] == request["base_branch"]
-            and replacement["base"]["sha"] == request["base"], "replacement draft PR does not match")
+            and replacement["base"]["ref"] == request["base_branch"], "replacement draft PR does not match")
+    require(branch_head(repository, request["base_branch"]) == request["base"],
+            "base branch changed after endorsement")
     github(f"repos/{repository}/issues/{replacement['number']}", "PATCH", pull_metadata(pr))
     current_reviewers = {user["login"] for user in replacement["requested_reviewers"]}
     current_teams = {team["slug"] for team in replacement["requested_teams"]}
@@ -519,21 +1038,22 @@ def finish(receipt, approval):
 
     def confirm_drafts():
         latest = pull_request(repository, request["pr"])
-        require(latest["head"]["sha"] == request["head"] and latest["base"]["sha"] == request["base"]
+        require(latest["head"]["sha"] == request["head"]
                 and latest["head"]["ref"] == request["source_branch"]
                 and latest["base"]["ref"] == request["base_branch"]
                 and latest["title"] == pr["title"] and latest["body"] == pr["body"]
                 and pull_metadata(latest) == pull_metadata(pr),
                 "original PR changed; leaving both drafts open")
-        current = pull_request(repository, replacement["number"])
+        current = pull_request(repository, replacement["number"], require_draft=False)
         require(current["state"] == "open" and current["head"]["sha"] == receipt["head"]
                 and current["head"]["ref"] == request["target_branch"]
-                and current["base"]["sha"] == request["base"]
                 and current["base"]["ref"] == request["base_branch"]
                 and marker in (current["body"] or ""), "replacement changed; leaving the original PR open")
         require(current["title"] == title and current["body"] == body
                 and pull_metadata(current) == pull_metadata(pr),
                 "replacement metadata differs; leaving the original PR open")
+        require(branch_head(repository, request["base_branch"]) == request["base"],
+                "base branch changed after endorsement; leaving the original PR open")
         return latest
 
     confirm_drafts()
@@ -545,24 +1065,41 @@ def finish(receipt, approval):
     latest = confirm_drafts()
     if latest["state"] == "open":
         github(f"repos/{repository}/pulls/{request['pr']}", "PATCH", {"state": "closed"})
-    return {"url": replacement["html_url"], "replaces": request["url"], "head": receipt["head"]}
+    result = ready_for_review(request, replacement["number"], receipt["head"], target)
+    return dict(result, replaces=request["url"])
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-    prepare_parser = actions.add_parser("prepare", help="LOCAL: snapshot draft PR and publication policy")
+    ci_parser = actions.add_parser(
+        "check-ci", help="LOCAL: check unsigned-draft CI without starting endorsement")
+    ci_parser.add_argument("--repo", required=True)
+    ci_parser.add_argument("--pr", required=True, type=int)
+    prepare_parser = actions.add_parser(
+        "prepare", help="LOCAL: require passing CI, then snapshot draft PR and publication policy")
     prepare_parser.add_argument("--repo", required=True)
     prepare_parser.add_argument("--pr", required=True, type=int)
     prepare_parser.add_argument("--key", default=os.environ.get("COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY", SIGNING_ALIAS))
+    prepare_parser.add_argument("--committer-name")
+    prepare_parser.add_argument("--committer-email")
     plan_parser = actions.add_parser("plan", help="CODESPACE: freeze the commit range for human review")
     plan_parser.add_argument("--request", required=True)
+    awaiting_parser = actions.add_parser(
+        "await-attestation", help="LOCAL: assign the operator before the exact-plan review prompt")
+    awaiting_parser.add_argument("--plan", required=True, dest="plan_file",
+                                 help="JSON file containing the complete planning result")
+    completed_parser = actions.add_parser(
+        "complete-attestation", help="LOCAL: unassign after successful Codespace signing/verification")
+    completed_parser.add_argument("--receipt", required=True)
+    completed_parser.add_argument("--approve-plan", required=True)
     for action in ("sign", "verify", "push"):
         subparser = actions.add_parser(action, help="CODESPACE: " + action + " the exact reviewed plan")
         subparser.add_argument("--plan", required=True)
         if action != "verify":
             subparser.add_argument("--approve-plan", required=True)
-    finish_parser = actions.add_parser("finish", help="LOCAL: verify published signatures and update draft PRs")
+    finish_parser = actions.add_parser(
+        "finish", help="LOCAL: verify publication and mark the signed PR ready after required CI passes")
     finish_parser.add_argument("--receipt", required=True)
     finish_parser.add_argument("--approve-plan", required=True)
     args = parser.parse_args()
@@ -577,10 +1114,26 @@ def main():
                 result = repository.verify(args.plan)
             else:
                 result = getattr(repository, args.action)(args.plan, args.approve_plan)
+        elif args.action == "check-ci":
+            require(os.environ.get("CODESPACES") != "true",
+                    "check GitHub CI locally with the operator's authenticated gh")
+            result = dict(check_ci(args.repo, args.pr), required_ci="passed")
         elif args.action == "prepare":
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub preparation locally with the operator's authenticated gh")
-            result = prepare(args.repo, args.pr, args.key)
+            require((args.committer_name is None) == (args.committer_email is None),
+                    "provide both committer name and email")
+            committer = ({"name": args.committer_name, "email": args.committer_email}
+                         if args.committer_name is not None else None)
+            result = prepare(args.repo, args.pr, args.key, committer=committer)
+        elif args.action in ("await-attestation", "complete-attestation"):
+            require(os.environ.get("CODESPACES") != "true",
+                    "run GitHub attestation tracking locally with the operator's authenticated gh")
+            if args.action == "await-attestation":
+                result = await_attestation(json.loads(Path(args.plan_file).read_text()))
+            else:
+                result = complete_attestation(
+                    json.loads(Path(args.receipt).read_text()), args.approve_plan)
         else:
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub finalisation locally with the operator's authenticated gh")

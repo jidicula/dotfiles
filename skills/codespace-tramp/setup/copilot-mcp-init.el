@@ -208,62 +208,11 @@
     (copilot-cs-use cs dir)))
 
 ;;; Lifecycle
-;; The daemon is owned by the wrapper process that spawned it, and shuts itself
-;; down once that owner is gone for good.  Polling the parent covers SIGKILL,
-;; which no exit trap can.
-;;
-;; The grace window is deliberately long.  The wrapper does NOT only die at the
-;; end of a session: Copilot CLI also kills it when a tool call overruns its
-;; budget.  A short window turned that into a cascade -- one slow call reaped
-;; the daemon, and every later call failed with `Transport closed' until the
-;; whole session was restarted.  Outliving the wrapper by a wide margin means a
-;; replacement wrapper can reattach (refreshing `copilot-mcp-parent-pid') and
-;; find its daemon, and its jobs, still there.
-
-(defvar copilot-mcp-parent-pid
-  (let ((raw (getenv "COPILOT_MCP_PARENT_PID")))
-    (and raw (string-to-number raw)))
-  "PID of the wrapper process this daemon serves.
-Refreshed by the wrapper when a new client reattaches to an existing daemon.")
-
-(defconst copilot-mcp-parent-poll-interval 20
-  "Seconds between parent liveness checks.")
-
-(defvar copilot-mcp-orphan-grace
-  (let ((raw (getenv "COPILOT_MCP_ORPHAN_GRACE")))
-    (if (and raw (> (string-to-number raw) 0))
-        (string-to-number raw)
-      3600))
-  "Seconds to keep running after the owning wrapper disappears.
-Long enough that a wrapper killed mid-session can be respawned and reattach
-without losing this daemon.  Override with COPILOT_MCP_ORPHAN_GRACE.")
-
-(defvar copilot-mcp--orphaned-since nil
-  "When the owning wrapper was first seen to be gone, or nil if it is alive.")
-
-(defun copilot-mcp-runner-active-p ()
-  "Return non-nil while any known runner connection is still live."
-  (and (boundp 'copilot-cs--jobs)
-       (hash-table-p copilot-cs--jobs)
-       (catch 'active
-         (maphash
-          (lambda (_ job)
-            (when (process-live-p (plist-get job :process))
-              (throw 'active t)))
-          copilot-cs--jobs)
-         nil)))
-
-(defun copilot-mcp-watch-parent ()
-  "Shut down once the owning wrapper has been gone for the full grace window."
-  (if (or (null copilot-mcp-parent-pid)
-          (process-attributes copilot-mcp-parent-pid))
-      (setq copilot-mcp--orphaned-since nil)
-    (unless copilot-mcp--orphaned-since
-      (setq copilot-mcp--orphaned-since (float-time)))
-    (when (>= (- (float-time) copilot-mcp--orphaned-since)
-              copilot-mcp-orphan-grace)
-      (unless (copilot-mcp-runner-active-p)
-        (kill-emacs 0)))))
+;; Direct clients have short-lived bridges; long human prompts must retain
+;; daemon state while the owning CLI remains alive.
+(require 'copilot-mcp-lifecycle)
+(when-let* ((raw (getenv "COPILOT_MCP_PARENT_PID")))
+  (message "%s" (copilot-mcp-attach-parent (string-to-number raw))))
 
 (run-with-timer copilot-mcp-parent-poll-interval
                 copilot-mcp-parent-poll-interval

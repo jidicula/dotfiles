@@ -39,7 +39,12 @@ SIGNING_REFUSAL = re.compile(
     rb"sign_and_send_pubkey:[^\r\n]*"
     rb"(?:agent refused operation|communication with agent failed)(?:\r?\n|\Z)"
 )
+AUTHENTICATION_DENIAL = re.compile(
+    rb"(?:[^@\s]+@[^@\s]+: )?Permission denied "
+    rb"\([a-z0-9@._+-]+(?:,[a-z0-9@._+-]+)*\)\.?"
+)
 AUTHENTICATION_LIMIT = 3
+SETUP_PROGRESS_INTERVAL = 10
 RESUME_AUTHENTICATION = (
     "request operator approval, then run copilot-ghcs resume-auth --operator-approved"
 )
@@ -67,7 +72,7 @@ class AuthenticationPaused(Exception):
 
 
 class ConnectionGate:
-    """Serialize signing and enforce a shared consecutive-refusal limit."""
+    """Serialize signing and enforce a shared authentication-failure limit."""
 
     def __init__(self, path, deadline=None, *, allow_paused=False):
         self.path = path
@@ -87,8 +92,8 @@ class ConnectionGate:
                     fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     if not self.allow_paused and self.refusals() >= AUTHENTICATION_LIMIT:
                         raise AuthenticationPaused(
-                            "Secretive authentication is paused after three consecutive "
-                            f"signing refusals; {RESUME_AUTHENTICATION}"
+                            "SSH authentication is paused after three consecutive "
+                            f"failures; {RESUME_AUTHENTICATION}"
                         )
                     return self
                 except BlockingIOError:
@@ -115,7 +120,7 @@ class ConnectionGate:
     def store_refusals(self, count):
         # Keep the locked inode: replacing it would let queued signers bypass the gate.
         if os.pwrite(self.fd, str(count).encode("ascii"), 0) != 1:
-            raise OSError("could not persist the Secretive signing-refusal count")
+            raise OSError("could not persist the SSH authentication-failure count")
         os.ftruncate(self.fd, 1)
         os.fsync(self.fd)
 
@@ -129,7 +134,7 @@ class ConnectionGate:
         if self.fd is not None:
             count = self.refusals() + 1
             self.store_refusals(count)
-            log(f"Secretive signing refusal {count}/{AUTHENTICATION_LIMIT}; no automatic retry")
+            log(f"SSH authentication failure {count}/{AUTHENTICATION_LIMIT}; no automatic retry")
             if count == AUTHENTICATION_LIMIT:
                 log(f"further authentication is paused; {RESUME_AUTHENTICATION}")
 
@@ -196,6 +201,11 @@ def signing_command(command, public_key):
 
 
 def run_once(command, gate, deadline, ack_marker=None, api_get=False):
+    started = time.monotonic()
+    next_progress = started + SETUP_PROGRESS_INTERVAL
+    reported_progress = False
+    authenticated = False
+    authentication_failed = False
     process = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         bufsize=0,
@@ -220,18 +230,30 @@ def run_once(command, gate, deadline, ack_marker=None, api_get=False):
                             "inspect the job log or transferred files before retrying"
                         )
                     wait = min(0.2, remaining)
+                    if not api_get and time.monotonic() >= next_progress:
+                        phase = ("the exact runner acknowledgement"
+                                 if authenticated and marker is not None
+                                 else "API/SSH connection setup")
+                        log(f"connection setup pending after {time.monotonic() - started:.1f}s; "
+                            f"waiting for {phase}")
+                        reported_progress = True
+                        next_progress = time.monotonic() + SETUP_PROGRESS_INTERVAL
                 for key, _ in selector.select(wait):
                     data = os.read(key.fd, 65536)
                     if not data:
                         selector.unregister(key.fileobj)
-                        continue
+                        if key.fileobj is not process.stderr:
+                            continue
                     if key.fileobj is process.stdout:
                         had_stdout = True
+                        authenticated = True
                         gate.authenticated()
                         if marker is not None:
                             probe = stdout_tail + data
                             if (b"\n" + marker + b"\n" in probe
                                     or b"\n" + marker + b"\r\n" in probe):
+                                if deadline is not None and reported_progress:
+                                    log(f"runner acknowledged after {time.monotonic() - started:.1f}s")
                                 deadline = None
                             stdout_tail = probe[-(len(marker) + 3):]
                         elif not api_get:
@@ -242,14 +264,26 @@ def run_once(command, gate, deadline, ack_marker=None, api_get=False):
                         stderr_overflow = True
                     if key.fileobj is process.stderr:
                         lines = (stderr_tail + data).split(b"\n")
-                        stderr_tail = lines.pop()[-4096:]
-                        if any(AUTHENTICATED.fullmatch(line.rstrip(b"\r")) for line in lines):
+                        stderr_tail = lines.pop()[-4096:] if data else b""
+                        lines = [line.rstrip(b"\r") for line in lines]
+                        authentication_failed = authentication_failed or any(
+                            SIGNING_REFUSAL.search(line)
+                            or AUTHENTICATION_DENIAL.fullmatch(line)
+                            for line in lines
+                        )
+                        if any(AUTHENTICATED.fullmatch(line) for line in lines):
+                            authenticated = True
+                            if deadline is not None and reported_progress:
+                                log(f"SSH authenticated after {time.monotonic() - started:.1f}s")
                             gate.authenticated()
                             if marker is None and not api_get:
                                 deadline = None
                     key.data.write(data)
                     key.data.flush()
-        return process.wait(), b"" if stderr_overflow else bytes(stderr), had_stdout
+        status = process.wait()
+        if status != 0 and not authenticated and authentication_failed:
+            gate.refused()
+        return status, b"" if stderr_overflow else bytes(stderr), had_stdout
     finally:
         stop_process(process)
         process.stdout.close()
@@ -280,8 +314,6 @@ def run(command, lock=None, retry=True, identity=None, ssh_signing=False, *,
             )
             if status == 0:
                 gate.authenticated()
-            elif SIGNING_REFUSAL.search(stderr):
-                gate.refused()
             if status == 0 or not retry or not startup_failure(
                 stderr, had_stdout, api_get=api_get,
             ):

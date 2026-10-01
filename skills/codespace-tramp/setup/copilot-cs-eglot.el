@@ -33,6 +33,9 @@
 (defconst copilot-cs-eglot-request-timeout 12
   "Maximum seconds a semantic request may occupy one MCP tool call.")
 
+(defconst copilot-cs-eglot-preparation-timeout 12
+  "Maximum seconds for synchronous file preparation during Eglot startup.")
+
 (defvar copilot-cs-eglot--states (make-hash-table :test #'equal)
   "Remote path to the latest asynchronous Eglot startup state.")
 
@@ -111,11 +114,19 @@ Sorbet is selected when the project contains `sorbet/config'."
     (if (copilot-cs-eglot--ghcs-root-p root)
         (copilot-cs-eglot--remote-contact
          project
-         "if [ -f sorbet/config ]; then if command -v watchman >/dev/null 2>&1; then exec bundle exec srb typecheck --lsp --cache-dir tmp/sorbet; else exec bundle exec srb typecheck --lsp --cache-dir tmp/sorbet --disable-watchman; fi; else exec ruby-lsp; fi"
+         (concat
+          "if [ -f sorbet/config ]; then "
+          "if [ -x bin/srb ]; then set -- bin/srb; else set -- bundle exec srb; fi; "
+          "set -- \"$@\" typecheck --lsp --cache-dir tmp/sorbet; "
+          "if ! command -v watchman >/dev/null 2>&1; then "
+          "set -- \"$@\" --disable-watchman; fi; exec \"$@\"; "
+          "else exec ruby-lsp; fi")
          t)
       (if (file-exists-p (expand-file-name "sorbet/config" root))
-          '("bundle" "exec" "srb" "typecheck" "--lsp"
-            "--cache-dir" "tmp/sorbet")
+          (append (if (file-executable-p (expand-file-name "bin/srb" root))
+                      '("bin/srb")
+                    '("bundle" "exec" "srb"))
+                  '("typecheck" "--lsp" "--cache-dir" "tmp/sorbet"))
         '("ruby-lsp")))))
 
 (defun copilot-cs-eglot-go-contact (&optional _interactive project)
@@ -191,59 +202,96 @@ Sorbet is selected when the project contains `sorbet/config'."
            (append (list :status status :updated (float-time)) properties)
            copilot-cs-eglot--states))
 
-(defun copilot-cs-eglot--complete-start (path mode buffer deadline)
-  "Record PATH as ready once BUFFER is managed, before DEADLINE.
-MODE is the major mode requested for the asynchronous startup."
-  (condition-case err
-      (if (not (buffer-live-p buffer))
-          (error "Eglot buffer for `%s' was killed during startup" path)
-        (with-current-buffer buffer
-          (let ((server (eglot-current-server)))
-            (when (and server
-                       (jsonrpc-running-p server)
-                       (not (eglot-managed-p)))
-              (eglot--maybe-activate-editing-mode)
-              (setq server (eglot-current-server)))
-            (cond
-             ((and (eglot-managed-p)
-                   server
-                   (jsonrpc-running-p server))
-              (copilot-cs-eglot--record
-               path 'ready :mode mode :buffer buffer :server server))
-             ((>= (float-time) deadline)
-              (error "Eglot did not begin managing `%s' before timeout" path))
-             (t
-              (run-at-time
-               0.25 nil #'copilot-cs-eglot--complete-start
-               path mode buffer deadline))))))
-    (error
-     (copilot-cs-eglot--record
-      path 'error :mode mode :error (error-message-string err)))))
+(defun copilot-cs-eglot--current-start-p (path token)
+  "Return non-nil if TOKEN still owns PATH's pending startup."
+  (let ((entry (gethash path copilot-cs-eglot--states)))
+    (and (eq (plist-get entry :status) 'starting)
+         (eq token (plist-get entry :token)))))
 
-(defun copilot-cs-eglot--start-now (path mode)
+(defun copilot-cs-eglot--fail-start (path mode err token)
+  "Record startup ERR for PATH in MODE if TOKEN still owns this attempt."
+  (let* ((entry (gethash path copilot-cs-eglot--states))
+         (server (plist-get entry :server)))
+    (when (eq token (plist-get entry :token))
+      (unwind-protect
+          (when (and server (plist-get entry :owned) (jsonrpc-running-p server))
+            (setf (eglot--inhibit-autoreconnect server) t
+                  (eglot--shutdown-requested server) t)
+            (jsonrpc-shutdown server))
+        (copilot-cs-eglot--record
+         path 'error :mode mode :error (error-message-string err)
+         :buffer (plist-get entry :buffer) :server server :token token)))))
+
+(defun copilot-cs-eglot--complete-start (path mode buffer deadline &optional token)
+  "Record PATH as ready once BUFFER is managed, before DEADLINE.
+MODE and TOKEN identify the asynchronous startup attempt."
+  (let ((entry (gethash path copilot-cs-eglot--states)))
+    (when (copilot-cs-eglot--current-start-p path token)
+      (condition-case err
+          (with-timeout (copilot-cs-eglot-preparation-timeout
+                         (error "Eglot buffer preparation timed out for `%s'" path))
+            (unless (buffer-live-p buffer)
+              (error "Eglot buffer for `%s' was killed during startup" path))
+            (with-current-buffer buffer
+              (let ((server (or (eglot-current-server) (plist-get entry :server))))
+                (when (and server
+                           (jsonrpc-running-p server)
+                           (not (eglot-managed-p)))
+                  (eglot--maybe-activate-editing-mode))
+                (when (copilot-cs-eglot--current-start-p path token)
+                  (cond
+                   ((and (eglot-managed-p) server (jsonrpc-running-p server))
+                    (copilot-cs-eglot--record
+                     path 'ready :mode mode :buffer buffer :server server :token token))
+                   ((and server (not (jsonrpc-running-p server)))
+                    (error "Eglot language server exited during startup for `%s'" path))
+                   ((>= (float-time) deadline)
+                    (error "Eglot did not begin managing `%s' before timeout" path))
+                   (t
+                    (run-at-time
+                     0.25 nil #'copilot-cs-eglot--complete-start
+                     path mode buffer deadline token)))))))
+        (error (copilot-cs-eglot--fail-start path mode err token))))))
+
+(defun copilot-cs-eglot--start-now (path mode &optional token)
   "Open PATH in MODE and connect Eglot.
-This function runs from a timer so the initiating MCP call returns first."
-  (condition-case err
-      (progn
-        (unless (copilot-cs-eglot--editable-path-p path)
-          (error "Refusing Eglot access outside a Codespace /workspaces tree"))
-        (unless (fboundp mode)
-          (error "Major mode `%s' is unavailable" mode))
-        (let ((buffer (find-file-noselect path)))
-          (with-current-buffer buffer
-            (unless (eq major-mode mode)
-              (funcall mode))
-            (let ((server (eglot-current-server)))
-              (if (and server (jsonrpc-running-p server))
-                  (unless (eglot-managed-p)
-                    (eglot--maybe-activate-editing-mode))
-                (setq eglot--cached-server nil
-                      server (apply #'eglot (eglot--guess-contact))))
-              (copilot-cs-eglot--complete-start
-               path mode buffer (+ (float-time) eglot-connect-timeout))))))
-    (error
-     (copilot-cs-eglot--record
-      path 'error :mode mode :error (error-message-string err)))))
+TOKEN prevents a cancelled or replaced timer from starting a connection."
+  (when (copilot-cs-eglot--current-start-p path token)
+    (condition-case err
+        (with-timeout (copilot-cs-eglot-preparation-timeout
+                       (error "Eglot file preparation timed out for `%s'" path))
+          (unless (copilot-cs-eglot--editable-path-p path)
+            (error "Refusing Eglot access outside a Codespace /workspaces tree"))
+          (unless (fboundp mode)
+            (error "Major mode `%s' is unavailable" mode))
+          (let* ((eglot-sync-connect nil)
+                 (buffer (find-file-noselect path)))
+            (when (copilot-cs-eglot--current-start-p path token)
+              (with-current-buffer buffer
+                (unless (eq major-mode mode)
+                  (funcall mode))
+                (when (copilot-cs-eglot--current-start-p path token)
+                  (let ((server (eglot-current-server)))
+                    (copilot-cs-eglot--record
+                     path 'starting :mode mode :buffer buffer :server server :token token)
+                    (unless (and server (jsonrpc-running-p server))
+                      (let ((eglot-server-initialized-hook
+                             (cons
+                              (lambda (created)
+                                (unless (copilot-cs-eglot--current-start-p path token)
+                                  (setf (eglot--inhibit-autoreconnect created) t
+                                        (eglot--shutdown-requested created) t)
+                                  (jsonrpc-shutdown created)
+                                  (error "Eglot startup was cancelled"))
+                                (copilot-cs-eglot--record
+                                 path 'starting :mode mode :buffer buffer :server created
+                                 :owned t :token token))
+                              eglot-server-initialized-hook)))
+                        (setq eglot--cached-server nil)
+                        (apply #'eglot (eglot--guess-contact))))
+                    (copilot-cs-eglot--complete-start
+                     path mode buffer (+ (float-time) eglot-connect-timeout) token)))))))
+      (error (copilot-cs-eglot--fail-start path mode err token)))))
 
 (defun copilot-cs-eglot-start (path &optional mode)
   "Start Eglot asynchronously for remote PATH.
@@ -254,9 +302,14 @@ MODE defaults from PATH and must be a member of
   (let ((resolved-mode (or mode (copilot-cs-eglot--infer-mode path))))
     (unless (memq resolved-mode copilot-cs-eglot-supported-modes)
       (error "Unsupported Eglot mode `%s'" resolved-mode))
-    (copilot-cs-eglot--record path 'starting :mode resolved-mode)
-    (run-at-time 0 nil #'copilot-cs-eglot--start-now path resolved-mode)
-    (format "eglot state=starting mode=%s path=%s" resolved-mode path)))
+    (let ((entry (gethash path copilot-cs-eglot--states)))
+      (if (eq (plist-get entry :status) 'starting)
+          (unless (eq resolved-mode (plist-get entry :mode))
+            (error "Eglot startup already uses another mode; stop it before changing modes"))
+        (let ((token (make-symbol "eglot-start")))
+          (copilot-cs-eglot--record path 'starting :mode resolved-mode :token token)
+          (run-at-time 0 nil #'copilot-cs-eglot--start-now path resolved-mode token))))
+    (copilot-cs-eglot-status path)))
 
 (defun copilot-cs-eglot--state-buffer (path)
   "Return PATH's recorded live buffer, or nil."
@@ -303,8 +356,11 @@ MODE defaults from PATH and must be a member of
      ((null entry)
       (format "eglot state=unknown path=%s" path))
      ((eq status 'error)
-      (format "eglot state=error mode=%s error=%s"
-              (plist-get entry :mode) (plist-get entry :error)))
+      (format "eglot state=error mode=%s error=%s%s"
+              (plist-get entry :mode) (plist-get entry :error)
+              (if (string-empty-p (or stderr ""))
+                  ""
+                (format " stderr=%s" stderr))))
      ((and (eq status 'ready) (or (not managed) (not running)))
       (format "eglot state=disconnected mode=%s path=%s reason=%s%s"
               (plist-get entry :mode) path
@@ -389,12 +445,18 @@ MODE defaults from PATH and must be a member of
 
 (defun copilot-cs-eglot-stop (path)
   "Stop the Eglot server managing PATH."
-  (let ((buffer (copilot-cs-eglot--state-buffer path)))
-    (when buffer
-      (with-current-buffer buffer
-        (when-let* ((server (eglot-current-server)))
-          (eglot-shutdown server))))
+  (let* ((entry (gethash path copilot-cs-eglot--states))
+         (buffer (copilot-cs-eglot--state-buffer path))
+         (server (or (and buffer (with-current-buffer buffer (eglot-current-server)))
+                     (plist-get entry :server))))
     (copilot-cs-eglot--record path 'stopped)
+    (when (and server (jsonrpc-running-p server))
+      (if (eq (plist-get entry :status) 'starting)
+          (progn
+            (setf (eglot--inhibit-autoreconnect server) t
+                  (eglot--shutdown-requested server) t)
+            (jsonrpc-shutdown server))
+        (eglot-shutdown server)))
     (format "eglot state=stopped path=%s" path)))
 
 (copilot-cs-eglot-configure)
