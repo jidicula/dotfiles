@@ -74,7 +74,7 @@ When invoked, the skill:
 7. Points the dedicated Emacs runner at the immutable Codespace id and the discovered repository directory under `/workspaces/`.
 8. Uses Codespace-hosted Eglot servers for semantic navigation and diagnostics when working in Ruby or Go.
 9. Makes changes and runs builds, tests, linters, and other repository commands through detached `copilot-cs-*` jobs.
-10. Commits and pushes retained changes unsigned from the Codespace, then uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise.
+10. Commits and pushes retained changes unsigned from the Codespace, then uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise. When the task has an issue, the draft description includes a closing reference such as `Closes https://github.com/OWNER/REPO/issues/NUMBER`.
 11. Checks required CI, then addresses, resolves and re-requests CCR until approval or human review is recommended, when CCR is enabled and available. Continues through this skill's human attestation, signing, publication and signed-head CI/readiness gates; a CCR recommendation is never signing consent.
 12. Reuses the same Codespace for review fixes and retains the current phase and receipts for safe resumption. Leaves the Codespace running so its configured idle timeout can stop it.
 

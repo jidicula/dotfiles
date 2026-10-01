@@ -985,12 +985,20 @@ check it out here (or confirm Step 4 already created the Codespace on it).
   Skip this only when the user
   explicitly requested no commit, push, or PR, or when the task was read-only
   and retained no code change.
+- When an issue was supplied or created for the task, the draft PR body must
+  include a closing reference, for example
+  `Closes https://github.com/OWNER/REPO/issues/NUMBER`, not merely a plain link.
+  Use the actual issue's full URL, including its repository even when it differs
+  from the PR's repository; never use a PR URL as the closing target. Preserve
+  this reference when updating an existing draft or creating a signed replacement.
 - Do **not** manually stop or delete the Codespace when the task is complete.
   Leave it running; GitHub Codespaces stops it automatically after its
   configured idle timeout. Stop or delete it only when the human operator
   explicitly requests that.
-- Report back against `instructions`: what you did, what you skipped, and
-  anything you could not satisfy.
+- Report meaningful changes and actionable blockers or material validation gaps
+  against `instructions`. Rely on the PR's CI checks for routine automated
+  results; do not narrate passing checks, example/assertion counts,
+  feature/deployment permutations or Codespace/Docker/worktree setup.
 
 ### Quality and endorsement gates
 
