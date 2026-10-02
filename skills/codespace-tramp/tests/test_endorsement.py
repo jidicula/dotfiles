@@ -47,6 +47,104 @@ class GitHubPaginationTests(HelperTestCase):
                     helper.github_pages("fixture", field="workflow_runs")
 
 
+class CommitWorkflowDiscoveryTests(HelperTestCase):
+    def setUp(self):
+        super().setUp()
+        self.helper = self.load_script("copilot-cs-endorse")
+        self.head = "a" * 40
+        self.suite = {
+            "id": "CS_100",
+            "workflowRun": {
+                "databaseId": 100, "runAttempt": 1, "event": "pull_request",
+                "file": {"path": ".github/workflows/required.yml"},
+                "workflow": {"databaseId": 456},
+            },
+        }
+
+    def page(self, nodes, *, total=None, more=False, cursor=None):
+        return {"data": {"repository": {"object": {
+            "oid": self.head,
+            "checkSuites": {
+                "nodes": nodes, "totalCount": len(nodes) if total is None else total,
+                "pageInfo": {"hasNextPage": more, "endCursor": cursor},
+            },
+        }}}}
+
+    def discover(self, *responses):
+        with mock.patch.object(self.helper, "github", side_effect=responses) as api, \
+                mock.patch.object(self.helper, "github_pages") as search:
+            result = self.helper.commit_workflow_suites("example/project", self.head)
+            search.assert_not_called()
+        return result, api.call_args_list
+
+    def test_all_commit_suites_are_paginated_and_non_workflow_suites_are_ignored(self):
+        unrelated = {"id": "CS_other_app", "workflowRun": None}
+        dynamic = {"id": "CS_code_quality", "workflowRun": {
+            **self.suite["workflowRun"], "databaseId": 200, "event": "dynamic", "file": None,
+        }}
+        result, calls = self.discover(
+            self.page([unrelated, dynamic], total=3, more=True, cursor="next"),
+            self.page([self.suite], total=3),
+        )
+        self.assertEqual(result, [self.suite])
+        self.assertEqual(len(calls), 2)
+        for call, cursor in zip(calls, (None, "next")):
+            self.assertEqual(call.args[:2], ("graphql", "POST"))
+            self.assertEqual(call.args[2]["variables"], {
+                "owner": "example", "name": "project", "head": self.head, "cursor": cursor,
+            })
+            self.assertIn("checkSuites(first: 100", call.args[2]["query"])
+
+    def test_a_commit_without_workflow_suites_returns_no_candidates(self):
+        self.assertEqual(self.discover(self.page([]))[0], [])
+
+    def test_missing_partial_or_wrong_revision_responses_fail_closed(self):
+        missing_repository = {"data": {"repository": None}}
+        wrong_revision = self.page([self.suite])
+        wrong_revision["data"]["repository"]["object"]["oid"] = "b" * 40
+        for response in (
+            {}, missing_repository, wrong_revision,
+            {**self.page([self.suite]), "errors": [{"message": "partial response"}]},
+            self.page([self.suite], total=2),
+            self.page([self.suite], total=True),
+            self.page([self.suite], total=-1),
+            self.page([self.suite], more=1),
+            self.page([self.suite], total=2, more=True),
+            self.page([], total=1, more=True, cursor="next"),
+        ):
+            with self.subTest(response=response):
+                with self.assertRaisesRegex(ValueError, "workflow"):
+                    self.discover(response)
+
+    def test_malformed_suite_and_workflow_identities_fail_closed(self):
+        for suite in (
+            None, {}, {"id": "", "workflowRun": None}, {"id": "CS_100"},
+            {"id": "CS_100", "workflowRun": []},
+            {"id": "CS_100", "workflowRun": {}},
+            {**self.suite, "workflowRun": {**self.suite["workflowRun"], "databaseId": True}},
+            {**self.suite, "workflowRun": {**self.suite["workflowRun"], "file": None}},
+        ):
+            with self.subTest(suite=suite):
+                with self.assertRaisesRegex(ValueError, "workflow"):
+                    self.discover(self.page([suite]))
+
+    def test_changed_counts_duplicate_suites_and_cursor_cycles_fail_closed(self):
+        first = self.page([self.suite], total=2, more=True, cursor="next")
+        other = {**self.suite, "id": "CS_200"}
+        for second in (
+            self.page([other], total=3),
+            self.page([self.suite], total=2),
+            self.page([other], total=2, more=True, cursor="next"),
+        ):
+            with self.subTest(second=second):
+                with self.assertRaisesRegex(ValueError, "workflow"):
+                    self.discover(first, second)
+
+    def test_api_failure_does_not_fall_back_to_a_repository_run_search(self):
+        with self.assertRaisesRegex(RuntimeError, "fixture API failure"):
+            self.discover(RuntimeError("fixture API failure"))
+
+
 class EndorsementTestCase(HelperTestCase):
     def setUp(self):
         super().setUp()
@@ -1050,6 +1148,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
         self.required_contexts = ["ci"]
         self.rules = []
         self.workflow_runs = []
+        self.listed_workflow_runs = None
+        self.workflow_suite_page_size = 100
         self.workflow_sources = {}
         self.workflow_provenance = {}
         self.mutate_on_workflow = None
@@ -1080,7 +1180,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
             self.assertEqual(field, "workflow_runs")
             target = self.replacement or self.original
             self.assertIn("head_sha=" + target["head"]["sha"], endpoint)
-            return copy.deepcopy(self.workflow_runs)
+            return copy.deepcopy(self.workflow_runs if self.listed_workflow_runs is None
+                                 else self.listed_workflow_runs)
         if endpoint == "users/fixture/ssh_signing_keys?per_page=100":
             return copy.deepcopy(self.operator_keys)
         if "/pulls?" in endpoint:
@@ -1109,8 +1210,11 @@ class GitHubEndorsementTests(EndorsementTestCase):
             self.assertEqual(parts[3], quote(source["ref"], safe=""))
             return {"sha": source["sha"]}
         if "/actions/runs/" in endpoint:
-            result = copy.deepcopy(next(run for run in self.workflow_runs
-                                        if run["id"] == int(endpoint.rsplit("/", 1)[1])))
+            matches = [run for run in self.workflow_runs
+                       if run["id"] == int(endpoint.rsplit("/", 1)[1])]
+            if not matches:
+                raise RuntimeError("fixture workflow API failure")
+            result = copy.deepcopy(matches[0])
             if self.mutate_on_workflow:
                 self.mutate_on_workflow()
             return result
@@ -1130,6 +1234,22 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 self.mutate_on_assignment(pr)
             return copy.deepcopy(pr)
         if endpoint == "graphql":
+            if "EndorsementCommitWorkflows" in data["query"]:
+                variables = data["variables"]
+                self.assertEqual((variables["owner"], variables["name"]), ("example", "project"))
+                offset = int(variables["cursor"] or 0)
+                suites = [{
+                    "id": run["check_suite_node_id"],
+                    "workflowRun": copy.deepcopy(self.workflow_provenance[run["check_suite_node_id"]]),
+                } for run in self.workflow_runs]
+                end = offset + self.workflow_suite_page_size
+                return {"data": {"repository": {"object": {
+                    "oid": variables["head"],
+                    "checkSuites": {
+                        "nodes": suites[offset:end], "totalCount": len(suites),
+                        "pageInfo": {"hasNextPage": end < len(suites), "endCursor": str(end)},
+                    },
+                }}}}
             if "EndorsementWorkflowRun" in data["query"]:
                 return {"data": {"node": {
                     "workflowRun": copy.deepcopy(self.workflow_provenance[data["variables"]["id"]]),
@@ -1244,7 +1364,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
         self.assertTrue(all(
             method in ("GET", "GET-PAGES")
             or (endpoint == "graphql" and any(name in data["query"] for name in (
-                "EndorsementRequiredChecks", "EndorsementWorkflowRun", "EndorsementBaseCompatibility")))
+                "EndorsementRequiredChecks", "EndorsementWorkflowRun",
+                "EndorsementCommitWorkflows", "EndorsementBaseCompatibility")))
             for method, endpoint, data in self.calls
         ))
 
@@ -1293,6 +1414,58 @@ class GitHubEndorsementTests(EndorsementTestCase):
         self.assertEqual(self.prepare()["head"], self.head)
         self.assert_read_only_preparation()
 
+    def test_workflow_discovery_does_not_depend_on_an_empty_repository_run_search(self):
+        self.add_required_workflow()
+        self.listed_workflow_runs = []
+        self.assertEqual(self.prepare()["head"], self.head)
+        self.assertFalse(any("/actions/runs?" in endpoint for _, endpoint, _ in self.calls))
+        self.assert_read_only_preparation()
+
+    def test_partial_repository_run_search_cannot_hide_a_newer_failed_workflow(self):
+        older = self.add_required_workflow()
+        newer = self.add_required_workflow(run_id=200)
+        newer["conclusion"] = "failure"
+        self.listed_workflow_runs = [older]
+        with self.assertRaisesRegex(ValueError, "required workflow is not succeeding"):
+            self.prepare()
+        self.assert_read_only_preparation()
+
+    def test_required_workflow_discovery_uses_every_commit_suite_page(self):
+        self.add_required_workflow()
+        self.add_required_workflow(run_id=200, path=".github/workflows/other.yml")
+        self.workflow_suite_page_size = 1
+        self.assertEqual(self.prepare()["head"], self.head)
+        self.assertEqual(sum(
+            endpoint == "graphql" and "EndorsementCommitWorkflows" in data["query"]
+            for _, endpoint, data in self.calls
+        ), 2)
+        self.assert_read_only_preparation()
+
+    def test_a_newer_failed_workflow_on_a_later_suite_page_blocks_preparation(self):
+        self.add_required_workflow()
+        self.add_required_workflow(run_id=200)["conclusion"] = "failure"
+        self.workflow_suite_page_size = 1
+        with self.assertRaisesRegex(ValueError, "required workflow is not succeeding"):
+            self.prepare()
+        self.assert_read_only_preparation()
+
+    def test_run_metadata_must_match_its_discovered_commit_suite(self):
+        self.add_required_workflow()
+        for change in (
+            {"id": 999}, {"check_suite_node_id": "CS_other"},
+            {"path": ".github/workflows/other.yml"},
+        ):
+            with self.subTest(change=change):
+                def api(endpoint, method="GET", data=None):
+                    result = self.api(endpoint, method, data)
+                    if endpoint == "repos/example/project/actions/runs/100":
+                        result.update(change)
+                    return result
+                with mock.patch.object(self.helper, "github", side_effect=api):
+                    with self.assertRaisesRegex(ValueError, "does not match its commit check suite"):
+                        self.prepare()
+                self.assert_read_only_preparation()
+
     def test_required_workflow_only_policy_still_has_to_report_a_passing_run(self):
         self.add_required_workflow()
         self.required_contexts = []
@@ -1322,10 +1495,10 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 self.assertIn("; workflow selection: ", message)
                 self.assertEqual(json.loads(message.split("; workflow selection: ", 1)[1]), expected)
                 self.assertNotIn("unrelated fixture metadata", message)
-                self.assertEqual(sum("/actions/runs?" in endpoint
-                                     for _, endpoint, _ in self.calls), 1)
-                self.assertFalse(any("/actions/runs/" in endpoint
+                self.assertFalse(any("/actions/runs?" in endpoint
                                      for _, endpoint, _ in self.calls))
+                self.assertEqual(sum("/actions/runs/" in endpoint
+                                     for _, endpoint, _ in self.calls), 1)
                 self.assertFalse(self.assignment_calls())
                 self.assert_read_only_preparation()
 
@@ -1360,6 +1533,7 @@ class GitHubEndorsementTests(EndorsementTestCase):
     def test_missing_workflow_diagnostics_distinguish_an_absent_path_from_absent_runs(self):
         run = self.add_required_workflow()
         run["path"] = ".github/workflows/unrelated.yml"
+        self.workflow_provenance["CS_100"]["file"]["path"] = run["path"]
         for count in (1, 0):
             with self.subTest(count=count):
                 with self.assertRaisesRegex(ValueError, "missing required workflow") as failure:
@@ -1431,7 +1605,7 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 run.update(copy.deepcopy(original_run))
                 self.workflow_provenance["CS_100"] = copy.deepcopy(original_provenance)
                 change()
-                with self.assertRaisesRegex(ValueError, "workflow"):
+                with self.assertRaisesRegex((ValueError, RuntimeError), "workflow"):
                     self.prepare()
                 self.assert_read_only_preparation()
 
@@ -1558,26 +1732,35 @@ class GitHubEndorsementTests(EndorsementTestCase):
         for change in (
             lambda result: result.update(errors=[{"message": "permission denied"}]),
             lambda result: result.update(data=None),
-            lambda result: result["data"].update(node=None),
-            lambda result: result["data"]["node"].update(workflowRun=None),
+            lambda result: result["data"].update(repository=None),
+            lambda result: result["data"]["repository"]["object"]["checkSuites"]["nodes"][0].update(
+                workflowRun=None),
+            lambda result: result["data"]["repository"]["object"]["checkSuites"]["nodes"][0][
+                "workflowRun"].update(file=None),
         ):
             with self.subTest(change=change):
                 def api(endpoint, method="GET", data=None):
                     result = self.api(endpoint, method, data)
-                    if endpoint == "graphql" and "EndorsementWorkflowRun" in data["query"]:
+                    if endpoint == "graphql" and "EndorsementCommitWorkflows" in data["query"]:
                         change(result)
                     return result
                 with mock.patch.object(self.helper, "github", side_effect=api):
                     with self.assertRaisesRegex(ValueError, "workflow"):
                         self.prepare()
-        def rerun(endpoint, method="GET", data=None):
-            result = self.api(endpoint, method, data)
-            if endpoint == "repos/example/project/actions/runs/100":
-                result["run_attempt"] += 1
-            return result
-        with mock.patch.object(self.helper, "github", side_effect=rerun):
-            with self.assertRaisesRegex(ValueError, "required workflow changed"):
-                self.prepare()
+        for changed_read in (1, 2):
+            reads = 0
+            def rerun(endpoint, method="GET", data=None):
+                nonlocal reads
+                result = self.api(endpoint, method, data)
+                if endpoint == "repos/example/project/actions/runs/100":
+                    reads += 1
+                    if reads == changed_read:
+                        result["run_attempt"] += 1
+                return result
+            with self.subTest(changed_read=changed_read), mock.patch.object(
+                    self.helper, "github", side_effect=rerun):
+                with self.assertRaisesRegex(ValueError, r"required workflow (?:run )?changed"):
+                    self.prepare()
         self.assert_read_only_preparation()
 
     def readiness_calls(self):

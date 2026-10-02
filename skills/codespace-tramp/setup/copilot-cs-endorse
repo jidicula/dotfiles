@@ -790,6 +790,91 @@ def confirm_ci_revision(request, number, head, branch, *, require_draft=False, a
     return current
 
 
+def commit_workflow_suites(repository, head):
+    """Discover workflow runs through the exact commit, not repository search."""
+    owner, name = repository.split("/")
+    query = """
+        query EndorsementCommitWorkflows(
+          $owner: String!, $name: String!, $head: GitObjectID!, $cursor: String
+        ) {
+          repository(owner: $owner, name: $name) {
+            object(oid: $head) {
+              ... on Commit {
+                oid
+                checkSuites(first: 100, after: $cursor) {
+                  totalCount
+                  nodes {
+                    id
+                    workflowRun {
+                      databaseId runAttempt event
+                      file { path repositoryName repositoryFileUrl }
+                      workflow { databaseId resourcePath }
+                    }
+                  }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            }
+          }
+        }
+    """
+    suites = []
+    seen = set()
+    total = None
+    cursor = None
+    cursors = set()
+    while True:
+        response = github("graphql", "POST", {
+            "query": query,
+            "variables": {"owner": owner, "name": name, "head": head, "cursor": cursor},
+        })
+        require(isinstance(response, dict) and not response.get("errors")
+                and isinstance(response.get("data"), dict)
+                and isinstance(response["data"].get("repository"), dict),
+                "GitHub could not discover required workflows for the exact commit")
+        commit = response["data"]["repository"].get("object")
+        require(isinstance(commit, dict) and commit.get("oid") == head,
+                "workflow check suites do not belong to the expected commit")
+        connection = commit.get("checkSuites")
+        require(isinstance(connection, dict) and isinstance(connection.get("nodes"), list)
+                and type(connection.get("totalCount")) is int and connection["totalCount"] >= 0,
+                "invalid workflow check-suite connection")
+        require(total is None or connection["totalCount"] == total,
+                "workflow check suites changed during discovery")
+        total = connection["totalCount"]
+        for suite in connection["nodes"]:
+            require(isinstance(suite, dict) and isinstance(suite.get("id"), str)
+                    and suite["id"] and suite["id"] not in seen and "workflowRun" in suite,
+                    "invalid or duplicate workflow check suite")
+            seen.add(suite["id"])
+            workflow = suite["workflowRun"]
+            if workflow is None:
+                continue
+            require(isinstance(workflow, dict) and type(workflow.get("databaseId")) is int
+                    and workflow["databaseId"] > 0 and isinstance(workflow.get("event"), str),
+                    "invalid commit workflow identity")
+            if (workflow.get("file") is None
+                    and workflow["event"] not in ("pull_request", "pull_request_target")):
+                continue
+            require(isinstance(workflow.get("file"), dict)
+                    and isinstance(workflow["file"].get("path"), str) and workflow["file"]["path"],
+                    "invalid commit workflow identity")
+            suites.append(suite)
+        page = connection.get("pageInfo")
+        require(isinstance(page, dict) and type(page.get("hasNextPage")) is bool,
+                "invalid workflow check-suite pagination")
+        if not page["hasNextPage"]:
+            break
+        require(connection["nodes"] and len(seen) < total,
+                "incomplete or changing workflow check-suite pagination")
+        cursor = page.get("endCursor")
+        require(isinstance(cursor, str) and cursor and cursor not in cursors,
+                "invalid workflow check-suite pagination cursor")
+        cursors.add(cursor)
+    require(len(seen) == total, "incomplete workflow check-suite discovery")
+    return suites
+
+
 def require_passing_workflows(request, number, head, branch, workflows):
     """Verify required workflow provenance, latest attempts, and the exact PR."""
     repository = request["repository"]
@@ -815,30 +900,22 @@ def require_passing_workflows(request, number, head, branch, workflows):
             sources[source_id] = source["full_name"]
         expected.add((sources[source_id], workflow["path"], sha or ""))
 
-    runs = github_pages(
-        f"repos/{repository}/actions/runs?head_sha={head}&per_page=100", field="workflow_runs")
+    runs = commit_workflow_suites(repository, head)
     latest = {}
     paths = {path for _, path, _ in expected}
     identities = {(repo, path) for repo, path, _ in expected}
     observations = {path: [] for path in paths}
-    query = """
-        query EndorsementWorkflowRun($id: ID!) {
-          node(id: $id) {
-            ... on CheckSuite {
-              workflowRun {
-                databaseId runAttempt event
-                file { path repositoryName repositoryFileUrl }
-                workflow { databaseId resourcePath }
-              }
-            }
-          }
-        }
-    """
-    for candidate in runs:
+    for suite in runs:
+        provenance = suite["workflowRun"]
+        if provenance["file"]["path"] not in paths:
+            continue
+        candidate = github(f"repos/{repository}/actions/runs/{provenance['databaseId']}")
         require(isinstance(candidate, dict) and isinstance(candidate.get("path"), str),
                 "invalid required workflow run")
-        if candidate["path"] not in paths:
-            continue
+        require(candidate.get("id") == provenance["databaseId"]
+                and candidate.get("check_suite_node_id") == suite["id"]
+                and candidate["path"] == provenance["file"]["path"],
+                "required workflow run changed or does not match its commit check suite")
         observation = {
             "run_id": candidate.get("id") if type(candidate.get("id")) is int else None,
             "rejected_by": [],
@@ -874,14 +951,6 @@ def require_passing_workflows(request, number, head, branch, workflows):
                 and type(candidate.get("run_attempt")) is int and candidate["run_attempt"] > 0
                 and isinstance(candidate.get("check_suite_node_id"), str)
                 and candidate["check_suite_node_id"], "invalid required workflow run identity")
-        response = github("graphql", "POST", {
-            "query": query, "variables": {"id": candidate["check_suite_node_id"]},
-        })
-        require(isinstance(response, dict) and not response.get("errors")
-                and isinstance(response.get("data"), dict)
-                and isinstance(response["data"].get("node"), dict),
-                "GitHub could not verify required workflow provenance")
-        provenance = response["data"]["node"].get("workflowRun")
         require(isinstance(provenance, dict)
                 and provenance.get("databaseId") == candidate["id"]
                 and provenance.get("runAttempt") == candidate["run_attempt"]

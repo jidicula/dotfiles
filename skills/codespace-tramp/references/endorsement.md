@@ -40,6 +40,12 @@ and no request. Do not start a remote plan, ask for an endorsement, or forward
 the signing agent while either pre-endorsement gate is blocked. A cached request
 is not a substitute for checking the current revision.
 
+Required workflows are discovered from the exact commit's fully paginated
+check suites, not the repository-wide run search. The gate still verifies the
+enforced workflow source, exact PR and branch, and latest run and attempt.
+Missing, partial, changing or malformed discovery results block the gate;
+an older successful run cannot substitute for a newer failing one.
+
 Preserve previously endorsed commits byte-for-byte. New version 2 plans verify
 existing SSH signatures against the selected endorsement key and retain commits
 whose introduced parents are also retained. Other signers do not count as the
