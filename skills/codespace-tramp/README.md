@@ -4,7 +4,7 @@
 
 The result is a stateful remote development session: Emacs preserves the selected Codespace, open buffers, running processes, and job metadata across Copilot turns, while commands continue running inside the Codespace even if SSH, MCP, or the Copilot session disconnects.
 
-The complete workflow is defined in [`SKILL.md`](SKILL.md): development, required CI, the optional Copilot Code Review loop, human endorsement and signed publication all belong to this skill. Command details live in the [execution](references/emacs-tramp-patterns.md), [CCR](references/copilot-code-review.md) and [endorsement](references/endorsement.md) references. The factory's outer hook and run loop are deliberately not implemented.
+The complete workflow is defined in [`SKILL.md`](SKILL.md): development and Codespace validation, pre-commit rubber-duck review, required CI, the optional Copilot Code Review loop, human endorsement and signed publication all belong to this skill. Command details live in the [execution](references/emacs-tramp-patterns.md), [CCR](references/copilot-code-review.md) and [endorsement](references/endorsement.md) references. The factory's outer hook and run loop are deliberately not implemented.
 
 ## The problem
 
@@ -59,7 +59,7 @@ The main design choices are:
 6. **Separate transport and endorsement identities.** Ordinary SSH pins an approval-free Secretive key with `IdentitiesOnly=yes` and `ForwardAgent=no`. A separate Touch ID-protected key signs reviewed commits only through the endorsement workflow; neither role falls back to an on-disk private key.
 7. **Local GitHub control-plane operations.** The operator's authenticated local `gh` creates and inspects Codespaces and pull requests. Repository commands run remotely; local credentials are never copied into the Codespace.
 8. **Codespace-native language intelligence.** Eglot keeps source buffers local to Emacs while running gopls, Sorbet, or Ruby LSP inside the Codespace over a dedicated Secretive-backed stdio process. Definitions, references, hover information, document symbols, and diagnostics therefore use the repository's remote checkout and dependencies.
-9. **Integrated quality and endorsement gates.** The skill checks required CI, iterates on CCR when available, and requires the operator's exact-revision approval and publication choice. Its runtime reconstructs and signs each introduced commit without flattening merges, dropping empty commits or changing authorship.
+9. **Integrated quality and endorsement gates.** The skill requires Codespace tests/lint followed by independent rubber-duck review before each change commit, checks required CI after publication, iterates on CCR when available, and requires the operator's exact-revision approval and publication choice. Its runtime reconstructs and signs each introduced commit without flattening merges, dropping empty commits or changing authorship.
 
 ## Workflow
 
@@ -74,7 +74,7 @@ When invoked, the skill:
 7. Points the dedicated Emacs runner at the immutable Codespace id and the discovered repository directory under `/workspaces/`.
 8. Uses Codespace-hosted Eglot servers for semantic navigation and diagnostics when working in Ruby or Go.
 9. Makes changes and runs builds, tests, linters, and other repository commands through detached `copilot-cs-*` jobs.
-10. Commits and pushes retained changes unsigned from the Codespace, then uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise. When the task has an issue, the draft description includes a closing reference such as `Closes https://github.com/OWNER/REPO/issues/NUMBER`.
+10. After Codespace tests/lint pass, obtains an independent `rubber-duck` review of the exact proposed change before committing. Review fixes repeat validation and review. Only then commits and pushes unsigned from the Codespace and uses local `gh` to create or update a draft pull request unless the user explicitly requested otherwise. When the task has an issue, the draft description includes a closing reference such as `Closes https://github.com/OWNER/REPO/issues/NUMBER`.
 11. Checks required CI, then addresses, resolves and re-requests CCR until approval or human review is recommended, when CCR is enabled and available. Continues through this skill's human attestation, signing, publication and signed-head CI/readiness gates; a CCR recommendation is never signing consent.
 12. Reuses the same Codespace for review fixes and retains the current phase and receipts for safe resumption. Leaves the Codespace running so its configured idle timeout can stop it.
 
@@ -82,7 +82,7 @@ When invoked, the skill:
 
 The local machine needs:
 
-- GitHub Copilot CLI with skills and MCP support;
+- GitHub Copilot CLI with skills, MCP support and the built-in `rubber-duck` agent;
 - an authenticated [GitHub CLI](https://cli.github.com/);
 - Emacs and `emacsclient`;
 - [`socat`](http://www.dest-unreach.org/socat/);
@@ -213,7 +213,7 @@ The implementation deliberately fails closed:
 - Secretive authentication failures do not fall back to another SSH identity.
 - Agent forwarding is restricted to `copilot-cs-endorse "sign"` after the interactive revision-and-publication prompt. The old unrestricted `copilot-cs-ssh-git` API rejects calls. Planning, verification, pushes, copies, and reattachments do not forward the agent.
 - Agent jobs append process-scoped unsigned Git defaults before commands and after login profiles, preserving other Git configuration and child-process inheritance. Explicit Git flags can override defaults, so the skill also prohibits premature signing and checks initial agent commits. Manual Codespace sessions and local Git defaults are unchanged.
-- CCR and endorsement policy is defined in this skill's [quality gates](SKILL.md#quality-and-endorsement-gates). Unknown CCR availability blocks rather than silently skipping; a completed `COMMENTED` review alone is not approval. The review loop is agent-driven, while the helper independently enforces CI, revision, assignment and signature guards. `check-ci` validates the unsigned draft without reading a signing key or beginning endorsement.
+- Pre-commit rubber-duck, CCR and endorsement policy is defined in this skill's [quality gates](SKILL.md#quality-and-endorsement-gates). The pre-commit gate binds a completed independent review to the validated parent and index tree; changed inputs or missing review results block committing. Unknown CCR availability blocks rather than silently skipping; a completed `COMMENTED` review alone is not approval. The review loops are agent-driven, not Git hooks, while the helper independently enforces CI, revision, assignment and signature guards. `check-ci` validates the unsigned draft without reading a signing key or beginning endorsement.
 - Every endorsement prompt starts with the full draft PR URL on its own line, repeated in ordinary chat immediately before the form so the review link is easy to find in scrollback. Revision details follow the review question, not the link.
 - Every approval binds the head, base, complete introduced commit range, key fingerprint, publication options, and any explicit committer identity. Signing/pushing requires both the exact plan id and the operator's publication choice; none is selected automatically. Existing `-signed` branches are not overwritten.
 - Committer identity is preserved by default. A proposed `--committer-name` / `--committer-email` pair becomes part of the immutable plan and is approved in the same exact-revision endorsement request, never through a separate permission prompt. Only those fields change; authors and timestamps are preserved. Include any verified-email confirmation in that same request. The signing key must be registered for the authenticated operator; GitHub must verify the resulting signatures before finalisation.

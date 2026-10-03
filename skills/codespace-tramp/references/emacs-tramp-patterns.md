@@ -458,9 +458,22 @@ theorising:
 Git operations: `fetch`, `push`, `commit`, `pull`, `cherry-pick`, `revert`,
 `merge`, `rebase`, and `am`. It routes them automatically:
 
+Automatic routing is not approval to commit. First follow the skill's
+[pre-commit gate](../SKILL.md#gate-0---required-pre-commit-rubber-duck-review):
+make the change, run tests/lint in the Codespace, obtain independent rubber-duck
+review, then commit and push. The commit example below assumes that gate passed
+for the unchanged index.
+
 ```elisp
 (copilot-cs-sh "git fetch origin main")
-(copilot-cs-sh "git commit -m 'Update configuration' && git push")
+(copilot-cs-sh "git commit -m 'Update configuration'")
+```
+
+Confirm that the commit's tree and parents match the reviewed candidate before
+the separate push:
+
+```elisp
+(copilot-cs-sh "git push")
 ```
 
 The login shell starts with no positional arguments. This matters because
@@ -534,8 +547,10 @@ same human endorsement gate as every other agent commit.
 ### Exact-revision endorsement
 
 Follow this skill's [quality and endorsement gates](../SKILL.md#quality-and-endorsement-gates),
+starting with validation and rubber-duck review before the first change commit.
+After publishing the unsigned draft, continue with the
 [CCR commands](copilot-code-review.md) and
-[endorsement reference](endorsement.md) after publishing the unsigned draft.
+[endorsement reference](endorsement.md).
 Do not begin signing directly from this execution cookbook. The existing
 `copilot-cs-endorse` runner/helper paths remain unchanged.
 
