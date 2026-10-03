@@ -20,6 +20,13 @@ SIGNING_ALIAS = "~/.ssh/secretive-stormbreaker-github-sep-2026.pub"
 RESULT_PREFIX = "COPILOT_ENDORSEMENT_RESULT "
 OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 PLAN_ID = re.compile(r"[0-9a-f]{64}\Z")
+FAILED_CI_CONCLUSIONS = {
+    "failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale",
+}
+
+
+class RequiredCIFailure(ValueError):
+    """A required check or workflow reported a terminal non-success result."""
 
 
 def require(condition, message):
@@ -100,7 +107,7 @@ def authenticated_operator():
 
 def validate_request(request):
     require(isinstance(request, dict), "expected an endorsement request object")
-    require(type(request.get("version")) is int and request["version"] in (1, 2),
+    require(type(request.get("version")) is int and request["version"] in (1, 2, 3),
             "unsupported endorsement request version")
     require(isinstance(request.get("repository"), str)
             and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]),
@@ -111,6 +118,14 @@ def validate_request(request):
     for field in ("head", "base"):
         require(isinstance(request.get(field), str) and OID.fullmatch(request[field]),
                 f"invalid {field} object id")
+    if request["version"] == 3:
+        merges = request.get("preserve_base_merges")
+        require(isinstance(merges, list) and merges
+                and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in merges)
+                and len(set(merges)) == len(merges), "invalid base-merge preservation request")
+    else:
+        require("preserve_base_merges" not in request,
+                "base-merge preservation requires a version 3 request")
     for field in ("source_branch", "base_branch", "target_branch"):
         require(isinstance(request.get(field), str), f"missing {field}")
         run(["git", "check-ref-format", "refs/heads/" + request[field]])
@@ -261,19 +276,29 @@ def check_ci(repository, number):
     return request
 
 
-def prepare(repository, number, key_path, *, committer=None):
+def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=()):
     request = check_ci(repository, number)
     source = request["source_branch"]
     key = public_key(Path(key_path).expanduser().read_text())
     request.update(
-        version=2, target_branch=source + "-signed",
+        version=3 if preserve_base_merges else 2, target_branch=source + "-signed",
         publication_options=["replacement"] + (
             ["replace"] if replacement_allowed(repository, source) else []),
         key=key, fingerprint=fingerprint(key), attestor=authenticated_operator(),
     )
     if committer is not None:
         request["committer"] = committer
+    if preserve_base_merges:
+        request["preserve_base_merges"] = list(preserve_base_merges)
     validate_request(request)
+    if preserve_base_merges:
+        metadata = github(f"repos/{repository}")
+        require(isinstance(metadata, dict) and metadata.get("default_branch") == request["base_branch"],
+                "base-merge preservation requires the repository's default branch")
+        for oid in request["preserve_base_merges"]:
+            verify_github_base_merge(
+                request, oid, github(f"repos/{repository}/git/commits/{oid}"))
+        confirm_ci_revision(request, number, request["head"], source, require_draft=True)
     if committer is not None:
         keys = github_pages("users/" + quote(request["attestor"], safe="")
                             + "/ssh_signing_keys?per_page=100")
@@ -384,11 +409,19 @@ class Repository:
     def preserved_commits(self, request, commits):
         introduced = set(commits)
         preserved = set()
+        base_merges = set(request.get("preserve_base_merges", []))
+        require(base_merges <= introduced, "requested base-merge is outside the reviewed range")
         for oid in commits:
             blocks, _ = self.commit(oid)
             parents = [block[7:].decode("ascii") for block in blocks
                        if block.startswith(b"parent ")]
             if any(parent in introduced and parent not in preserved for parent in parents):
+                continue
+            if oid in base_merges:
+                require(len(parents) == 2 and parents[0] in preserved,
+                        "base-merge must extend preserved first-parent history")
+                self.verify_base_merge(request, oid)
+                preserved.add(oid)
                 continue
             signatures = [block[7:].replace(b"\n ", b"\n") + b"\n"
                           for block in blocks if block.startswith(b"gpgsig ")]
@@ -399,7 +432,24 @@ class Repository:
                 continue
             verify_signature(request["key"], self.payload(oid, {}), signatures[0])
             preserved.add(oid)
+        require(base_merges <= preserved, "base-merge depends on history requiring endorsement")
         return [oid for oid in commits if oid in preserved]
+
+    def verify_base_merge(self, request, oid):
+        blocks, _ = self.commit(oid)
+        parents = [block[7:].decode("ascii") for block in blocks if block.startswith(b"parent ")]
+        trees = [block[5:].decode("ascii") for block in blocks if block.startswith(b"tree ")]
+        committers = [block for block in blocks if block.startswith(b"committer ")]
+        signatures = [block for block in blocks if block.startswith(b"gpgsig ")]
+        require(len(parents) == 2 and len(set(parents)) == 2 and len(trees) == 1
+                and len(committers) == 1
+                and committers[0].startswith(b"committer GitHub <noreply@github.com> ")
+                and len(signatures) == 1,
+                "base-merge must be a signed, two-parent GitHub merge")
+        require(self.git("merge-base", parents[1], request["base"]).decode().strip() == parents[1],
+                "base-merge second parent is not in the recorded base history")
+        merged = self.git("merge-tree", "--write-tree", *parents).decode().strip()
+        require(merged == trees[0], "base-merge tree differs from the clean merge of its parents")
 
     def commit(self, oid):
         require(isinstance(oid, str) and OID.fullmatch(oid), "invalid commit object id")
@@ -460,10 +510,11 @@ class Repository:
         reviewed_plan_request(plan, plan_id)
         require(plan["root"] == self.root, "select the worktree where this plan was reviewed")
         require(plan["commits"] == self.commits(plan["request"]), "reviewed commit range changed")
-        if plan["request"]["version"] == 2:
-            require(plan["preserved_commits"] ==
+        if plan["request"]["version"] >= 2:
+            retained = retained_commits(plan)
+            require([oid for oid in plan["commits"] if oid in retained] ==
                     self.preserved_commits(plan["request"], plan["commits"]),
-                    "previously endorsed commit selection changed")
+                    "preserved history selection changed")
         return plan
 
     def plan(self, request):
@@ -477,10 +528,15 @@ class Repository:
         for oid in commits:
             self.commit(oid)
         plan = {"request": request, "root": self.root, "commits": commits}
-        if request["version"] == 2:
-            plan["preserved_commits"] = self.preserved_commits(request, commits)
-            require(len(plan["preserved_commits"]) < len(commits),
-                    "no new commits require endorsement; resume the prior receipt instead")
+        if request["version"] >= 2:
+            preserved = self.preserved_commits(request, commits)
+            base_merges = set(request.get("preserve_base_merges", []))
+            plan["preserved_commits"] = [oid for oid in preserved if oid not in base_merges]
+            if request["version"] == 3:
+                plan["preserved_base_merges"] = [oid for oid in preserved if oid in base_merges]
+            require(len(preserved) < len(commits),
+                    "no new commits require endorsement; use the verified base-update procedure "
+                    "or resume a matching receipt")
         plan_id = digest(plan)
         target = "refs/heads/" + request["target_branch"]
         exists = self.git("for-each-ref", "--format=%(refname)", target).decode().splitlines()
@@ -499,9 +555,9 @@ class Repository:
         mapping = receipt["mapping"]
         require(isinstance(mapping, dict) and set(mapping) == set(plan["commits"]),
                 "signed commit mapping is incomplete")
-        preserved = set(plan.get("preserved_commits", []))
+        preserved = retained_commits(plan)
         require(all(mapping[oid] == oid for oid in preserved),
-                "previously endorsed commits must remain unchanged")
+                "preserved commits and base-merges must remain unchanged")
         for index, original in enumerate(plan["commits"], 1):
             print(f"[copilot-cs-endorse] verifying {index}/{len(plan['commits'])}: {original}",
                   flush=True)
@@ -510,6 +566,8 @@ class Repository:
                     self.payload(original, mapping,
                                  None if original in preserved else plan["request"].get("committer")),
                     f"signed commit content or metadata differs: {original}")
+            if original in plan.get("preserved_base_merges", []):
+                continue
             blocks, _ = self.commit(signed)
             signatures = [block[7:].replace(b"\n ", b"\n") + b"\n"
                           for block in blocks if block.startswith(b"gpgsig ")]
@@ -552,7 +610,8 @@ class Repository:
                 socket = os.environ.get("COPILOT_CS_SIGNING_SOCKET", "")
                 require(socket and Path(socket).is_socket(), "forwarded Secretive socket is unavailable")
                 environment = dict(self.env, SSH_AUTH_SOCK=socket)
-                mapping = {oid: oid for oid in plan.get("preserved_commits", [])}
+                retained = retained_commits(plan)
+                mapping = {oid: oid for oid in plan["commits"] if oid in retained}
                 pending = [oid for oid in plan["commits"] if oid not in mapping]
                 with tempfile.TemporaryDirectory(prefix="copilot-endorse-") as directory:
                     key_file = Path(directory) / "endorsement.pub"
@@ -610,10 +669,12 @@ class Repository:
             return receipt
 
 
-def signed_commit(payload, signature):
+def signed_commit(payload, signature, *, preserve_signature_newline=False):
     header, separator, message = payload.partition(b"\n\n")
     require(separator, "invalid signed commit payload")
-    return (header + b"\ngpgsig " + signature.rstrip(b"\n").replace(b"\n", b"\n ")
+    if not preserve_signature_newline:
+        signature = signature.rstrip(b"\n")
+    return (header + b"\ngpgsig " + signature.replace(b"\n", b"\n ")
             + b"\n\n" + message)
 
 
@@ -647,6 +708,55 @@ def verify_signature(key, payload, signature):
              "-I", "endorser", "-n", "git", "-s", str(signed)], data=payload)
 
 
+def verify_github_commit(oid, commit, key):
+    require(isinstance(commit, dict) and commit.get("sha") == oid,
+            "GitHub returned a different commit object")
+    verification = commit.get("verification")
+    require(isinstance(verification, dict) and verification.get("verified") is True
+            and isinstance(verification.get("signature"), str) and verification["signature"]
+            and isinstance(verification.get("payload"), str) and verification["payload"],
+            "GitHub has not verified the endorsement; check signing-key registration")
+    payload, signature = verification["payload"].encode(), verification["signature"].encode()
+    if key is not None:
+        verify_signature(key, payload, signature)
+    candidates = [signed_commit(payload, signature)]
+    if key is None:
+        # GitHub can retain the signature's final newline as an empty continuation.
+        candidates.append(signed_commit(payload, signature, preserve_signature_newline=True))
+    hasher = hashlib.sha1 if len(oid) == 40 else hashlib.sha256
+    require(any(hasher(b"commit " + str(len(raw)).encode() + b"\0" + raw).hexdigest() == oid
+                for raw in candidates),
+            "GitHub signature payload does not match the signed object")
+
+
+def verify_github_base_merge(request, oid, commit):
+    require(isinstance(commit, dict) and isinstance(commit.get("committer"), dict)
+            and commit["committer"].get("name") == "GitHub"
+            and commit["committer"].get("email") == "noreply@github.com"
+            and isinstance(commit.get("parents"), list) and len(commit["parents"]) == 2
+            and all(isinstance(parent, dict) and isinstance(parent.get("sha"), str)
+                    and OID.fullmatch(parent["sha"]) for parent in commit["parents"])
+            and commit["parents"][0]["sha"] != commit["parents"][1]["sha"],
+            "base-merge must be a signed, two-parent GitHub merge")
+    verify_github_commit(oid, commit, None)
+    require(commit["verification"].get("reason") == "valid",
+            "GitHub base-merge signature verification is not valid")
+    parent = commit["parents"][1]["sha"]
+    if parent != request["base"]:
+        comparison = github(
+            f"repos/{request['repository']}/compare/{parent}...{request['base']}?per_page=1")
+        require(isinstance(comparison, dict) and comparison.get("status") == "ahead"
+                and isinstance(comparison.get("base_commit"), dict)
+                and comparison["base_commit"].get("sha") == parent
+                and isinstance(comparison.get("merge_base_commit"), dict)
+                and comparison["merge_base_commit"].get("sha") == parent,
+                "GitHub base-merge second parent is not a confirmed ancestor of the recorded base")
+
+
+def retained_commits(plan):
+    return set(plan.get("preserved_commits", [])) | set(plan.get("preserved_base_merges", []))
+
+
 def approved_publication(plan_id, request, approval):
     for publication in request["publication_options"]:
         if approval == f"{plan_id}:{publication}":
@@ -666,7 +776,7 @@ def reviewed_plan_request(plan, plan_id):
             and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in commits)
             and len(set(commits)) == len(commits) and commits[-1] == request["head"],
             "invalid reviewed commit range")
-    if request["version"] == 2:
+    if request["version"] >= 2:
         preserved = plan.get("preserved_commits")
         require(isinstance(preserved, list)
                 and all(isinstance(oid, str) for oid in preserved)
@@ -676,6 +786,18 @@ def reviewed_plan_request(plan, plan_id):
     else:
         require("preserved_commits" not in plan,
                 "incremental endorsement requires a version 2 request")
+    if request["version"] == 3:
+        base_merges = plan.get("preserved_base_merges")
+        expected = set(request["preserve_base_merges"])
+        require(isinstance(base_merges, list)
+                and base_merges == [oid for oid in commits if oid in expected]
+                and set(base_merges) == expected
+                and not expected.intersection(preserved)
+                and len(retained_commits(plan)) < len(commits),
+                "invalid preserved base-merge selection")
+    else:
+        require("preserved_base_merges" not in plan,
+                "base-merge preservation requires a version 3 request")
     return request
 
 
@@ -690,8 +812,8 @@ def signed_receipt_request(receipt, approval):
             and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in mapping.values())
             and receipt.get("head") == mapping.get(request["head"]),
             "incomplete signed commit receipt")
-    require(all(mapping[oid] == oid for oid in receipt["plan"].get("preserved_commits", [])),
-            "previously endorsed commits must remain unchanged")
+    require(all(mapping[oid] == oid for oid in retained_commits(receipt["plan"])),
+            "preserved commits and base-merges must remain unchanged")
     return request, publication
 
 
@@ -975,6 +1097,8 @@ def require_passing_workflows(request, number, head, branch, workflows):
         if key not in latest or candidate["id"] > latest[key][0]["id"]:
             latest[key] = (candidate, source)
 
+    failures = []
+    failed = False
     for source_repository, path, sha in sorted(expected):
         key = (source_repository, path)
         label = f"{source_repository}/{path}"
@@ -1001,9 +1125,14 @@ def require_passing_workflows(request, number, head, branch, workflows):
                 "id", "workflow_id", "workflow_url", "check_suite_node_id", "run_attempt",
                 "head_sha", "head_branch", "event", "path", "repository", "pull_requests")),
             f"required workflow changed for {label}; quality gate blocked")
-        require(current.get("status") == "completed" and current.get("conclusion") == "success",
-                f"required workflow is not succeeding for {label}: "
-                f"{current.get('conclusion') or current.get('status')}; quality gate blocked")
+        status, conclusion = current.get("status"), current.get("conclusion")
+        if status != "completed" or conclusion != "success":
+            failures.append(f"required workflow is not succeeding for {label}: {conclusion or status}")
+            failed |= (status == "completed" and isinstance(conclusion, str)
+                       and conclusion in FAILED_CI_CONCLUSIONS | {"neutral", "skipped"})
+    if failures:
+        error_type = RequiredCIFailure if failed else ValueError
+        raise error_type("; ".join(failures) + "; quality gate blocked")
 
 
 def require_passing_checks(request, number, head, branch, *, require_draft=False):
@@ -1071,6 +1200,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     """
     reported = set()
     failures = []
+    failed = False
     cursor = None
     cursors = set()
     while True:
@@ -1122,10 +1252,14 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                           and check["conclusion"] in ("SUCCESS", "NEUTRAL", "SKIPPED"))
                 state = (check["conclusion"] or check["status"]
                          if check["status"] == "COMPLETED" else check["status"])
+                failed |= (check["status"] == "COMPLETED"
+                           and isinstance(check["conclusion"], str)
+                           and check["conclusion"].lower() in FAILED_CI_CONCLUSIONS)
             else:
                 require(check["__typename"] == "StatusContext", "unknown required CI result type")
                 name, state = check["context"], check["state"]
                 passed = state == "SUCCESS"
+                failed |= state in ("FAILURE", "ERROR")
             require(isinstance(name, str) and name, "missing required CI check name")
             reported.add(name)
             if not passed:
@@ -1140,12 +1274,14 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 "invalid CI pagination cursor")
         cursors.add(cursor)
 
-    require(not expected - reported,
-            f"missing required CI checks for {url}: {', '.join(sorted(expected - reported))}; quality gate blocked")
-    require(not failures,
-            f"required CI is not succeeding for {url}: {'; '.join(failures)}; quality gate blocked")
+    message = f"required CI is not succeeding for {url}: {'; '.join(failures)}; quality gate blocked"
+    if failed:
+        raise RequiredCIFailure(message)
     if workflows:
         require_passing_workflows(request, number, head, branch, workflows)
+    require(not expected - reported,
+            f"missing required CI checks for {url}: {', '.join(sorted(expected - reported))}; quality gate blocked")
+    require(not failures, message)
     require(reported or workflows,
             f"no required CI checks reported for {url}; quality gate blocked")
     return confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
@@ -1153,7 +1289,39 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
 
 def ready_for_review(request, number, head, branch):
     """Promote only the verified signed revision with passing required CI."""
-    pr = require_passing_checks(request, number, head, branch)
+    def verify_ci():
+        try:
+            return require_passing_checks(request, number, head, branch)
+        except RequiredCIFailure as failure:
+            current = confirm_ci_revision(request, number, head, branch)
+            if current["draft"]:
+                raise
+            response = github("graphql", "POST", {
+                "query": """
+                    mutation EndorsementReturnToDraft($id: ID!) {
+                      convertPullRequestToDraft(input: {pullRequestId: $id}) {
+                        pullRequest { id isDraft }
+                      }
+                    }
+                """,
+                "variables": {"id": current["node_id"]},
+            })
+            require(isinstance(response, dict) and not response.get("errors"),
+                    "GitHub did not confirm the draft rollback")
+            require(isinstance(response.get("data"), dict)
+                    and isinstance(response["data"].get("convertPullRequestToDraft"), dict),
+                    "draft rollback not confirmed")
+            updated = response["data"]["convertPullRequestToDraft"].get("pullRequest")
+            require(isinstance(updated, dict)
+                    and updated.get("id") == current["node_id"] and updated.get("isDraft") is True,
+                    "draft rollback not confirmed")
+            restored = confirm_ci_revision(request, number, head, branch)
+            require(restored["draft"] is True, "draft rollback not confirmed")
+            raise RequiredCIFailure(
+                f"{failure}; returned the unchanged signed PR to draft: {restored['html_url']}"
+            ) from failure
+
+    pr = verify_ci()
     attestor = request.get("attestor")
     require(attestor is None or attestor.casefold() not in assignee_logins(pr),
             "attestor is still assigned; clear the attestation wait before readiness")
@@ -1177,11 +1345,13 @@ def ready_for_review(request, number, head, branch):
         require(isinstance(updated, dict)
                 and updated["id"] == pr["node_id"] and updated["isDraft"] is False,
                 "ready-for-review transition not confirmed")
+        verify_ci()
     current = confirm_ci_revision(request, number, head, branch)
     require(current["draft"] is False, "ready-for-review transition not confirmed")
     require(attestor is None or attestor.casefold() not in assignee_logins(current),
             "attestor was assigned during the ready-for-review transition")
-    return {"url": pr["html_url"], "head": head, "ready_for_review": True}
+    return {"url": pr["html_url"], "head": head, "ready_for_review": True,
+            "ci_scope": "observed_required_checks"}
 
 
 def finish(receipt, approval):
@@ -1215,7 +1385,7 @@ def finish(receipt, approval):
     confirm_base_compatibility(request, merge_pr)
     branch = github(f"repos/{repository}/branches/{quote(target, safe='')}")
     require(branch["commit"]["sha"] == receipt["head"], "published signed branch changed")
-    preserved = set(plan.get("preserved_commits", []))
+    preserved = retained_commits(plan)
     for original in plan["commits"]:
         before = github(f"repos/{repository}/git/commits/{original}")
         after = github(f"repos/{repository}/git/commits/{receipt['mapping'][original]}")
@@ -1228,15 +1398,12 @@ def finish(receipt, approval):
                 and [receipt["mapping"].get(parent["sha"], parent["sha"]) for parent in before["parents"]]
                 == [parent["sha"] for parent in after["parents"]],
                 f"published commit differs from reviewed commit: {original}")
-        verification = after["verification"]
-        require(verification["verified"] and verification.get("signature") and verification.get("payload"),
-                "GitHub has not verified the endorsement; check signing-key registration")
-        verify_signature(request["key"], verification["payload"].encode(),
-                         verification["signature"].encode())
-        raw = signed_commit(verification["payload"].encode(), verification["signature"].encode())
-        hasher = hashlib.sha1 if len(receipt["mapping"][original]) == 40 else hashlib.sha256
-        require(hasher(b"commit " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
-                == receipt["mapping"][original], "GitHub signature payload does not match the signed object")
+        if original in plan.get("preserved_base_merges", []):
+            verify_github_base_merge(request, original, after)
+            require(after["parents"][0]["sha"] in preserved,
+                    "base-merge does not extend preserved first-parent history")
+        else:
+            verify_github_commit(receipt["mapping"][original], after, request["key"])
     confirm_base_compatibility(request, merge_pr)
     if "attestor" in request:
         updated = set_attestation_assignment(
@@ -1294,8 +1461,11 @@ def finish(receipt, approval):
         return latest
 
     confirm_drafts()
+    preservation = (" Preserved GitHub base-only merges retain their original signatures."
+                    if plan.get("preserved_base_merges") else "")
+    signing_scope = "with new work signed" if plan.get("preserved_base_merges") else "signed"
     comment = (f"Superseded by {replacement['html_url']}, containing the reviewed commit range "
-               f"signed with the endorsement key `{request['fingerprint']}`. {marker}")
+               f"{signing_scope} with the endorsement key `{request['fingerprint']}`.{preservation} {marker}")
     comments = github_pages(f"repos/{repository}/issues/{request['pr']}/comments?per_page=100")
     if not any(item["body"] == comment for item in comments):
         github(f"repos/{repository}/issues/{request['pr']}/comments", "POST", {"body": comment})
@@ -1320,6 +1490,9 @@ def main():
     prepare_parser.add_argument("--key", default=os.environ.get("COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY", SIGNING_ALIAS))
     prepare_parser.add_argument("--committer-name")
     prepare_parser.add_argument("--committer-email")
+    prepare_parser.add_argument(
+        "--preserve-base-merge", action="append", default=[], metavar="OID",
+        help="preserve this verified GitHub default-branch merge without endorsing it again")
     plan_parser = actions.add_parser("plan", help="CODESPACE: freeze the commit range for human review")
     plan_parser.add_argument("--request", required=True)
     awaiting_parser = actions.add_parser(
@@ -1362,7 +1535,8 @@ def main():
                     "provide both committer name and email")
             committer = ({"name": args.committer_name, "email": args.committer_email}
                          if args.committer_name is not None else None)
-            result = prepare(args.repo, args.pr, args.key, committer=committer)
+            result = prepare(args.repo, args.pr, args.key, committer=committer,
+                             preserve_base_merges=args.preserve_base_merge)
         elif args.action in ("await-attestation", "complete-attestation"):
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub attestation tracking locally with the operator's authenticated gh")

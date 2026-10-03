@@ -892,6 +892,15 @@ check it out here (or confirm Step 4 already created the Codespace on it).
 
 ## Step 6 — Validate, publish, and clean up
 
+- When an existing PR needs updating against the repository's default branch,
+  try GitHub's update-branch API first, guarded by the current `expected_head_sha`,
+  then fetch and fast-forward the checkout inside its Codespace. Preserve
+  already-endorsed commits rather than rebasing and re-signing them. A verified
+  base-only API merge does not require another endorsement; conflicts, unexpected
+  source changes or new agent-written code do. Follow the
+  [API-first base-update procedure](references/endorsement.md#updating-an-endorsed-pr-from-the-default-branch);
+  never silently fall back to a local merge/rebase or reuse an old receipt for a
+  different head.
 - After changing the base branch or refreshing an older Codespace, recheck
   the repository's dependency/bootstrap readiness before validation or pushing.
   `Available` describes the container, not its dependencies. A successful push
@@ -1066,6 +1075,23 @@ Use bounded read-only polling for pending CI. Fix failures through the existing
 Codespace workflow, keeping commits unsigned and the PR in draft. Do not
 prepare a plan, ask for attestation, or request signatures.
 
+If required contexts are absent after a push, inspect the exact run's trigger,
+PR association and job conditions before changing commits or retrying. Check
+whether the same event payload would repeat the skip; a commit timestamp is not
+the time its branch was pushed, especially after timestamp-preserving endorsement.
+Use a supported recovery that produces visible checks on the exact head, and
+repeat the CI gate afterwards.
+
+`workflow_dispatch` suites are hidden from GitHub's PR/commit check rollups.
+Their successful jobs can provide diagnostic evidence, but do not satisfy
+missing required status checks, even when individual check runs report
+`isRequired: true`. Do not substitute those hidden results for the rollup,
+fabricate checks, weaken required-check policy or rewrite commits merely to
+retrigger CI. If the PR needs a default-branch update, use the
+[verified API-only base-update protocol](references/endorsement.md#updating-an-endorsed-pr-from-the-default-branch)
+instead of re-signing existing commits. Otherwise preserve the blocked draft
+and seek an operator-approved recovery.
+
 #### Gate 2 - optional Copilot Code Review
 
 Read the [CCR command reference](references/copilot-code-review.md) before
@@ -1161,6 +1187,10 @@ complete protocol:
    Save the complete planning result using the reference's persisted-record
    transfer, not manual JSON transcription. Version 2 plans preserve verified
    prior endorsements and record their unchanged IDs in `preserved_commits`.
+   For subsequent work above a verified API-only default-branch merge, use the
+   reference's explicit `--preserve-base-merge` preparation option. Its version 3
+   plan separately records `preserved_base_merges`; these are not operator
+   endorsements. Both lists retain their original IDs, metadata and signatures.
    Sign only the remaining commits; never reinterpret an older plan's scope.
    Preserve committer metadata by default.
    If an override is needed, include the proposed name/email in `prepare` so
@@ -1179,6 +1209,7 @@ complete protocol:
    recommendation and unresolved findings; explain an unavailable CCR gate.
    Show the exact head and recorded base OIDs, commit count/range, key fingerprint, plan ID,
    the new signing count and IDs, the preserved commit IDs,
+   any separately preserved GitHub base-only merge IDs,
    any proposed committer change (existing identities and proposed name/email)
    and material validation limitations. State that endorsement also approves
    the shown metadata change. Include any required verified-email confirmation
@@ -1213,14 +1244,40 @@ confirmed attestor unassignment permit marking that PR ready for review.
 Old CCR reviews and discussions do not migrate to a replacement PR or count as
 formal approval of its new OIDs; retain their links with the verified mapping.
 
+Readiness can itself trigger new CI. Before `finish`, inspect the repository's
+workflow triggers and record the signed head's existing run IDs. Afterwards,
+wait for applicable `ready_for_review` runs to appear, retain their exact IDs
+and attempts, and monitor them and the required checks to completion. Do not
+mistake an initially empty run listing, older skipped checks or
+`ready_for_review: true` for completion of that monitoring. `finish` reports
+only the required checks it observed, not a guarantee about later runs.
+
+While readiness-triggered checks are pending, keep the task in
+`readiness-ci-pending` and preserve its receipt. Use bounded read-only polling;
+if the wait expires or discovery is unavailable, record the unresolved monitoring
+state rather than declaring readiness complete. Do not start another readiness
+transition or repeatedly rerun workflows to obtain a different result.
+
+If a required check fails, rerun the same `finish` with the saved receipt and
+approval. It rechecks the failure and exact head/base before returning the
+unchanged signed PR to draft, and verifies that rollback. Pending checks or
+unreadable policy do not trigger rollback. A changed head/base or an unconfirmed
+rollback is a blocker for the operator, never permission to demote a different
+revision or replay publication. After the identified runs complete, repeat
+`finish` once for a fresh gate; report an actionable failure instead of a
+completed task if it remains blocked.
+
 For pending signed-head CI, preserve the published draft and receipt. Inspect
 the resulting PR with local `gh`, poll read-only, then repeat only the same
 `finish --receipt ... --approve-plan ...`. Do not sign/push again, create a
-duplicate or bypass readiness with `gh pr ready`. A changed head, retargeted
-base or rewritten base history requires new quality-gate evidence and a new
-human plan/answer. A clean base advance reuses the existing plan, approval and
-signatures; do not rebase, merge into the source branch or re-sign just to update
-its base. If mergeability is pending, retry the same operation after it settles.
+duplicate or bypass readiness with `gh pr ready`. Outside the verified API-only
+base-update exception, a changed head, retargeted base or rewritten base history
+requires new quality-gate evidence and a new human plan/answer.
+A clean base advance reuses the existing plan, approval and
+signatures; it does not itself require updating the source branch. When an
+already-endorsed PR does need a base update, use the API-first procedure above
+instead of rebasing or re-signing its reviewed commits. If mergeability is
+pending, retry the same operation after it settles.
 
 #### Result and resumption
 
@@ -1230,9 +1287,9 @@ review ID/URL/recommendation, unresolved findings, validation/CI state, current
 phase and any plan/receipt/job paths. Do not include credentials or treat an
 approval token as proof of consent.
 
-Distinguish `blocked`, `awaiting-attestation`, `unendorsed`, `signed-ci-pending`
-and `ready`. A human-review recommendation remains explicit in that result;
-it is not a success-shaped substitute for an endorsement. On resume, inspect
+Distinguish `blocked`, `awaiting-attestation`, `unendorsed`, `signed-ci-pending`,
+`readiness-ci-pending` and `ready`. A human-review recommendation remains explicit
+in that result; it is not a success-shaped substitute for an endorsement. On resume, inspect
 the saved operation and current remote state before continuing. Do not
 replay a review request, signature or publication because the session restarted.
 

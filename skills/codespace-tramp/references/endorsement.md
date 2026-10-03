@@ -59,6 +59,21 @@ Version 1 plans and receipts retain their original full-range signing semantics.
 Never edit an old plan, convert its version or reuse its approval for a new scope.
 Older helpers reject version 2 rather than silently rewriting preserved commits.
 
+For later work above a verified GitHub default-branch update, explicitly include
+`--preserve-base-merge "<merge-OID>"` in `prepare`; repeat the option for each
+base-only merge to retain. Preparation checks GitHub's verified signature and
+exact object, the default branch, and second-parent ancestry. Planning requires
+a preserved first parent and recomputes the clean merge tree. Conflict resolution,
+extra content, unsigned merges and unrelated history cannot use this exception.
+
+This opt-in creates a version 3 request. Its plan records `preserved_base_merges`
+separately from operator-endorsed `preserved_commits`; both keep their exact OIDs,
+metadata and signatures. The former are verified base updates, **not** the
+operator's endorsement. Signing covers only the remaining commits, and
+finalisation independently rechecks GitHub's base-merge verification. Existing
+version 1/2 plans retain their original semantics; never edit or upgrade one.
+Older helpers reject version 3 instead of silently dropping the exception.
+
 Preserve committer identity on new commits by default. If an override is needed,
 pass `--committer-name "<name>" --committer-email "<email>"` to `prepare` as a
 proposal, without a separate permission prompt. Both values are required and
@@ -152,6 +167,55 @@ retargeted base, rewind or rewritten base history still requires a new plan and
 human decision. Do not merge or rebase the source merely to track a clean advance.
 Current required CI, including signed-head CI before readiness, remains mandatory.
 
+## Updating an endorsed PR from the default branch
+
+When a PR needs an explicit update from the repository's default branch, prefer
+GitHub's update-branch API over a Codespace merge or rebase. A default-branch
+advance alone does not require updating the PR or repeating endorsement.
+
+First confirm that the PR still targets the repository's current default branch,
+record its published head and the default-branch OID, and preserve any Codespace
+WIP. Complete any pending exact-head endorsement/publication first; do not change
+the source underneath an outstanding plan or signed receipt.
+
+Use the local authenticated CLI for the control-plane operation, with the
+just-observed head as the concurrency guard:
+
+```sh
+gh api --method PUT "repos/$NWO/pulls/$PR_NUMBER/update-branch" \
+  -f expected_head_sha="$HEAD_OID"
+```
+
+An accepted response is not proof that the asynchronous update completed. Read
+back the same PR until the outcome is known. On conflicts, a stale head, denied
+access or an unconfirmed outcome, stop and inspect rather than replaying the
+mutation, refreshing its expected head or silently switching to a local
+merge/rebase.
+
+Fetch the updated branch through the Codespace runner. Verify that the only new
+source commit is the API-created merge: its first parent is the recorded PR head,
+its other parent belongs to the same default branch, and its tree matches a clean
+merge of those parents. If the default branch advanced during the request, verify
+that ancestry rather than accepting an unrelated second parent. Existing endorsed
+commit OIDs and signatures must remain unchanged.
+
+Then fast-forward a clean, matching Codespace checkout to that verified head,
+using `git merge --ff-only` after the fetch, or `git pull --ff-only` with an
+explicit remote/branch and an exact-head readback. Do not reset a dirty checkout
+or the deliberately retained unsigned source branch from an in-place endorsement;
+use a matching checkout or stop for an operator decision.
+
+This verified, base-only API merge does not need another human endorsement gate.
+It preserves the endorsements of the existing commits; GitHub's new merge commit
+is not a new Secretive signature or proof that the operator endorsed its OID.
+Record the old/new heads and merged default revision separately, and require CI
+on the updated head. For a required-CI failure on this base-only update, use that
+record to recheck the exact head/base before an API draft rollback and verify the
+result afterwards; the old endorsement receipt cannot guard the new head.
+Never edit the old plan/receipt or pass it to `finish` as
+proof of the new head. Unexpected commits, conflict resolution, agent-written
+changes or history rewriting return to the normal review and endorsement gates.
+
 ## Assign and request human attestation
 
 Transfer the successful plan's persisted record into this session's files area;
@@ -206,6 +270,8 @@ Show head/base OIDs, commit count/range, key fingerprint, plan ID, any proposed
 committer change and material validation limitations below the question.
 Distinguish the complete reviewed range from the commits requiring signatures,
 and explicitly list the previously endorsed commits that retain their IDs.
+Also list any `preserved_base_merges` separately as verified GitHub base-only
+updates, not operator endorsements. Exclude both lists from the signature count.
 For a committer proposal, show the existing identities and proposed name/email,
 confirm that authors and timestamps stay unchanged, and state that endorsement
 also approves this change. Include any verified-email confirmation here.
@@ -354,11 +420,27 @@ superseded successes, partial pagination and unreadable provenance cannot pass.
 These rules also apply before endorsement; there is no manual-success override.
 
 Only after verification, passing CI and attestor unassignment does `finish`
-mark the signed PR ready and confirm its head/base, assignment and ready state.
-Its success JSON contains `ready_for_review: true`. GitHub metadata/readiness
+mark the signed PR ready, recheck visible required CI, and confirm its head/base,
+assignment and ready state. Its success JSON contains `ready_for_review: true`
+and `ci_scope: "observed_required_checks"`: this is a point-in-time observation,
+not a promise that later runs will pass. GitHub metadata/readiness
 mutations have no expected-head lease; surrounding checks detect races but
 cannot make them atomic. Coordinate with other branch writers and stop on
 changed state.
+
+Follow the skill's post-readiness monitoring gate. Record the pre-transition run
+IDs, inspect applicable `ready_for_review` triggers, and wait for those new runs
+and their required checks to finish. Older skipped checks and an empty initial
+listing do not establish that a delayed readiness-triggered run has completed.
+Retain exact run IDs/attempts and the receipt when a bounded wait expires.
+
+On a terminal required-check or enforced-workflow failure, rerunning `finish`
+returns the same signed PR to draft only after fresh head/base checks, confirms
+the rollback and exits nonzero with the failure. It also catches failures visible
+during the readiness transition. Pending or malformed results, unavailable
+policy and revision changes block completion without triggering rollback.
+Never re-sign or re-publish to handle a readiness-triggered failure. GitHub's
+draft mutation has no head lease either; a failed confirmation requires inspection.
 
 Pending readiness is an explicit nonzero result, not a failed publication.
 The signed draft and receipt remain usable; a verified replacement's original
@@ -369,8 +451,9 @@ gh pr checks "$SIGNED_PR_URL" -R "$NWO" --required
 ```
 
 Poll read-only with a bounded wait, then rerun the same local `finish` after
-checks pass. Never re-sign, re-push, demote an unchanged already-ready PR, create
-a duplicate or bypass readiness with `gh pr ready`. The local source ref
+checks pass or when a required check fails. Do not manually demote a PR around the
+helper's revision guards, re-sign, re-push, create a duplicate or bypass readiness
+with `gh pr ready`. The local source ref
 intentionally remains unsigned after an in-place publication; do not reset it.
 
 Same-repository github.com drafts and complete history are currently supported.
