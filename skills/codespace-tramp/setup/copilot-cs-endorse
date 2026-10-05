@@ -107,8 +107,13 @@ def authenticated_operator():
 
 def validate_request(request):
     require(isinstance(request, dict), "expected an endorsement request object")
-    require(type(request.get("version")) is int and request["version"] in (1, 2, 3),
+    require(type(request.get("version")) is int and request["version"] in (1, 2, 3, 4),
             "unsupported endorsement request version")
+    if request["version"] == 4:
+        require(request.get("ci_exception") == "no_required_ci" and "attestor" in request,
+                "version 4 requires an explicit no-required-CI exception and attestor")
+    else:
+        require("ci_exception" not in request, "CI exceptions require a version 4 request")
     require(isinstance(request.get("repository"), str)
             and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]),
             "invalid repository")
@@ -118,14 +123,13 @@ def validate_request(request):
     for field in ("head", "base"):
         require(isinstance(request.get(field), str) and OID.fullmatch(request[field]),
                 f"invalid {field} object id")
-    if request["version"] == 3:
+    if request["version"] == 3 or "preserve_base_merges" in request:
+        require(request["version"] in (3, 4),
+                "base-merge preservation requires a version 3 or 4 request")
         merges = request.get("preserve_base_merges")
         require(isinstance(merges, list) and merges
                 and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in merges)
                 and len(set(merges)) == len(merges), "invalid base-merge preservation request")
-    else:
-        require("preserve_base_merges" not in request,
-                "base-merge preservation requires a version 3 request")
     for field in ("source_branch", "base_branch", "target_branch"):
         require(isinstance(request.get(field), str), f"missing {field}")
         run(["git", "check-ref-format", "refs/heads/" + request[field]])
@@ -260,7 +264,7 @@ def replacement_allowed(repository, branch):
         return False
 
 
-def check_ci(repository, number):
+def check_ci(repository, number, *, allow_no_required_ci=False):
     """Check an unsigned draft without starting endorsement preparation."""
     pr = pull_request(repository, number)
     require(pr["state"] == "open", "the original draft PR is not open")
@@ -272,16 +276,27 @@ def check_ci(repository, number):
         "base_branch": base_branch, "head": pr["head"]["sha"],
         "base": branch_head(repository, base_branch),
     }
-    require_passing_checks(request, number, request["head"], source, require_draft=True)
+    if allow_no_required_ci:
+        request["ci_exception"] = "no_required_ci"
+    checked = require_passing_checks(request, number, request["head"], source, require_draft=True)
+    if allow_no_required_ci:
+        request["required_ci"] = (
+            "not_configured" if checked["ci_scope"] == "operator_approved_no_required_ci"
+            else "passed")
     return request
 
 
-def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=()):
-    request = check_ci(repository, number)
+def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=(),
+            allow_no_required_ci=False):
+    request = check_ci(repository, number, allow_no_required_ci=allow_no_required_ci)
+    required_ci = request.pop("required_ci", None)
+    require(not allow_no_required_ci or required_ci == "not_configured",
+            "required CI is configured or reported; prepare without --allow-no-required-ci")
     source = request["source_branch"]
     key = public_key(Path(key_path).expanduser().read_text())
     request.update(
-        version=3 if preserve_base_merges else 2, target_branch=source + "-signed",
+        version=4 if allow_no_required_ci else (3 if preserve_base_merges else 2),
+        target_branch=source + "-signed",
         publication_options=["replacement"] + (
             ["replace"] if replacement_allowed(repository, source) else []),
         key=key, fingerprint=fingerprint(key), attestor=authenticated_operator(),
@@ -532,7 +547,7 @@ class Repository:
             preserved = self.preserved_commits(request, commits)
             base_merges = set(request.get("preserve_base_merges", []))
             plan["preserved_commits"] = [oid for oid in preserved if oid not in base_merges]
-            if request["version"] == 3:
+            if "preserve_base_merges" in request:
                 plan["preserved_base_merges"] = [oid for oid in preserved if oid in base_merges]
             require(len(preserved) < len(commits),
                     "no new commits require endorsement; use the verified base-update procedure "
@@ -786,7 +801,7 @@ def reviewed_plan_request(plan, plan_id):
     else:
         require("preserved_commits" not in plan,
                 "incremental endorsement requires a version 2 request")
-    if request["version"] == 3:
+    if "preserve_base_merges" in request:
         base_merges = plan.get("preserved_base_merges")
         expected = set(request["preserve_base_merges"])
         require(isinstance(base_merges, list)
@@ -797,7 +812,7 @@ def reviewed_plan_request(plan, plan_id):
                 "invalid preserved base-merge selection")
     else:
         require("preserved_base_merges" not in plan,
-                "base-merge preservation requires a version 3 request")
+                "base-merge preservation requires an explicit request")
     return request
 
 
@@ -1137,11 +1152,14 @@ def require_passing_workflows(request, number, head, branch, workflows):
 
 def require_passing_checks(request, number, head, branch, *, require_draft=False):
     """Read the exact revision's required CI without changing its PR."""
+    allow_empty = request.get("ci_exception") == "no_required_ci"
+    require("ci_exception" not in request or allow_empty, "invalid CI exception")
     repository = request["repository"]
     pr = confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
     url = pr["html_url"]
     expected = set()
     workflows = []
+    status_policy = False
     rules = github_pages(
         f"repos/{repository}/rules/branches/{quote(request['base_branch'], safe='')}?per_page=100")
     for rule in rules:
@@ -1154,6 +1172,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                     "invalid required workflow rules")
             workflows.extend(parameters["workflows"])
         if rule["type"] == "required_status_checks":
+            status_policy = True
             parameters = rule.get("parameters")
             require(isinstance(parameters, dict)
                     and isinstance(parameters.get("required_status_checks"), list),
@@ -1227,6 +1246,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                     and type(protection.get("requiresStatusChecks")) is bool,
                     "invalid classic required-check policy")
             if protection["requiresStatusChecks"]:
+                status_policy = True
                 contexts = protection["requiredStatusCheckContexts"]
                 require(isinstance(contexts, list)
                         and all(isinstance(name, str) and name for name in contexts),
@@ -1237,6 +1257,9 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 and commits[0]["commit"]["oid"] == head,
                 "CI results do not belong to the expected PR head")
         rollup = commits[0]["commit"]["statusCheckRollup"]
+        if rollup is None and allow_empty and not status_policy and not workflows:
+            require(cursor is None, "CI rollup disappeared during pagination")
+            break
         require(isinstance(rollup, dict), f"no required CI checks reported for {url}; quality gate blocked")
         contexts = rollup["contexts"]
         require(isinstance(contexts, dict) and isinstance(contexts.get("nodes"), list),
@@ -1282,9 +1305,16 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     require(not expected - reported,
             f"missing required CI checks for {url}: {', '.join(sorted(expected - reported))}; quality gate blocked")
     require(not failures, message)
-    require(reported or workflows,
+    exception_applied = allow_empty and not status_policy and not reported and not workflows
+    require(reported or workflows or exception_applied,
             f"no required CI checks reported for {url}; quality gate blocked")
-    return confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
+    current = confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
+    if exception_applied:
+        print(f"[copilot-cs-endorse] {url}: no required CI is configured or reported; "
+              "using the explicit revision-scoped exception, not a passing CI result",
+              file=sys.stderr)
+    return dict(current, ci_scope=(
+        "operator_approved_no_required_ci" if exception_applied else "observed_required_checks"))
 
 
 def ready_for_review(request, number, head, branch):
@@ -1345,13 +1375,13 @@ def ready_for_review(request, number, head, branch):
         require(isinstance(updated, dict)
                 and updated["id"] == pr["node_id"] and updated["isDraft"] is False,
                 "ready-for-review transition not confirmed")
-        verify_ci()
+        pr = verify_ci()
     current = confirm_ci_revision(request, number, head, branch)
     require(current["draft"] is False, "ready-for-review transition not confirmed")
     require(attestor is None or attestor.casefold() not in assignee_logins(current),
             "attestor was assigned during the ready-for-review transition")
     return {"url": pr["html_url"], "head": head, "ready_for_review": True,
-            "ci_scope": "observed_required_checks"}
+            "ci_scope": pr["ci_scope"]}
 
 
 def finish(receipt, approval):
@@ -1483,6 +1513,9 @@ def main():
         "check-ci", help="LOCAL: check unsigned-draft CI without starting endorsement")
     ci_parser.add_argument("--repo", required=True)
     ci_parser.add_argument("--pr", required=True, type=int)
+    ci_parser.add_argument(
+        "--allow-no-required-ci", action="store_true",
+        help="explicit operator exception only when no required CI is configured or reported")
     prepare_parser = actions.add_parser(
         "prepare", help="LOCAL: require passing CI, then snapshot draft PR and publication policy")
     prepare_parser.add_argument("--repo", required=True)
@@ -1490,6 +1523,9 @@ def main():
     prepare_parser.add_argument("--key", default=os.environ.get("COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY", SIGNING_ALIAS))
     prepare_parser.add_argument("--committer-name")
     prepare_parser.add_argument("--committer-email")
+    prepare_parser.add_argument(
+        "--allow-no-required-ci", action="store_true",
+        help="bind an explicit no-required-CI exception to this revision's endorsement plan")
     prepare_parser.add_argument(
         "--preserve-base-merge", action="append", default=[], metavar="OID",
         help="preserve this verified GitHub default-branch merge without endorsing it again")
@@ -1527,7 +1563,8 @@ def main():
         elif args.action == "check-ci":
             require(os.environ.get("CODESPACES") != "true",
                     "check GitHub CI locally with the operator's authenticated gh")
-            result = dict(check_ci(args.repo, args.pr), required_ci="passed")
+            result = check_ci(args.repo, args.pr, allow_no_required_ci=args.allow_no_required_ci)
+            result.setdefault("required_ci", "passed")
         elif args.action == "prepare":
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub preparation locally with the operator's authenticated gh")
@@ -1536,7 +1573,8 @@ def main():
             committer = ({"name": args.committer_name, "email": args.committer_email}
                          if args.committer_name is not None else None)
             result = prepare(args.repo, args.pr, args.key, committer=committer,
-                             preserve_base_merges=args.preserve_base_merge)
+                             preserve_base_merges=args.preserve_base_merge,
+                             allow_no_required_ci=args.allow_no_required_ci)
         elif args.action in ("await-attestation", "complete-attestation"):
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub attestation tracking locally with the operator's authenticated gh")

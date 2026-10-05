@@ -40,6 +40,32 @@ and no request. Do not start a remote plan, ask for an endorsement, or forward
 the signing agent while either pre-endorsement gate is blocked. A cached request
 is not a substitute for checking the current revision.
 
+### Explicit exception for unconfigured required CI
+
+Only after the operator explicitly authorises proceeding for the target PR
+despite confirmed absence of required CI, pass `--allow-no-required-ci` to
+`check-ci` and `prepare`. The helper still reads the complete effective rules,
+classic protection and exact-head check rollup. It cannot waive configured,
+missing, pending, failing, malformed or unreadable requirements. An empty
+required-status rule is still configured policy, not an exception opportunity.
+If required CI exists and passes, `prepare` rejects the option: omit it and use
+normal preparation instead. A plan must not carry an unused exception that could
+activate if policy later disappears.
+
+When the exception is actually used, `check-ci` reports
+`required_ci: "not_configured"` and a diagnostic, never `"passed"`. Preparation
+creates a version 4 request with `ci_exception: "no_required_ci"`, bound by the
+plan digest to the repository, PR, source/base revision and attestor. Version 4
+also supports explicit verified base-merge preservation. Older helpers reject
+the new version; never retrofit the exception into an existing plan.
+
+Disclose this exception in the exact-plan human endorsement prompt. Permission
+to proceed without required CI is not endorsement, signing or rewrite consent.
+Assignment and signed-head finalisation re-read policy: newly configured
+requirements must pass normally. Finalisation reports
+`ci_scope: "operator_approved_no_required_ci"` only when no requirements exist.
+No repository policy, global setting or other PR is changed.
+
 Required workflows are discovered from the exact commit's fully paginated
 check suites, not the repository-wide run search. The gate still verifies the
 enforced workflow source, exact PR and branch, and latest run and attempt.
@@ -408,7 +434,10 @@ Signing changes OIDs: unsigned-head CI cannot satisfy the final gate.
 For either publication method, `finish` reads all check pages and required flags,
 classic protection and effective ruleset requirements. Missing configured checks,
 no reported required CI, pending/failing/cancelled results and unreadable policy
-block readiness. Completed check runs may be `SUCCESS`, `NEUTRAL` or `SKIPPED`;
+block readiness. Only a version 4 plan's explicit no-required-CI exception can accept confirmed
+absence of configured and reported requirements. It cannot waive any actual
+requirement or unreadable policy.
+Completed check runs may be `SUCCESS`, `NEUTRAL` or `SKIPPED`;
 required commit statuses must succeed. Optional failures do not block readiness.
 
 Required workflows must have a successful latest applicable run/attempt for

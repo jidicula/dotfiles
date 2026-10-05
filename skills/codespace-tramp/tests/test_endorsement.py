@@ -615,6 +615,49 @@ class BaseMergeEndorsementTests(EndorsementTestCase):
                     self.helper.validate_request(request)
 
 
+class NoRequiredCIPlanTests(EndorsementTestCase):
+    def test_exception_is_versioned_and_bound_to_the_immutable_plan(self):
+        self.request.update(version=4, ci_exception="no_required_ci")
+        receipt = self.sign()
+        self.assertEqual(receipt["plan"]["request"]["ci_exception"], "no_required_ci")
+        self.assertEqual(self.repository.verify(self.plan_id), receipt)
+        altered = copy.deepcopy(receipt["plan"])
+        del altered["request"]["ci_exception"]
+        with self.assertRaisesRegex(ValueError, "digest"):
+            self.helper.reviewed_plan_request(altered, self.plan_id)
+        with self.assertRaisesRegex(ValueError, "explicit approval"):
+            self.repository.sign(self.plan_id, "0" * 64 + ":replace")
+
+    def test_legacy_versions_and_malformed_exceptions_are_rejected(self):
+        for version in (1, 2, 3):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(ValueError, "version 4"):
+                    self.helper.validate_request(dict(
+                        self.request, version=version, ci_exception="no_required_ci"))
+        for exception in (None, False, True, {}, "all_ci", ""):
+            with self.subTest(exception=exception):
+                with self.assertRaisesRegex(ValueError, "explicit no-required-CI"):
+                    self.helper.validate_request(dict(
+                        self.request, version=4, ci_exception=exception))
+        with self.assertRaisesRegex(ValueError, "explicit no-required-CI"):
+            self.helper.validate_request(dict(self.request, version=4))
+        request = dict(self.request, version=4, ci_exception="no_required_ci")
+        del request["attestor"]
+        with self.assertRaisesRegex(ValueError, "attestor"):
+            self.helper.validate_request(request)
+
+    def test_exception_preserves_prior_endorsements_and_verified_base_merges(self):
+        previous = self.sign()
+        merge = self.base_merge_follow_up(previous)
+        self.request.update(version=4, ci_exception="no_required_ci")
+        receipt = self.sign()
+        self.assertEqual(receipt["plan"]["preserved_base_merges"], [merge])
+        self.assertEqual(receipt["mapping"][merge], merge)
+        for oid in previous["mapping"].values():
+            self.assertEqual(receipt["mapping"][oid], oid)
+        self.assertEqual(self.repository.verify(self.plan_id), receipt)
+
+
 class SignedHistoryTests(EndorsementTestCase):
     def test_signing_progress_precedes_requests_and_verification_never_resigns(self):
         output = io.StringIO()
@@ -1541,9 +1584,10 @@ class GitHubEndorsementTests(EndorsementTestCase):
     def finish(self):
         return self.helper.finish(self.receipt, self.approve(self.receipt["publication"]))
 
-    def prepare(self):
+    def prepare(self, **options):
         with mock.patch.object(self.helper, "replacement_allowed", return_value=True):
-            return self.helper.prepare("example/project", 12, str(self.key_file) + ".pub")
+            return self.helper.prepare("example/project", 12, str(self.key_file) + ".pub",
+                                       **options)
 
     def conflicting_base_advance(self, _pr=None):
         self.live_base = self.first
@@ -3195,6 +3239,258 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 with self.assertRaisesRegex(ValueError, "no required CI checks"):
                     self.prepare()
                 self.assert_read_only_preparation()
+
+    def test_no_required_ci_exception_prepares_only_an_explicit_versioned_scope(self):
+        self.required_contexts = []
+        self.check_pages = [[], [{
+            "__typename": "CheckRun", "name": "optional", "isRequired": False,
+            "status": "COMPLETED", "conclusion": "SUCCESS",
+        }]]
+        with mock.patch.object(Path, "read_text") as read_key:
+            with self.assertRaisesRegex(ValueError, "no required CI"):
+                self.prepare()
+            read_key.assert_not_called()
+        with redirect_stderr(io.StringIO()) as errors:
+            prepared = self.prepare(allow_no_required_ci=True)
+        self.assertEqual(prepared, dict(self.request, version=4, ci_exception="no_required_ci"))
+        self.assertIn("not a passing CI result", errors.getvalue())
+        self.assert_read_only_preparation()
+        with mock.patch.object(Path, "read_text") as read_key:
+            checked = self.helper.check_ci("example/project", 12, allow_no_required_ci=True)
+        self.assertEqual(checked["required_ci"], "not_configured")
+        read_key.assert_not_called()
+
+    def test_no_required_ci_exception_cannot_be_prepared_when_required_ci_passes(self):
+        for policy in ("classic", "reported", "workflow"):
+            with self.subTest(policy=policy):
+                self.required_contexts = ["ci"] if policy == "classic" else []
+                self.rules = []
+                self.workflow_runs = []
+                self.check_pages = [[{
+                    "__typename": "CheckRun", "name": "ci", "isRequired": True,
+                    "status": "COMPLETED", "conclusion": "SUCCESS",
+                }]]
+                if policy == "workflow":
+                    self.check_pages = [[]]
+                    self.add_required_workflow()
+                with mock.patch.object(Path, "read_text") as read_key:
+                    with self.assertRaisesRegex(ValueError, "prepare without --allow-no-required-ci"):
+                        self.prepare(allow_no_required_ci=True)
+                    read_key.assert_not_called()
+                self.assert_read_only_preparation()
+
+    def test_no_required_ci_exception_accepts_explicitly_null_rollup_not_partial_discovery(self):
+        self.required_contexts = []
+        api = self.api
+
+        def null_rollup(endpoint, method="GET", data=None):
+            result = api(endpoint, method, data)
+            if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
+                result["data"]["node"]["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
+            return result
+
+        with mock.patch.object(self.helper, "github", side_effect=null_rollup):
+            self.assertEqual(self.prepare(allow_no_required_ci=True)["version"], 4)
+            with self.assertRaisesRegex(ValueError, "no required CI"):
+                self.prepare()
+            self.required_contexts = ["ci"]
+            with self.assertRaisesRegex(ValueError, "no required CI"):
+                self.prepare(allow_no_required_ci=True)
+
+    def test_no_required_ci_exception_rejects_empty_enabled_classic_policy(self):
+        self.required_contexts = []
+        self.check_pages = [[]]
+        api = self.api
+        for null_rollup in (False, True):
+            with self.subTest(null_rollup=null_rollup):
+                def empty_classic_policy(endpoint, method="GET", data=None):
+                    result = api(endpoint, method, data)
+                    if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
+                        node = result["data"]["node"]
+                        node["baseRef"]["branchProtectionRule"]["requiresStatusChecks"] = True
+                        if null_rollup:
+                            node["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
+                    return result
+
+                with mock.patch.object(self.helper, "github", side_effect=empty_classic_policy):
+                    with mock.patch.object(Path, "read_text") as read_key:
+                        with self.assertRaisesRegex(ValueError, "no required CI"):
+                            self.prepare(allow_no_required_ci=True)
+                        read_key.assert_not_called()
+        self.assert_read_only_preparation()
+
+    def test_no_required_ci_exception_rejects_rollup_disappearing_during_pagination(self):
+        self.required_contexts = []
+        self.check_pages = [[], []]
+        api = self.api
+
+        def disappearing_rollup(endpoint, method="GET", data=None):
+            result = api(endpoint, method, data)
+            if (endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]
+                    and data["variables"]["cursor"] is not None):
+                result["data"]["node"]["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
+            return result
+
+        with mock.patch.object(self.helper, "github", side_effect=disappearing_rollup):
+            with mock.patch.object(Path, "read_text") as read_key:
+                with self.assertRaisesRegex(ValueError, "disappeared during pagination"):
+                    self.prepare(allow_no_required_ci=True)
+                read_key.assert_not_called()
+        self.assert_read_only_preparation()
+
+    def test_no_required_ci_exception_does_not_waive_configured_checks_or_workflows(self):
+        for policy in ("classic", "ruleset", "workflow", "empty_ruleset"):
+            with self.subTest(policy=policy):
+                self.required_contexts = []
+                self.rules = []
+                self.workflow_runs = []
+                self.check_pages = [[]]
+                if policy == "classic":
+                    self.required_contexts = ["ci"]
+                elif policy == "workflow":
+                    self.add_required_workflow()["conclusion"] = "failure"
+                else:
+                    self.rules = [{
+                        "type": "required_status_checks",
+                        "parameters": {"required_status_checks": (
+                            [] if policy == "empty_ruleset" else [{"context": "ci"}])},
+                    }]
+                with mock.patch.object(Path, "read_text") as read_key:
+                    with self.assertRaisesRegex(ValueError, "required CI|workflow"):
+                        self.prepare(allow_no_required_ci=True)
+                    read_key.assert_not_called()
+                self.assert_read_only_preparation()
+
+    def test_no_required_ci_exception_keeps_reported_failures_and_pagination_blocking(self):
+        self.required_contexts = []
+        for status, conclusion in (("QUEUED", None), ("IN_PROGRESS", None),
+                                   ("COMPLETED", "FAILURE"), ("COMPLETED", "UNKNOWN")):
+            with self.subTest(status=status, conclusion=conclusion):
+                self.check_pages = [[], [{
+                    "__typename": "CheckRun", "name": "ci", "isRequired": True,
+                    "status": status, "conclusion": conclusion,
+                }]]
+                with self.assertRaisesRegex(ValueError, "required CI.*ci"):
+                    self.prepare(allow_no_required_ci=True)
+        self.check_pages[1][0].update(status="COMPLETED", conclusion="SUCCESS")
+        checked = self.helper.check_ci("example/project", 12, allow_no_required_ci=True)
+        self.assertEqual(checked["required_ci"], "passed")
+        self.assert_read_only_preparation()
+
+    def test_no_required_ci_exception_fails_closed_on_unreadable_or_malformed_policy(self):
+        self.required_contexts = []
+        self.check_pages = [[]]
+        with mock.patch.object(self.helper, "github_pages", side_effect=RuntimeError("unreadable")):
+            with self.assertRaisesRegex(RuntimeError, "unreadable"):
+                self.prepare(allow_no_required_ci=True)
+        self.failure = ("POST", "graphql")
+        with self.assertRaisesRegex(RuntimeError, "fixture API failure"):
+            self.prepare(allow_no_required_ci=True)
+        self.failure = None
+        for rule in ({}, {"type": "workflows", "parameters": {"workflows": []}},
+                     {"type": "required_status_checks", "parameters": None}):
+            with self.subTest(rule=rule):
+                self.rules = [rule]
+                with self.assertRaisesRegex(ValueError, "invalid"):
+                    self.prepare(allow_no_required_ci=True)
+        self.assert_read_only_preparation()
+
+    def test_no_required_ci_exception_preserves_revision_and_assignment_guards(self):
+        self.required_contexts = []
+        self.check_pages = [[]]
+        original = copy.deepcopy(self.original)
+        for change in (
+            lambda pr: pr["head"].update(sha="0" * 40),
+            lambda pr: pr["head"].update(ref="other"),
+            lambda pr: pr["base"].update(ref="other"),
+            lambda pr: pr.update(draft=False),
+            lambda pr: pr.update(state="closed"),
+        ):
+            with self.subTest(change=change):
+                self.original = copy.deepcopy(original)
+                self.mutate_on_checks = change
+                with self.assertRaisesRegex(ValueError, "changed|open|draft"):
+                    self.prepare(allow_no_required_ci=True)
+                self.assertFalse(self.readiness_calls())
+
+    def test_no_required_ci_exception_survives_signed_head_and_rechecks_new_requirements(self):
+        self.follow_up(self.receipt, count=1)
+        self.original["head"].update(
+            ref=self.request["source_branch"], sha=self.request["head"])
+        self.required_contexts = []
+        self.check_pages = [[]]
+        self.request = self.prepare(allow_no_required_ci=True)
+        self.freeze()
+        self.helper.await_attestation(self.plan)
+        self.assertIn("fixture", self.helper.assignee_logins(self.original))
+        self.receipt = self.repository.sign(self.plan_id, self.approve("replace"))
+        self.commits.update({oid: self.commit_data(oid) for oid in (
+            *self.receipt["mapping"], *self.receipt["mapping"].values())})
+        self.helper.complete_attestation(self.receipt, self.approve("replace"))
+        self.assertNotIn("fixture", self.helper.assignee_logins(self.original))
+        self.original["head"]["sha"] = self.receipt["head"]
+        result = self.finish()
+        self.assertEqual(result["ci_scope"], "operator_approved_no_required_ci")
+        self.assertTrue(result["ready_for_review"])
+        self.required_contexts = ["ci"]
+        with self.assertRaisesRegex(ValueError, "missing required CI"):
+            self.finish()
+        self.check_pages = [[{
+            "__typename": "CheckRun", "name": "ci", "isRequired": True,
+            "status": "COMPLETED", "conclusion": "FAILURE",
+        }]]
+        with self.assertRaisesRegex(ValueError, "returned the unchanged signed PR to draft"):
+            self.finish()
+        self.assertTrue(self.original["draft"])
+        self.check_pages[0][0]["conclusion"] = "SUCCESS"
+        self.assertEqual(self.finish()["ci_scope"], "observed_required_checks")
+
+        for conclusion in ("SUCCESS", "FAILURE"):
+            with self.subTest(added_during_ready=conclusion):
+                self.original["draft"] = True
+                self.required_contexts = []
+                self.check_pages = [[]]
+
+                def add_requirement(_pr):
+                    self.required_contexts = ["ci"]
+                    self.check_pages = [[{
+                        "__typename": "CheckRun", "name": "ci", "isRequired": True,
+                        "status": "COMPLETED", "conclusion": conclusion,
+                    }]]
+
+                self.mutate_on_ready = add_requirement
+                if conclusion == "SUCCESS":
+                    self.assertEqual(self.finish()["ci_scope"], "observed_required_checks")
+                    self.assertFalse(self.original["draft"])
+                else:
+                    with self.assertRaisesRegex(
+                            ValueError, "returned the unchanged signed PR to draft"):
+                        self.finish()
+                    self.assertTrue(self.original["draft"])
+
+    def test_no_required_ci_exception_cli_does_not_claim_passing_checks(self):
+        self.required_contexts = []
+        self.check_pages = [[]]
+        args = ["copilot-cs-endorse", "check-ci", "--repo", "example/project", "--pr", "12",
+                "--allow-no-required-ci"]
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), mock.patch.object(
+                sys, "argv", args), redirect_stdout(io.StringIO()) as output, redirect_stderr(
+                io.StringIO()) as errors:
+            self.assertEqual(self.helper.main(), 0)
+        self.assertEqual(json.loads(output.getvalue())["required_ci"], "not_configured")
+        self.assertIn("not a passing CI result", errors.getvalue())
+        args[1] = "prepare"
+        args += ["--key", str(self.key_file) + ".pub"]
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), mock.patch.object(
+                sys, "argv", args), mock.patch.object(
+                self.helper, "replacement_allowed", return_value=True), redirect_stdout(
+                io.StringIO()) as output, redirect_stderr(io.StringIO()):
+            self.assertEqual(self.helper.main(), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["version"], 4)
+        self.assertEqual(result["ci_exception"], "no_required_ci")
+        self.assertNotIn("required_ci", result)
+        self.assert_read_only_preparation()
 
     def test_prepare_requires_missing_classic_and_ruleset_checks(self):
         for ruleset in (False, True):
