@@ -1031,6 +1031,11 @@ fixes. Do not create a temporary commit to obtain a review.
   Use the actual issue's full URL, including its repository even when it differs
   from the PR's repository; never use a PR URL as the closing target. Preserve
   this reference when updating an existing draft or creating a signed replacement.
+- Include `Authored by Copilot, guided by @jidicula.` once in authored GitHub
+  comments, GitHub issue and PR bodies, and Datadog notebooks only. Omit it from
+  other output, including chat responses, status updates, commit messages, code,
+  local documentation and session notes. Required Git commit trailers remain
+  unchanged.
 - Do **not** manually stop or delete the Codespace when the task is complete.
   Leave it running; GitHub Codespaces stops it automatically after its
   configured idle timeout. Stop or delete it only when the human operator
