@@ -56,7 +56,7 @@
 	eYCMjpCVoKmxtAAAAAAAAAEBAAAAAAAAABkAAAAAAAAAAAAAAAAAAAC9
 	</data>
 	<key>ShouldRestoreContent</key>
-	<false/>
+	<true/>
 	<key>ShowActiveProcessArgumentsInTabTitle</key>
 	<true/>
 	<key>ShowActiveProcessArgumentsInTitle</key>
@@ -110,7 +110,9 @@
 	<key>UseBrightBold</key>
 	<false/>
 	<key>VisualBellOnlyWhenMuted</key>
-	<true/>
+	<false/>
+	<key>WindowTitle</key>
+	<string></string>
 	<key>name</key>
 	<string>jidiculous</string>
 	<key>rowCount</key>
