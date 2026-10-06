@@ -1077,6 +1077,28 @@ Use Copilot CLI's built-in **`rubber-duck` agent**, the independent reviewer
 behind `/rubber-duck`. This is an agent-driven gate against the selected
 Codespace checkout, not same-agent self-review or PR-based CCR.
 
+**The parent owns review for delegated implementation.** Before delegating,
+check the actual `task` tool schema and delegation constraints: the parent must
+be permitted to launch `rubber-duck`. Slash-command help or another session's
+agent list does not establish availability in the current session.
+
+A worker that lacks that agent type or is prohibited from nesting agents must
+not attempt the invocation. Complete steps 1 and 2, then return an
+`awaiting-review` handoff with the candidate, validation evidence and runner
+details required by step 3. Keep the candidate uncommitted and unchanged.
+The parent launches the reviewer as a sibling of the implementation worker,
+using that worker's existing Codespace, checkout and canonical client/session.
+Keep the worker idle and serialize access to its daemon during review. Return
+the complete reviewer result and invocation id, explicitly bound to the recorded
+parents and tree, before the implementer resumes at step 4. A bare "review
+passed" message is not sufficient evidence.
+
+If no permitted parent can invoke the reviewer, preserve the candidate and ask
+the operator to resume in a session that can. Do not substitute another agent
+type, self-review, CCR or a nested CLI invocation, or violate a no-nested-agents
+constraint. A worker's restricted capabilities require a parent handoff, not a
+weaker review gate.
+
 1. Finish the change and run the repository's applicable tests/lint in the
    Codespace. Resolve failures before requesting review; passing CI from an older
    revision is not a substitute. If a check cannot run, report the limitation and
@@ -1085,7 +1107,8 @@ Codespace checkout, not same-agent self-review or PR-based CCR.
    `HEAD`, any additional merge parents and the index tree from `git write-tree`, with the
    validation evidence. Ensure that evidence covers this candidate, not different
    unstaged contents. Do not change the candidate while review is running.
-3. Delegate one read-only review to the built-in `rubber-duck` agent. Supply the
+3. Have the review-owning session delegate one read-only review to the built-in
+   `rubber-duck` agent. Supply the
    task and intended behaviour, repository/base context, immutable Codespace name,
    exact checkout, canonical client/session details, recorded parents and tree,
    and validation results. Require repository inspection through the existing
@@ -1100,10 +1123,17 @@ Codespace checkout, not same-agent self-review or PR-based CCR.
    Codespace, and repeat rubber-duck review on the revised candidate. Record
    evidence for rejected findings; do not ignore a disputed finding or repeatedly
    request review of unchanged code to obtain a different answer.
+   Reuse a reviewer only when its invocation mode supports follow-up messages.
+   A synchronous/one-shot reviewer may appear `idle` but reject `write_agent`;
+   start a fresh read-only review for the revised candidate in that case.
+   Do not retry an unsupported message or carry the previous candidate's pass
+   forward. Background reviewers may accept same-task follow-ups when the
+   available tool explicitly supports them.
 5. Proceed only after a completed `pass` with no unresolved actionable findings.
-   An unavailable reviewer, failed or incomplete invocation, ambiguous result,
-   or request for human judgement blocks committing. Report the blocker and
-   obtain an operator decision; a successful tool exit is not review approval.
+   If the review-owning session cannot invoke the reviewer, or the invocation
+   fails, is incomplete, returns an ambiguous result or requests human judgement,
+   committing remains blocked. Report the blocker and obtain an operator
+   decision; a successful tool exit is not review approval.
 6. Immediately before the unsigned commit, confirm that `HEAD`, any merge parents
    and the index tree still match the reviewed candidate. A changed candidate must repeat
    validation and review. Commit only that index, without `git commit -a` or
@@ -1374,11 +1404,12 @@ review ID/URL/recommendation, unresolved findings, validation/CI state, current
 phase and any plan/receipt/job paths. Do not include credentials or treat an
 approval token as proof of consent.
 
-Retain Gate 0's parents/tree and reviewer result before any commit; an unsigned
-commit alone is not evidence that the pre-commit review occurred.
+Retain Gate 0's parents/tree, review-owning session and reviewer invocation/result
+before any commit. A worker awaiting parent review must retain its handoff;
+an unsigned commit alone is not evidence that the pre-commit review occurred.
 
-Distinguish `blocked`, `awaiting-attestation`, `unendorsed`, `signed-ci-pending`,
-`readiness-ci-pending` and `ready`. A human-review recommendation remains explicit
+Distinguish `blocked`, `awaiting-review`, `awaiting-attestation`, `unendorsed`,
+`signed-ci-pending`, `readiness-ci-pending` and `ready`. A human-review recommendation remains explicit
 in that result; it is not a success-shaped substitute for an endorsement. On resume, inspect
 the saved operation and current remote state before continuing. Do not
 replay a review request, signature or publication because the session restarted.

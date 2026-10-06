@@ -464,6 +464,11 @@ make the change, run tests/lint in the Codespace, obtain independent rubber-duck
 review, then commit and push. The commit example below assumes that gate passed
 for the unchanged index.
 
+A worker that cannot launch nested agents hands its validated, frozen candidate
+to the parent for a sibling `rubber-duck` review. Wait for the complete result
+bound to those parents and that tree; do not commit merely because the worker
+finished its implementation.
+
 ```elisp
 (copilot-cs-sh "git fetch origin main")
 (copilot-cs-sh "git commit -m 'Update configuration'")

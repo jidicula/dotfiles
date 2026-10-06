@@ -82,7 +82,7 @@ When invoked, the skill:
 
 The local machine needs:
 
-- GitHub Copilot CLI with skills, MCP support and the built-in `rubber-duck` agent;
+- GitHub Copilot CLI with skills, MCP support and a parent session permitted to invoke the built-in `rubber-duck` agent;
 - an authenticated [GitHub CLI](https://cli.github.com/);
 - Emacs and `emacsclient`;
 - [`socat`](http://www.dest-unreach.org/socat/);
@@ -92,6 +92,8 @@ The local machine needs:
 - an Emacs MCP server package providing `mcp-server` and `mcp-server-security`.
 
 The supplied daemon init resolves Emacs packages from a `straight.el` `straight/build/` directory. Adapt the load-path setup in [`setup/copilot-mcp-init.el`](setup/copilot-mcp-init.el) when using another package manager.
+
+For delegated implementation, the parent owns [pre-commit review](SKILL.md#gate-0---required-pre-commit-rubber-duck-review). Workers without `rubber-duck` or nested-agent permission return their validated, frozen candidate to the parent, which launches a sibling reviewer and returns the candidate-bound result. The worker must not commit while awaiting that review.
 
 The target GitHub repository must permit Codespaces and expose at least one machine type and development-container configuration. Semantic Ruby support requires Sorbet or Ruby LSP in the Codespace; semantic Go support requires gopls.
 
