@@ -8,9 +8,8 @@ description: >-
   repository (URL or owner/repo, required), an optional issue or pull request
   (URL, owner/repo#number, or a bare number), and optional additional
   instructions describing what to do in the Codespace or how to do it.
-  Provisions or reuses a Codespace whose name is derived from the referenced
-  repository and number. Also handles required CI, Copilot Code Review iteration
-  and human endorsement for drafts produced by this workflow.
+  Provisions or reuses a Codespace and handles required CI, Copilot Code Review,
+  and human endorsement.
   Triggers on requests like "make this change in a codespace", "work on
   <issue> in a codespace", "run the tests for <repo> in a codespace", or "set
   up a codespace for this issue and fix it". Only applies within the operator's
