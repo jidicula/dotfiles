@@ -202,6 +202,13 @@ For semantic code intelligence:
 (copilot-cs-eglot-diagnostics "<remote-path>")
 ```
 
+After the first file is ready, semantic queries can open other Ruby or Go files
+in the same Codespace project using its existing language server. Preparation
+is bounded and scope-checked; queries do not start a missing server or reconnect
+a stopped one. Status reads remain passive.
+`copilot-cs-eglot-stop` is server-scoped: stopping any managed file stops the
+shared language server for every buffer using it in that Emacs session.
+
 See the [execution cookbook](references/emacs-tramp-patterns.md) for file editing, polling, login-shell commands, copies, and recovery procedures.
 
 ## Safety boundaries

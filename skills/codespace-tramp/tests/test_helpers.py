@@ -2705,6 +2705,262 @@ class EglotStartupTests(HelperTestCase):
         self.assertEqual(output, '("bin/srb" "typecheck" "--lsp" "--cache-dir" "tmp/sorbet")')
 
 
+class EglotProjectQueryTests(HelperTestCase):
+    def project_query(self, assertions, language="ruby"):
+        extension = {"ruby": "rb", "go": "go"}[language]
+        return self.emacs(
+            f"""(progn
+              (require 'copilot-cs-eglot)
+              (require 'tramp)
+              (let* ((tramp-methods (cons '("ghcs" (tramp-login-program "false"))
+                                          tramp-methods))
+                     (copilot-cs-eglot--states (make-hash-table :test #'equal))
+                     (root "/ghcs:fixture:/workspaces/project/")
+                     (anchor (concat root "anchor.{extension}"))
+                     (target (concat root "sub/target.{extension}"))
+                     (anchor-buffer (generate-new-buffer "eglot-project-anchor"))
+                     (target-buffer (generate-new-buffer "eglot-project-target"))
+                     (process (make-process :name "eglot-project-fixture"
+                                            :command '("cat")
+                                            :connection-type 'pipe :noquery t))
+                     (server (make-instance 'eglot-lsp-server
+                                            :name "eglot-project-fixture"
+                                            :process process :on-shutdown #'ignore))
+                     (scope-allowed t)
+                     (same-project t)
+                     (file-present t)
+                     (cancel-during-read nil)
+                     (slow-stage nil)
+                     (file-reads 0)
+                     (activations 0)
+                     requests diagnostic-path)
+                (unwind-protect
+                    (progn
+                      (setf (eglot--project server) (cons 'transient root)
+                            (eglot--languages server)
+                            '(({language}-mode . "{language}")
+                              ({language}-ts-mode . "{language}")))
+                      (with-current-buffer anchor-buffer
+                        (setq-local buffer-file-name anchor
+                                    major-mode '{language}-mode
+                                    eglot--cached-server server
+                                    eglot--managed-mode t))
+                      (with-current-buffer target-buffer
+                        (setq-local buffer-file-name target
+                                    major-mode '{language}-mode
+                                    eglot--cached-server server)
+                        (insert "class Target\\n  def example; end\\nend\\n"))
+                      (copilot-cs-eglot--record
+                       anchor 'ready :mode '{language}-mode
+                       :buffer anchor-buffer :server server)
+                      (cl-letf
+                          (((symbol-function 'copilot-cs-eglot--editable-path-p)
+                            (lambda (_)
+                              (when (eq slow-stage 'scope) (sleep-for 2))
+                              scope-allowed))
+                           ((symbol-function 'file-in-directory-p)
+                            (lambda (file directory)
+                              (unless (and (equal file target) (equal directory root))
+                                (error "Unexpected project-boundary check"))
+                              same-project))
+                           ((symbol-function 'file-regular-p) (lambda (_) file-present))
+                           ((symbol-function 'find-file-noselect)
+                            (lambda (file &rest _)
+                              (unless (equal file target)
+                                (error "Opened the representative file instead of the target"))
+                              (cl-incf file-reads)
+                              (when cancel-during-read (copilot-cs-eglot-stop target))
+                              (when (eq slow-stage 'read) (sleep-for 2))
+                              target-buffer))
+                           ((symbol-function 'eglot)
+                            (lambda (&rest _) (error "Query attempted to launch a server")))
+                           ((symbol-function 'eglot--maybe-activate-editing-mode)
+                            (lambda ()
+                              (when (and (eq (current-buffer) target-buffer)
+                                         (not eglot--managed-mode))
+                                (cl-incf activations)
+                                (when (eq slow-stage 'activate) (sleep-for 2))
+                                (setq eglot--managed-mode t))))
+                           ((symbol-function 'eglot--TextDocumentIdentifier)
+                            (lambda () (list :uri buffer-file-name)))
+                           ((symbol-function 'eglot--TextDocumentPositionParams)
+                            (lambda ()
+                              (list :textDocument (list :uri buffer-file-name)
+                                    :position (list :line (1- (line-number-at-pos))
+                                                    :character (current-column)))))
+                           ((symbol-function 'eglot--request)
+                            (lambda (connection method params &rest _)
+                              (push (list connection method params buffer-file-name)
+                                    requests)
+                              '(:fixture t)))
+                           ((symbol-function 'flymake-diagnostics)
+                            (lambda (&rest _)
+                              (setq diagnostic-path buffer-file-name)
+                              (list (flymake-make-diagnostic
+                                     (current-buffer) 1 2 :warning "fixture")))))
+                        {assertions}))
+                  (when (process-live-p process) (delete-process process))
+                  (dolist (buffer (list anchor-buffer target-buffer))
+                    (when (buffer-live-p buffer)
+                      (with-current-buffer buffer
+                        (setq eglot--managed-mode nil)
+                        (set-buffer-modified-p nil))
+                      (kill-buffer buffer))))))"""
+        )
+
+    def test_semantic_queries_adopt_another_file_without_launching_a_server(self):
+        self.project_query(
+            """(unless (string-match-p "state=unknown" (copilot-cs-eglot-status target))
+                 (error "Status should remain passive for an unopened file"))
+               (unless (zerop file-reads) (error "Status opened a file"))
+               (copilot-cs-eglot-document-symbols target)
+               (copilot-cs-eglot-hover target 2 3)
+               (copilot-cs-eglot-definition target 2 3)
+               (copilot-cs-eglot-references target 2 3)
+               (copilot-cs-eglot-diagnostics target)
+               (unless (and (= file-reads 1) (= activations 1)
+                            (= (length requests) 4) (equal diagnostic-path target)
+                            (eq (plist-get (gethash target copilot-cs-eglot--states)
+                                           :status) 'ready))
+                 (error "Unexpected adoption: reads=%S activations=%S requests=%S diagnostic=%S state=%S"
+                        file-reads activations (length requests) diagnostic-path
+                        (plist-get (gethash target copilot-cs-eglot--states) :status)))
+               (dolist (request requests)
+                 (unless (and (eq (nth 0 request) server)
+                              (equal (nth 3 request) target)
+                              (equal (plist-get (plist-get (nth 2 request) :textDocument)
+                                                :uri)
+                                     target))
+                   (error "Semantic request used the wrong file or server")))
+               (unless (string-match-p "state=ready.*server=running"
+                                       (copilot-cs-eglot-status target))
+                 (error "The adopted file has no ready state"))"""
+        )
+
+    def test_tree_sitter_modes_share_the_existing_project_server(self):
+        for language in ("ruby", "go"):
+            with self.subTest(language=language):
+                self.project_query(
+                    f"""(with-current-buffer target-buffer
+                          (setq major-mode '{language}-ts-mode))
+                        (copilot-cs-eglot-document-symbols target)
+                        (unless (and (= file-reads 1) (= (length requests) 1)
+                                     (eq (caar requests) server)
+                                     (eq (plist-get
+                                          (gethash target copilot-cs-eglot--states) :mode)
+                                         '{language}-ts-mode))
+                          (error "A compatible tree-sitter mode did not reuse the server"))""",
+                    language=language,
+                )
+
+    def test_go_queries_share_the_existing_project_server(self):
+        self.project_query(
+            """(copilot-cs-eglot-document-symbols target)
+               (unless (and (= file-reads 1) (= (length requests) 1)
+                            (eq (caar requests) server)
+                            (eq (plist-get (gethash target copilot-cs-eglot--states)
+                                           :mode) 'go-mode))
+                 (error "Go query did not adopt its ready project server"))""",
+            language="go",
+        )
+
+    def test_unmatched_queries_do_not_open_files_or_start_servers(self):
+        for target in (
+            "/ghcs:other:/workspaces/project/target.rb",
+            "/ghcs:fixture:/workspaces/other/target.rb",
+            "/ghcs:fixture:/workspaces/project/target.go",
+            "/ghcs:fixture:/workspaces/project/../../etc/target.rb",
+            "/tmp/target.rb",
+        ):
+            with self.subTest(target=target):
+                self.project_query(
+                    f"""(setq target {json.dumps(target)})
+                        (let ((rejected nil))
+                          (condition-case nil (copilot-cs-eglot-document-symbols target)
+                            (error (setq rejected t)))
+                          (unless (and rejected (zerop file-reads) (null requests))
+                            (error "An unmatched query opened a file or sent a request")))"""
+                )
+
+    def test_missing_or_out_of_scope_files_are_rejected_before_opening(self):
+        for flag in ("scope-allowed", "same-project", "file-present"):
+            with self.subTest(flag=flag):
+                self.project_query(
+                    f"""(setq {flag} nil)
+                        (let ((reason nil))
+                          (condition-case err (copilot-cs-eglot-document-symbols target)
+                            (error (setq reason (error-message-string err))))
+                          (unless (and reason
+                                       (or (string-match-p "Refusing Eglot" reason)
+                                           (string-match-p "not a regular file" reason))
+                                       (zerop file-reads) (null requests))
+                            (error "Missing scope/file validation: %S" reason)))"""
+                )
+
+    def test_stopped_or_disconnected_project_servers_are_not_restarted(self):
+        for setup in (
+            "(copilot-cs-eglot--record anchor 'stopped :server server :buffer anchor-buffer)",
+            "(setf (eglot--shutdown-requested server) t)",
+            "(delete-process process)",
+        ):
+            with self.subTest(setup=setup):
+                self.project_query(
+                    f"""{setup}
+                        (let ((rejected nil))
+                          (condition-case nil (copilot-cs-eglot-document-symbols target)
+                            (error (setq rejected t)))
+                          (unless (and rejected (zerop file-reads) (null requests))
+                            (error "An inactive project caused a reconnect")))"""
+                )
+
+    def test_stopping_during_file_preparation_is_not_overwritten(self):
+        self.project_query(
+            """(setq cancel-during-read t)
+               (let ((rejected nil))
+                 (condition-case nil (copilot-cs-eglot-document-symbols target)
+                   (error (setq rejected t)))
+                 (unless (and rejected (= file-reads 1) (zerop activations) (null requests)
+                              (eq (plist-get (gethash target copilot-cs-eglot--states)
+                                             :status) 'stopped)
+                              (jsonrpc-running-p server))
+                   (error "File preparation overwrote cancellation or stopped the shared server")))"""
+        )
+
+    def test_a_mismatched_buffer_cannot_use_the_ready_project_server(self):
+        for setup in (
+            "(setq eglot--cached-server 'other-server)",
+            "(setq major-mode 'go-mode)",
+        ):
+            with self.subTest(setup=setup):
+                self.project_query(
+                    f"""(with-current-buffer target-buffer {setup})
+                        (let ((rejected nil))
+                          (condition-case nil (copilot-cs-eglot-document-symbols target)
+                            (error (setq rejected t)))
+                          (unless (and rejected (= file-reads 1) (zerop activations)
+                                       (null requests)
+                                       (null (gethash target copilot-cs-eglot--states))
+                                       (jsonrpc-running-p server))
+                            (error "A mismatched buffer was adopted or sent a request")))"""
+                )
+
+    def test_query_file_preparation_remains_bounded(self):
+        for stage in ("scope", "read", "activate"):
+            with self.subTest(stage=stage):
+                self.project_query(
+                    f"""(setq slow-stage '{stage})
+                        (let ((copilot-cs-eglot-preparation-timeout 0.05)
+                              (started (float-time)) reason)
+                          (condition-case err (copilot-cs-eglot-document-symbols target)
+                            (error (setq reason (error-message-string err))))
+                          (unless (and reason (string-match-p "preparation timed out" reason)
+                                       (< (- (float-time) started) 0.5)
+                                       (null requests) (jsonrpc-running-p server))
+                            (error "Query preparation was unbounded or stopped the server: %S"
+                                   reason)))"""
+                )
+
+
 class EglotReconnectTests(HelperTestCase):
     def test_codespace_servers_cannot_autoreconnect_after_shutdown(self):
         for root in ("/ghcs:test-codespace:/workspaces/test/",

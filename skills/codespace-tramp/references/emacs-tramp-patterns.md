@@ -367,7 +367,8 @@ automatic reconnection. Duplicate pending starts reuse the same attempt, and
  "/ghcs:<CS_ID>:/workspaces/<dir>/path/to/file.go")
 ```
 
-Wait for `state=ready` and `server=running`, then query the managed file:
+Wait for `state=ready` and `server=running`, then query that file or another
+Ruby or Go file served by the same Codespace project and language server:
 
 ```elisp
 (copilot-cs-eglot-document-symbols "<remote-path>")
@@ -380,6 +381,15 @@ Wait for `state=ready` and `server=running`, then query the managed file:
 Line numbers are one-based; columns are zero-based. Semantic calls have a
 12-second request deadline so one server request cannot consume the complete
 MCP budget.
+
+For an unrecorded file, a query reuses a ready server only after checking the
+Codespace, project and language. File preparation has its own 12-second bound
+and rejects missing files and paths that resolve outside that project. The
+requested file gets its own managed buffer and state; requests never use the
+representative file's contents or location. Status calls do not open files,
+and a query cannot start a missing server or restart a stopped one.
+`copilot-cs-eglot-stop` is server-scoped: stopping any managed file stops the
+shared language server for every buffer using it in that Emacs session.
 
 The configured servers are:
 

@@ -787,7 +787,8 @@ starting Eglot or replaying unrelated jobs. Repeating a pending start does not
 open another connection. `copilot-cs-eglot-stop` also cancels a pending start.
 
 Poll `copilot-cs-eglot-status` until it reports `state=ready` and
-`server=running`. Then use the semantic helpers:
+`server=running`. Then use the semantic helpers for that file or another Ruby
+or Go file served by the same Codespace project and language server:
 
 ```elisp
 (copilot-cs-eglot-document-symbols "<remote-path>")
@@ -796,6 +797,13 @@ Poll `copilot-cs-eglot-status` until it reports `state=ready` and
 (copilot-cs-eglot-references "<remote-path>" 12 4)
 (copilot-cs-eglot-diagnostics "<remote-path>")
 ```
+
+Queries prepare an unrecorded file within the same 12-second preparation bound,
+checking its canonical project boundary before opening it. They reuse the
+existing server rather than starting or reconnecting one. Status reads remain
+passive.
+`copilot-cs-eglot-stop` is server-scoped: stopping any managed file stops the
+shared language server for every buffer using it in that Emacs session.
 
 Lines are one-based and columns are zero-based. Ruby projects use Sorbet when
 `sorbet/config` exists and Ruby LSP otherwise; Go projects use gopls. The

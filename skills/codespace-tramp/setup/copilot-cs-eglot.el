@@ -34,10 +34,10 @@
   "Maximum seconds a semantic request may occupy one MCP tool call.")
 
 (defconst copilot-cs-eglot-preparation-timeout 12
-  "Maximum seconds for synchronous file preparation during Eglot startup.")
+  "Maximum seconds for file preparation during Eglot startup or queries.")
 
 (defvar copilot-cs-eglot--states (make-hash-table :test #'equal)
-  "Remote path to the latest asynchronous Eglot startup state.")
+  "Remote path to its startup or shared-server buffer state.")
 
 (defun copilot-cs-eglot--project-root (project)
   "Return PROJECT's root, falling back to the current project."
@@ -316,11 +316,61 @@ MODE defaults from PATH and must be a member of
   (let ((buffer (plist-get (gethash path copilot-cs-eglot--states) :buffer)))
     (and (buffer-live-p buffer) buffer)))
 
+(defun copilot-cs-eglot--adopt-project-buffer (path)
+  "Open PATH using an already-ready server for its project and language."
+  (unless (and (copilot-cs-eglot--basic-path-p path)
+               (copilot-cs-eglot--basic-path-p (expand-file-name path)))
+    (error "PATH must be a ghcs file below /workspaces/"))
+  (let* ((mode (copilot-cs-eglot--infer-mode path))
+         (project (copilot-cs-eglot-project-find
+                   (file-name-directory (expand-file-name path))))
+         (root (project-root project))
+         servers)
+    (maphash
+     (lambda (_ recorded)
+       (let ((server (plist-get recorded :server)))
+         (when (and (eq (plist-get recorded :status) 'ready)
+                    server (jsonrpc-running-p server)
+                    (not (eglot--shutdown-requested server))
+                    (memq mode (eglot--major-modes server))
+                    (eglot--project server)
+                    (equal root (file-name-as-directory
+                                 (project-root (eglot--project server)))))
+           (cl-pushnew server servers))))
+     copilot-cs-eglot--states)
+    (unless servers
+      (error "No ready Eglot session for `%s'; start its project server first" path))
+    (with-timeout (copilot-cs-eglot-preparation-timeout
+                   (error "Eglot file preparation timed out for `%s'" path))
+      (unless (and (copilot-cs-eglot--editable-path-p path)
+                   (file-in-directory-p path root))
+        (error "Refusing Eglot access outside its ready Codespace project"))
+      (unless (file-regular-p path)
+        (error "Eglot query path is not a regular file: `%s'" path))
+      (when (gethash path copilot-cs-eglot--states)
+        (error "Eglot state changed while preparing `%s'" path))
+      (let* ((eglot-sync-connect nil)
+             (buffer (find-file-noselect path)))
+        (when (gethash path copilot-cs-eglot--states)
+          (error "Eglot state changed while preparing `%s'" path))
+        (with-current-buffer buffer
+          (let ((server (eglot-current-server)))
+            (unless (and (memq server servers) (jsonrpc-running-p server)
+                         (not (eglot--shutdown-requested server))
+                         (memq major-mode (eglot--major-modes server)))
+              (error "The ready project server is not managing `%s'" path))
+            (eglot--maybe-activate-editing-mode)
+            (unless (and (eglot-managed-p) (jsonrpc-running-p server))
+              (error "Eglot did not begin managing `%s'" path))
+            (when (gethash path copilot-cs-eglot--states)
+              (error "Eglot state changed while preparing `%s'" path))
+            (copilot-cs-eglot--record
+             path 'ready :mode major-mode :buffer buffer :server server)))))))
+
 (defun copilot-cs-eglot--server (path)
   "Return PATH's running Eglot server, or signal a useful error."
-  (let ((entry (gethash path copilot-cs-eglot--states)))
-    (unless entry
-      (error "No Eglot session recorded for `%s'" path))
+  (let ((entry (or (gethash path copilot-cs-eglot--states)
+                   (copilot-cs-eglot--adopt-project-buffer path))))
     (when (eq (plist-get entry :status) 'error)
       (error "%s" (plist-get entry :error)))
     (let ((buffer (copilot-cs-eglot--state-buffer path)))
