@@ -2245,6 +2245,83 @@ os.execv("/bin/sh", ["sh", "-c", command])
             output="completed\n__COPILOT_CS_DONE_job-state-fixture__:0\n",
         )
 
+    def test_completed_stream_closes_without_polling(self):
+        self.executable(
+            "completed-stream",
+            """import sys, time
+print("source text", flush=True)
+marker = "__COPILOT_CS_DONE_job-stream-fixture__:" + sys.argv[1] + "\\n"
+split = int(sys.argv[2])
+if split:
+    print(marker[:split], end="", flush=True)
+    time.sleep(0.1)
+    print(marker[split:], end="", flush=True)
+else:
+    print(marker, end="", flush=True)
+time.sleep(5)
+print("shell closed: exit status 255", file=sys.stderr, flush=True)
+raise SystemExit(255)
+""",
+        )
+        marker = "__COPILOT_CS_DONE_job-stream-fixture__:"
+        for code, split in ((0, 0), (23, 0), (10, len(marker) - 4), (10, len(marker) + 1)):
+            with self.subTest(code=code, split=split):
+                command = f"exec {shlex.quote(str(self.bin / 'completed-stream'))} {code} {split}"
+                self.emacs(
+                    f"""(progn
+                      (copilot-cs-use nil ".")
+                      (let* ((job (copilot-cs--start "job-stream-fixture" {json.dumps(command)}))
+                             (process (plist-get job :process))
+                             (buffer (plist-get job :buffer))
+                             (deadline (+ (float-time) 3)))
+                        (unwind-protect
+                            (progn
+                              (setq copilot-cs--last-id "other-job")
+                              (while (and (process-live-p process)
+                                          (< (float-time) deadline))
+                                (accept-process-output nil 0.05))
+                              (unless (and (not (process-live-p process))
+                                           (eq (copilot-cs--state job) 'done)
+                                           (equal (copilot-cs--rc job) {code})
+                                           (equal copilot-cs--last-id "other-job")
+                                           (string-match-p "source text" (copilot-cs--text job))
+                                           (not (string-match-p "shell closed"
+                                                                (copilot-cs--text job))))
+                                (error "Completed stream stayed open or changed the job result")))
+                          (when (process-live-p process) (delete-process process))
+                          (when (buffer-live-p buffer) (kill-buffer buffer)))))"""
+                )
+
+    def test_fragmented_completion_waits_for_the_exit_codes_newline(self):
+        marker = "__COPILOT_CS_DONE_job-state-fixture__:"
+        output = marker + "10\n"
+        for split in (len(marker) - 4, len(marker) + 1):
+            with self.subTest(split=split):
+                self.check_job(
+                    f"""(copilot-cs--filter-output job process {json.dumps(output[:split])})
+                       (unless (and (process-live-p process) (null (copilot-cs--rc job)))
+                         (error "A partial completion marker closed the stream"))
+                       (copilot-cs--filter-output job process {json.dumps(output[split:])})
+                       (unless (and (not (process-live-p process))
+                                    (equal (copilot-cs--rc job) 10))
+                         (error "The complete exit code was not preserved"))""",
+                    live=True,
+                )
+
+    def test_completed_stream_retains_already_received_transport_diagnostics(self):
+        self.check_job(
+            """(copilot-cs--filter-output
+                 job process
+                 "source text\\n__COPILOT_CS_DONE_job-state-fixture__:0\\nshell closed: exit status 255\\n")
+               (unless (and (not (process-live-p process))
+                            (equal (copilot-cs--rc job) 0)
+                            (string-match-p "source text" (copilot-cs--output-text job))
+                            (string-match-p "shell closed: exit status 255"
+                                            (copilot-cs--output-text job)))
+                 (error "Completion discarded diagnostics or changed the command result"))""",
+            live=True,
+        )
+
     def test_partial_or_embedded_ack_does_not_confirm_launch(self):
         for output in (
             "__COPILOT_CS_ACK_job-state-fixture_",

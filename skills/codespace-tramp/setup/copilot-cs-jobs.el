@@ -111,6 +111,10 @@ marker-shaped -- grepping this repository, say -- cannot be mistaken for a
 finished job."
   (format "__COPILOT_CS_DONE_%s__:" id))
 
+(defun copilot-cs--done-regexp (id)
+  "Match ID's complete exit marker, including its terminating newline."
+  (concat "^" (regexp-quote (copilot-cs--done-marker id)) "\\([0-9]+\\)\n"))
+
 (defun copilot-cs--ack-marker (id)
   "Return the line the launcher prints once job ID is detached and running."
   (format "__COPILOT_CS_ACK_%s__" id))
@@ -262,6 +266,8 @@ LABEL describes the job in status reports.  Returns the job plist."
     ;; The default sentinel writes "Process ... killed" into the buffer, which
     ;; would show up as job output.  The buffer holds job output only.
     (set-process-sentinel process #'ignore)
+    (set-process-filter
+     process (lambda (stream output) (copilot-cs--filter-output job stream output)))
     (puthash id job copilot-cs--jobs)
     (setq copilot-cs--last-id id)
     job))
@@ -287,12 +293,24 @@ or (copilot-cs-attach \"%s\") to re-attach to a job from an earlier session"
 The marker must occupy a whole line, and carries JOB's id, so ordinary
 output cannot be mistaken for it."
   (let ((text (copilot-cs--text job)))
-    (when (string-match (concat "^"
-                                (regexp-quote
-                                 (copilot-cs--done-marker (plist-get job :id)))
-                                "\\([0-9]+\\)$")
-                        text)
+    (when (string-match (copilot-cs--done-regexp (plist-get job :id)) text)
       (string-to-number (match-string 1 text)))))
+
+(defun copilot-cs--filter-output (job process output)
+  "Retain OUTPUT for JOB and close PROCESS when its complete marker arrives."
+  (let ((buffer (process-buffer process))
+        (start (marker-position (process-mark process))))
+    (internal-default-process-filter process output)
+    (when (and (buffer-live-p buffer) start (string-match-p "\n" output))
+      (with-current-buffer buffer
+        (save-excursion
+          (goto-char start)
+          ;; Rescan only the partial line carried over from the previous chunk.
+          (beginning-of-line)
+          (when (and (re-search-forward
+                      (copilot-cs--done-regexp (plist-get job :id)) nil t)
+                     (process-live-p process))
+            (delete-process process)))))))
 
 (defun copilot-cs--acked-p (job)
   "Return non-nil once the launcher confirmed JOB is detached and running."
