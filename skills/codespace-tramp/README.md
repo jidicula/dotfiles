@@ -288,7 +288,7 @@ Calls to one daemon queue behind a per-daemon invocation lock before starting a 
 | [`setup/copilot-gh-retry`](setup/copilot-gh-retry) | Pre-dispatch retries, shared signing gate, and strictly GET-only API discovery |
 | [`setup/copilot-emacs-mcp-call`](setup/copilot-emacs-mcp-call) | Canonical, protocol-aware direct MCP client |
 | [`setup/copilot-issues-lock`](setup/copilot-issues-lock) | Transactional lock for concurrent issue-log updates |
-| [`ISSUES.md`](ISSUES.md) | Durable symptom reports and resolutions for workflow failures |
+| [`ISSUES.md`](ISSUES.md) | Durable symptom reports and resolutions for defects in the skill itself |
 
 ## Maintainer regression tests
 
@@ -302,7 +302,9 @@ The cases cover local-only Git config and tag signing, unsigned agent jobs, key-
 
 ## Reporting problems
 
-Unexpected MCP, Emacs, TRAMP, SSH, Codespace, or runner behaviour must be recorded immediately in [`ISSUES.md`](ISSUES.md), even when a workaround is available or the problem is fixed in the same session.
+[`ISSUES.md`](ISSUES.md) is only for defects in this skill's instructions, bundled helpers, or Codespace/Emacs/TRAMP/MCP orchestration. Record those defects immediately, even when a workaround is available or the problem is fixed in the same session. Repository inner-loop failures, such as application bugs, tests, bootstrap/dependencies, backing services, or repository-owned CI, do not belong there.
+
+For upstream repository problems, identify the owning team's repository, check for an existing report, and use `ask_user` to obtain explicit permission before creating an issue. Show the proposed destination, title, and sanitised symptoms/reproduction; decline or cancellation means no issue. Permission to file an issue, or a request to maintain this skill or fix its local log, does not authorise upstream implementation, environment changes, or a PR. Preserve historical reports rather than automatically migrating or acting on them.
 
 Reports describe observable symptoms only. Updates are serialized through `setup/copilot-issues-lock` so concurrent Copilot sessions cannot overwrite each other's issue-log or Git-index changes.
 

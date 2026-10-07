@@ -1,12 +1,22 @@
 # Codespace TRAMP issues
 
-This file records unexpected behaviour encountered while using the
-`codespace-tramp` skill so it can be reproduced and addressed later. Initial
+This file records defects in the `codespace-tramp` skill's instructions,
+bundled helpers, and Codespace/Emacs/TRAMP/MCP orchestration. It is not a log
+for repository inner-loop failures such as application bugs, tests,
+bootstrap/dependencies, backing services, or repository-owned CI. Initial
 reports are observation logs, not diagnoses.
+
+For upstream repository problems, follow the
+[skill's reporting scope and approval rules](SKILL.md#record-problems-for-follow-up):
+identify the owning team's repository and use `ask_user` to obtain explicit
+permission before opening an issue there. Show the proposed destination, title,
+and sanitised symptoms/reproduction. Issue-filing approval is not permission
+for implementation, environment changes, or a PR. Preserve historical reports;
+do not automatically migrate or implement their upstream fixes.
 
 ## Recording rules
 
-1. Add an entry as soon as a problem is observed, even if a workaround exists
+1. Add an entry as soon as a skill defect is observed, even if a workaround exists
    or the problem is fixed during the same session.
 2. Assign the next sequential id in the form `CT-NNNN`, starting with
    `CT-0001`. Never reuse an id.
