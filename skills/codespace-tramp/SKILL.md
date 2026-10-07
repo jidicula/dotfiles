@@ -552,6 +552,10 @@ devcontainer needs and can break dependency bootstrap. List the configs first:
   --jq '.devcontainers[] | "\(.path)\t\(.display_name)"'
 ```
 
+Always quote query-string endpoints, including literal ones. In interactive
+zsh, an unquoted `?` is a glob and can fail with `no matches found` before
+the helper runs. Keep shell glob checking enabled; quote the argument instead.
+
 If there is exactly one, use its path. If there are several, **prompt the user
 with `ask_user`** to choose, showing `display_name` and passing `path` to
 `--devcontainer-path`. Prefer the repo's plainest "base"/default entry as the
@@ -1437,6 +1441,11 @@ Ask the user for the correct commands if none are supplied.
 
 ## Troubleshooting
 
+- **GitHub MCP reports a missing `Mcp-Param-owner` header despite an `owner`
+  argument:** rediscover the tool schema and retry the read-only request once.
+  If the valid request still fails, use the operator's authenticated local `gh`
+  for the equivalent API read. Do not alter credentials, permissions, or the
+  requested repository to work around a tool-dispatch failure.
 - **`Found 0 tools` for the optional `emacs-codespace` registration:** this is
   local Copilot MCP discovery, not Codespace availability. The canonical direct
   client does not need this registration. If also using the native tool,
@@ -1718,12 +1727,15 @@ Ask the user for the correct commands if none are supplied.
   Confirm the exact run and its current attempt before an authorised rerun;
   never replay an ambiguous mutation or rerun merely because a mutable
   workflow-source ref advanced.
-- **CI log downloads report stream cancellation:** use the cookbook's
+- **CI log downloads report stream cancellation or refuse terminal escape
+  sequences:** use the cookbook's
   [job-scoped log fallback](references/emacs-tramp-patterns.md#github-control-plane-operations-use-local-gh)
   to retrieve the identified job through the local Actions API instead of
-  repeatedly downloading the entire run archive. Encode control characters
-  before displaying or storing the result; do not rerun CI or change credentials
-  merely to retrieve logs.
+  repeatedly downloading the entire run archive. `gh api` needs
+  `--allow-escape-sequences` before its output can reach the encoder; use that
+  flag only in the shown JSON-encoding pipeline, never to print a raw log.
+  Check the pipeline status and nonempty result. Do not rerun CI or change
+  credentials merely to retrieve logs.
 - **`gh codespace cp` fails for an absolute path or cannot find a relative
   result:** the raw command bypassed the workflow's required transport. Use
   `setup/copilot-ghcs cp "$CS_ID" <local-path> remote:/absolute/path` or
