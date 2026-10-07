@@ -104,8 +104,9 @@ Secretive approval before every task.
 `copilot-gh-retry` accepts only complete known errors from `gh`'s pre-dispatch
 phase: SSH RPC `DeadlineExceeded`/`Unavailable`, the GitHub API connection
 diagnostic, or a complete Codespace-details refresh error ending in a TLS
-handshake timeout or unexpected EOF. The GET-only discovery mode also accepts
-those two raw GitHub API GET errors, not arbitrary SSH or tunnel errors.
+handshake timeout or unexpected EOF. It also accepts the exact Codespace-details
+HTTP 500 diagnostic, not generic HTTP errors. The GET-only discovery mode also
+accepts those two raw GitHub API GET errors, not arbitrary SSH or tunnel errors.
 It requires no stdout and rejects additional diagnostics such as
 `shell closed` or `tunnel closed`. Those errors come after ssh/scp may have
 executed work and are never replayed. Retries are bounded to three attempts

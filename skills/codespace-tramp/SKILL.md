@@ -723,8 +723,11 @@ retries only complete, known `gh` diagnostics proving that API/SSH setup failed
 **before ssh or scp was dispatched**. Those include SSH RPC `DeadlineExceeded`,
 `Unavailable`, `error connecting to api.github.com`, and the complete
 Codespace-details refresh diagnostic ending in a TLS handshake timeout or
-unexpected EOF. The strictly GET-only discovery helper also handles those two
-raw GitHub API GET errors. There are at most three attempts with five-/ten-second
+unexpected EOF. The exact
+`getting full codespace details: error making request: received response with status code 500`
+diagnostic is also retryable; other HTTP errors are not. The strictly GET-only
+discovery helper also handles those two raw GitHub API GET errors.
+There are at most three attempts with five-/ten-second
 backoff. Any stdout, a remote exit or tunnel error, an authentication failure,
 or an unrecognized error prevents retry.
 An unacknowledged job alone is never sufficient evidence to replay it.

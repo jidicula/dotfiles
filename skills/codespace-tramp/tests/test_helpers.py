@@ -498,7 +498,7 @@ class ApiConnectionTests(WarmupTests):
         self.assertFalse(self.calls.exists())
 
     def test_http_errors_are_not_retried(self):
-        for status in (401, 403, 404, 410):
+        for status in (401, 403, 404, 410, 500, 502, 503, 504):
             with self.subTest(status=status):
                 self.env["FAKE_GH_ERROR"] = f"gh: unavailable (HTTP {status})"
                 self.env["FAKE_GH_FAILURES"] = "100"
@@ -539,6 +539,41 @@ class ApiConnectionTests(WarmupTests):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(len(self.recorded_calls()), 2)
                     self.assertEqual(*self.recorded_calls())
+
+
+class CodespaceDetailsServerErrorTests(WarmupTests):
+    rpc_error = (
+        "getting full codespace details: error making request: "
+        "received response with status code 500"
+    )
+
+    def test_stdout_prevents_http_500_retry(self):
+        for output in ("__COPILOT_CS_ACK_job-fixture__", "_", "payload"):
+            with self.subTest(output=output):
+                self.calls.unlink(missing_ok=True)
+                self.env["FAKE_GH_STDOUT"] = output
+                result = self.invoke("ssh", "test-codespace", "run-once")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stdout, output + "\n")
+                self.assertEqual(len(self.recorded_calls()), 1)
+                self.assertFalse(self.sleeps.exists())
+
+    def test_authentication_prevents_http_500_retry(self):
+        self.env["FAKE_GH_AUTHENTICATED"] = "1"
+        result = self.invoke("ssh", "test-codespace", "run-once")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(len(self.recorded_calls()), 1)
+        self.assertFalse(self.sleeps.exists())
+
+    def test_other_codespace_details_http_errors_are_not_retried(self):
+        for status in (401, 403, 404, 410, 429, 501, 502, 503, 504, 5000):
+            with self.subTest(status=status):
+                self.calls.unlink(missing_ok=True)
+                self.env["FAKE_GH_ERROR"] = self.rpc_error.replace("500", str(status))
+                result = self.invoke("ssh", "test-codespace", "run-once")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(len(self.recorded_calls()), 1)
+                self.assertFalse(self.sleeps.exists())
 
 
 class ConnectionSafetyTests(SecretiveTransportTestCase):
@@ -662,6 +697,7 @@ sys.exit(17)
             DEADLINE_ERROR, UNAVAILABLE_ERROR, ApiConnectionTests.rpc_error,
             REFRESH_ERROR + "net/http: TLS handshake timeout",
             REFRESH_ERROR + "unexpected EOF",
+            CodespaceDetailsServerErrorTests.rpc_error,
         ):
             with self.subTest(error=error):
                 self.assertTrue(helper.startup_failure(error.encode(), False))

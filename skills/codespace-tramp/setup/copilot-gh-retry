@@ -30,6 +30,10 @@ CODESPACE_REFRESH_ERROR = re.compile(
     rb'\?internal=true&refresh=true": '
     rb"(?:net/http: TLS handshake timeout|unexpected EOF)"
 )
+CODESPACE_DETAILS_SERVER_ERROR = re.compile(
+    rb"getting full codespace details: error making request: "
+    rb"received response with status code 500"
+)
 API_GET_ERROR = re.compile(
     rb'Get "https://api\.github\.com/[^\r\n"]+": '
     rb"(?:net/http: TLS handshake timeout|unexpected EOF)"
@@ -63,6 +67,7 @@ def startup_failure(stderr, had_stdout, *, api_get=False):
         RPC_STARTUP_ERROR.fullmatch(error)
         or API_CONNECTION_ERROR.fullmatch(error)
         or CODESPACE_REFRESH_ERROR.fullmatch(error)
+        or CODESPACE_DETAILS_SERVER_ERROR.fullmatch(error)
         or (api_get and API_GET_ERROR.fullmatch(error))
     )
 
