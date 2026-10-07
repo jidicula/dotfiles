@@ -2219,6 +2219,21 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 self.assertFalse(self.assignment_calls())
                 self.commits[oid]["verification"]["verified"] = True
 
+    def test_unverified_commit_reports_account_context_without_terminal_controls(self):
+        for name in ("GitHub", "GitHub\x1b[2J"):
+            with self.subTest(name=name):
+                commit = copy.deepcopy(self.commits[self.receipt["head"]])
+                commit["verification"].update(verified=False, reason="unknown_key")
+                commit["committer"].update(name=name, email="noreply@github.com")
+                with self.assertRaisesRegex(ValueError, "not verified") as failure:
+                    self.helper.verify_github_commit(self.receipt["head"], commit, self.key)
+                message = str(failure.exception)
+                self.assertNotIn("\x1b", message)
+                self.assertEqual(json.loads(message.split(": ", 1)[1]), {
+                    "reason": "unknown_key",
+                    "committer": {"name": name, "email": "noreply@github.com"},
+                })
+
     def test_failed_unassignment_blocks_finalisation_and_readiness(self):
         self.original["assignees"].append({"login": "fixture"})
         self.drop_assignment = True
@@ -2290,6 +2305,7 @@ class GitHubEndorsementTests(EndorsementTestCase):
         self.assertIn("https://github.com/example/other/issues/23", self.replacement["body"])
         self.assertIn("https://github.com/example/project/pull/45", self.replacement["body"])
         self.assertIn(result["url"], self.comments[0]["body"])
+        self.assertEqual(self.comments[0]["body"].count("Authored by Copilot, guided by @jidicula."), 1)
         closed = ("PATCH", "repos/example/project/pulls/12", {"state": "closed"})
         self.assertLess(self.calls.index(closed), self.calls.index(self.readiness_calls()[0]))
         self.assertEqual(self.readiness_calls()[0][2]["variables"]["id"], "PR_replacement")
@@ -2299,8 +2315,29 @@ class GitHubEndorsementTests(EndorsementTestCase):
         self.calls.clear()
         self.assertEqual(self.finish(), first)
         self.assertEqual(len(self.comments), 1)
+        self.assertEqual(self.comments[0]["body"].count("Authored by Copilot, guided by @jidicula."), 1)
         self.assertFalse(self.readiness_calls())
         self.assertFalse(any(method == "POST" and endpoint != "graphql"
+                             for method, endpoint, _ in self.calls))
+
+    def test_existing_crlf_supersession_notice_is_not_duplicated(self):
+        first = self.finish()
+        self.comments[0]["body"] = self.comments[0]["body"].replace("\n", "\r\n")
+        self.calls.clear()
+        self.assertEqual(self.finish(), first)
+        self.assertEqual(len(self.comments), 1)
+        self.assertIn("\r\n", self.comments[0]["body"])
+        self.assertFalse(any(method == "POST" and endpoint.endswith("/comments")
+                             for method, endpoint, _ in self.calls))
+
+    def test_existing_legacy_supersession_notice_is_not_duplicated(self):
+        first = self.finish()
+        self.comments[0]["body"] = self.comments[0]["body"].replace(
+            "\n\nAuthored by Copilot, guided by @jidicula.\n\n", " ")
+        self.calls.clear()
+        self.assertEqual(self.finish(), first)
+        self.assertEqual(len(self.comments), 1)
+        self.assertFalse(any(method == "POST" and endpoint.endswith("/comments")
                              for method, endpoint, _ in self.calls))
 
     def draft_calls(self):

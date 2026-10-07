@@ -727,10 +727,17 @@ def verify_github_commit(oid, commit, key):
     require(isinstance(commit, dict) and commit.get("sha") == oid,
             "GitHub returned a different commit object")
     verification = commit.get("verification")
+    committer = commit.get("committer")
+    details = {
+        "reason": verification.get("reason") if isinstance(verification, dict) else None,
+        "committer": {field: committer.get(field) for field in ("name", "email")}
+        if isinstance(committer, dict) else None,
+    }
     require(isinstance(verification, dict) and verification.get("verified") is True
             and isinstance(verification.get("signature"), str) and verification["signature"]
             and isinstance(verification.get("payload"), str) and verification["payload"],
-            "GitHub has not verified the endorsement; check signing-key registration")
+            "GitHub has not verified the endorsement; check committer account and signing-key "
+            "registration: " + json.dumps(details, sort_keys=True))
     payload, signature = verification["payload"].encode(), verification["signature"].encode()
     if key is not None:
         verify_signature(key, payload, signature)
@@ -1494,10 +1501,13 @@ def finish(receipt, approval):
     preservation = (" Preserved GitHub base-only merges retain their original signatures."
                     if plan.get("preserved_base_merges") else "")
     signing_scope = "with new work signed" if plan.get("preserved_base_merges") else "signed"
-    comment = (f"Superseded by {replacement['html_url']}, containing the reviewed commit range "
-               f"{signing_scope} with the endorsement key `{request['fingerprint']}`.{preservation} {marker}")
+    notice = (f"Superseded by {replacement['html_url']}, containing the reviewed commit range "
+              f"{signing_scope} with the endorsement key `{request['fingerprint']}`.{preservation}")
+    comment = f"{notice}\n\nAuthored by Copilot, guided by @jidicula.\n\n{marker}"
     comments = github_pages(f"repos/{repository}/issues/{request['pr']}/comments?per_page=100")
-    if not any(item["body"] == comment for item in comments):
+    if not any(isinstance(item["body"], str)
+               and item["body"].replace("\r\n", "\n") in (comment, f"{notice} {marker}")
+               for item in comments):
         github(f"repos/{repository}/issues/{request['pr']}/comments", "POST", {"body": comment})
     latest = confirm_drafts()
     if latest["state"] == "open":

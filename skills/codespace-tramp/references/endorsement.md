@@ -100,6 +100,13 @@ finalisation independently rechecks GitHub's base-merge verification. Existing
 version 1/2 plans retain their original semantics; never edit or upgrade one.
 Older helpers reject version 3 instead of silently dropping the exception.
 
+Inspect committer identities throughout the introduced range before preparation;
+the author is not a substitute for the committer. Codespaces can supply
+`GitHub <noreply@github.com>` (`web-flow`), which is not the operator's account.
+An operator-key signature can verify locally while GitHub reports `unknown_key`
+for that committer. Check the resolved committer account as well as signing-key
+registration instead of changing keys or signing again blindly.
+
 Preserve committer identity on new commits by default. If an override is needed,
 pass `--committer-name "<name>" --committer-email "<email>"` to `prepare` as a
 proposal, without a separate permission prompt. Both values are required and

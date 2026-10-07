@@ -1302,6 +1302,11 @@ human approval: retain the original plan and check current mergeability and CI.
 Conflicts require further work; unknown mergeability pauses the same plan rather
 than requiring another approval. Base rewrites or rewinds are not advances.
 
+Before preparation, inspect the introduced commits' committers, not just their
+authors. A Codespace can supply `GitHub <noreply@github.com>` (`web-flow`);
+GitHub can then report `unknown_key` even when the operator's key is registered
+and the signature verifies locally.
+
 Follow the [endorsement command reference](references/endorsement.md) for the
 complete protocol:
 
