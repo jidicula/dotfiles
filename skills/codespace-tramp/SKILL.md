@@ -34,6 +34,13 @@ examples below are submitted through that client:
   '(copilot-cs-status)'
 ```
 
+Keep MCP evaluations short and bounded. **Do not parse, group, or filter logs
+with ad hoc Elisp loops inside this daemon.** Retrieve a named job's output in
+its own call and [analyse it in a separate process](references/emacs-tramp-patterns.md#analysing-retained-job-output-safely).
+Do not combine log analysis with job launches in one `progn`. A client timeout
+stops waiting for a response; it does not cancel an already-running Elisp
+expression.
+
 Emacs owns the state: its processes and buffers persist across turns, so a build
 started in one turn can be read in a later one. The commands themselves run
 detached inside the Codespace, so they survive a dropped connection or even the
@@ -1578,6 +1585,16 @@ Ask the user for the correct commands if none are supplied.
   zero-second wait returns immediately even while connection setup is queued.
   Other synchronous Elisp operations can still block: run commands through
   `copilot-cs-sh`, not inline remote primitives.
+- **A log-summary evaluation times out and later calls report a busy daemon:**
+  a read-only Elisp loop can monopolise the same event loop needed for status
+  calls. `split-string` can overwrite regex match data, so consulting
+  `match-string` or `match-end` afterwards can corrupt grouping keys and move a
+  scan backwards indefinitely. Do not replay the expression or increase the
+  client timeout. Use the
+  [separate-process log recipe](references/emacs-tramp-patterns.md#analysing-retained-job-output-safely)
+  for future analysis. If the daemon is still unresponsive, follow the
+  operator-approved recovery above and recover existing jobs by id, not by
+  rerunning their commands.
 - **`timed out waiting for ...; no evaluation was sent`:** the direct client's
   bounded queue expired before dispatch, not during a remote command.
   Reuse of a healthy daemon no longer probes other sessions. Queueing has its

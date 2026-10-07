@@ -914,7 +914,7 @@ Repeat while the state is `connecting`, `running`, or `detached`. Stop on
 an endless polling loop. Read the complete output with:
 
 ```elisp
-(copilot-cs-output)
+(copilot-cs-output "job-124114-003")
 ```
 
 Reports include only the tail of the output; `copilot-cs-output` always returns
@@ -956,6 +956,43 @@ ambiguous, select the original Codespace and use `copilot-cs-attach` with the
 same job id to inspect its log and check the command's expected effects before
 deciding whether to run it again. A missing log alone is not proof that a
 command never ran. Authentication retries still obey the three-failure limit.
+
+### Analysing retained job output safely
+
+Keep log parsing, grouping, and filtering outside the dedicated Emacs daemon.
+Even a read-only loop can block every later MCP call, and the client's response
+timeout does not interrupt that evaluation. Retrieve an explicit job's output
+in a separate call; do not batch analysis with new job launches.
+
+The MCP provider prints Elisp string literals, which are not a general JSON
+encoding of arbitrary log text. Export UTF-8 as unwrapped base64 so the returned
+literal is safely JSON-decodable, then decode and store the log as escaped JSON
+outside Emacs:
+
+```bash
+set -o pipefail
+/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call \
+  '(base64-encode-string
+     (encode-coding-string (copilot-cs-output "job-124114-003") (quote utf-8))
+     t)' |
+  python3 -c 'import base64, json, sys; text = base64.b64decode(json.loads(sys.stdin.read()), validate=True).decode("utf-8"); print(json.dumps(text, ensure_ascii=True))' \
+  > "<session-files>/job-output.json"
+```
+
+Use this session's existing `COPILOT_AGENT_SESSION_ID`, a known job id, and an
+artifact path in this session's `files/` directory. Check the pipeline's exit
+status before using the artifact; a failed capture is not an empty successful
+log. The decoder requires only the Python standard library already used by
+the client, not repository dependencies on the host. Keep control characters
+escaped rather than printing the raw decoded log to the terminal.
+
+Analyse the artifact in a separate, bounded process, loading its text with
+`json.loads`. If that analysis stalls, cancel only the analysis process.
+Do not use a live daemon to debug an Elisp regex loop: helpers such as
+`split-string` can replace match data before a later `match-end` advances the
+cursor. Use a small fixture in an isolated, timeout-bounded batch Emacs instead.
+Stopping a live session daemon still requires operator approval; a timeout
+never authorises replaying unconfirmed commands.
 
 ### Other job operations
 
