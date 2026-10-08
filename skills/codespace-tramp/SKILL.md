@@ -1161,16 +1161,41 @@ weaker review gate.
    `rubber-duck` agent. Supply the
    task and intended behaviour, repository/base context, immutable Codespace name,
    exact checkout, canonical client/session details, recorded parents and tree,
-   and validation results. Require repository inspection through the existing
-   Codespace runner, not a laptop checkout. Review the frozen candidate with
+   and validation results. Explicitly list the allowed repository, checkout,
+   frozen candidate/base, and any pre-approved supporting sources. Require all
+   repository inspection through that Codespace runner, including read-only
+   searches and dependency lookups. Local access to this skill's instructions,
+   client, and designated session artifacts is not permission to inspect laptop
+   work-repository checkouts. Missing context or a failed runner must produce a
+   `blocked` result naming the required repository/ref/path, not a fallback to a
+   laptop checkout or an undeclared repository. The parent must obtain any
+   additional authorised Codespace evidence before review resumes.
+   Review the frozen candidate with
    `git diff <HEAD> <TREE>` and `git show <TREE>:<path>` where working-copy
    contents differ. Serialize calls to the same daemon; the reviewer must not
-   edit, stage, commit, push, provision another Codespace or request CCR.
+   edit, stage, commit, push, provision another Codespace, or request CCR.
 4. Ask the reviewer to challenge correctness, assumptions, regressions and missing
    coverage, with concrete locations and reasoning, and return an explicit
-   `pass`, `changes-needed` or `blocked` assessment. Independently evaluate the
-   findings. Fix actionable problems, rerun the relevant tests/lint in the
-   Codespace, and repeat rubber-duck review on the revised candidate. Record
+   `pass`, `changes-needed` or `blocked` assessment. Require a source inventory
+   identifying each inspected or cited repository/ref/path, its Codespace and
+   checkout, and the runner job or supplied-artifact reference, plus an explicit
+   declaration of scope deviations. The parent checks the complete result,
+   source inventory, and available tool/runner records; a bare assurance that
+   scope was respected is not sufficient.
+
+   **Out-of-scope or unverifiable repository evidence invalidates the review,
+   regardless of its verdict.** Read-only laptop/dependency inspection is still
+   a violation. Keep committing blocked, preserve the violation evidence, and
+   independently establish any potentially actionable finding in the authorised
+   Codespace before changing code. Correct the review inputs/routing and obtain
+   a fresh, scope-correct review; do not reuse a reviewer that inspected forbidden
+   material or carry forward its pass. Replacing an invalid review of the same
+   unchanged candidate is scope recovery, not a vote on its findings. These
+   acceptance checks do not sandbox the built-in reviewer's tools.
+
+   Independently evaluate valid findings. Fix actionable problems, rerun the
+   relevant tests/lint in the Codespace, and repeat rubber-duck review on the
+   revised candidate. Record
    evidence for rejected findings; do not ignore a disputed finding or repeatedly
    request review of unchanged code to obtain a different answer.
    Reuse a reviewer only when its invocation mode supports follow-up messages.
@@ -1181,7 +1206,8 @@ weaker review gate.
    available tool explicitly supports them.
 5. Proceed only after a completed `pass` with no unresolved actionable findings.
    If the review-owning session cannot invoke the reviewer, or the invocation
-   fails, is incomplete, returns an ambiguous result or requests human judgement,
+   fails, is incomplete, lacks auditable in-scope evidence, returns an ambiguous
+   result, or requests human judgement,
    committing remains blocked. Report the blocker and obtain an operator
    decision; a successful tool exit is not review approval.
 6. Immediately before the unsigned commit, confirm that `HEAD`, any merge parents
