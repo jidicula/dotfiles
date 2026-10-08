@@ -6,6 +6,7 @@ import fcntl
 import math
 import os
 from pathlib import Path
+import pwd
 import re
 import selectors
 import shlex
@@ -49,6 +50,12 @@ AUTHENTICATION_DENIAL = re.compile(
 )
 AUTHENTICATION_LIMIT = 3
 SETUP_PROGRESS_INTERVAL = 10
+SIGNING_NOTIFY_TIMEOUT = 10
+SIGNING_PROGRESS_LIMIT = 256
+SIGNING_PROGRESS = re.compile(
+    rb"\[copilot-cs-endorse\] signing ([1-9][0-9]*)/([1-9][0-9]*): "
+    rb"(?:[0-9a-f]{40}|[0-9a-f]{64})"
+)
 RESUME_AUTHENTICATION = (
     "request operator approval, then run copilot-ghcs resume-auth --operator-approved"
 )
@@ -205,7 +212,73 @@ def signing_command(command, public_key):
     return [*command[:-1], prefix + command[-1]]
 
 
-def run_once(command, gate, deadline, ack_marker=None, api_get=False):
+def notify_signature(index, total):
+    session = os.environ.get("COPILOT_AGENT_SESSION_ID", "")
+    daemon = os.environ.get("EMACS_MCP_SOCKET_NAME", "")
+    # Only publish opaque identifiers, not arbitrary caller text or task titles.
+    if re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
+                    session, flags=re.IGNORECASE):
+        context = f"session {session}"
+    elif re.fullmatch(r"copilot-(?:[0-9a-fA-F]{8}|pid-[0-9]{1,4})", daemon):
+        context = f"daemon {daemon}"
+    else:
+        context = "session unavailable"
+        log("warning: signing notification session context unavailable; signing continues")
+    message = (f"Copilot endorsement ({context}) is requesting SSH signature {index}/{total}. "
+               "Check Secretive for approval.")
+    process = None
+    try:
+        shell = os.environ.get("SHELL") or pwd.getpwuid(os.getuid()).pw_shell
+        process = subprocess.Popen(
+            [shell, "-ic",
+             "source ~/.shared_shell_configs && set +m && "
+             'typeset -f notify >/dev/null && \\notify "$COPILOT_CS_SIGNING_NOTICE"'],
+            env=dict(os.environ, COPILOT_CS_SIGNING_NOTICE=message),
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        status = process.wait(timeout=SIGNING_NOTIFY_TIMEOUT)
+        if status != 0:
+            log(f"warning: signing notification failed (exit {status}); signing continues")
+    except subprocess.TimeoutExpired:
+        log("warning: signing notification timed out; signing continues")
+    except (OSError, KeyError) as error:
+        log(f"warning: signing notification could not start ({type(error).__name__}); "
+            "signing continues")
+    finally:
+        if process is not None and process.returncode is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+
+
+class SigningProgressNotifier:
+    def __init__(self):
+        self.pending = b""
+
+    def feed(self, data):
+        fragments = data.split(b"\n")
+        for fragment in fragments[:-1]:
+            if self.pending is not None:
+                line = self.pending + fragment
+                if len(line) <= SIGNING_PROGRESS_LIMIT:
+                    match = SIGNING_PROGRESS.fullmatch(line.removesuffix(b"\r"))
+                    if match:
+                        index, total = (int(value) for value in match.groups())
+                        if index <= total:
+                            notify_signature(index, total)
+            self.pending = b""
+        if self.pending is not None:
+            self.pending += fragments[-1]
+            if len(self.pending) > SIGNING_PROGRESS_LIMIT:
+                # Discard through the newline, never promote an oversized line's suffix.
+                self.pending = None
+
+
+def run_once(command, gate, deadline, ack_marker=None, api_get=False, *,
+             notify_signatures=False):
     started = time.monotonic()
     next_progress = started + SETUP_PROGRESS_INTERVAL
     reported_progress = False
@@ -221,6 +294,7 @@ def run_once(command, gate, deadline, ack_marker=None, api_get=False):
     stderr_tail = b""
     stdout_tail = b"\n"
     marker = ack_marker.encode("ascii") if ack_marker else None
+    notifications = SigningProgressNotifier() if notify_signatures else None
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ, sys.stdout.buffer)
@@ -263,6 +337,8 @@ def run_once(command, gate, deadline, ack_marker=None, api_get=False):
                             stdout_tail = probe[-(len(marker) + 3):]
                         elif not api_get:
                             deadline = None
+                        if notifications is not None:
+                            notifications.feed(data)
                     elif len(stderr) + len(data) <= 65536:
                         stderr.extend(data)
                     else:
@@ -316,6 +392,7 @@ def run(command, lock=None, retry=True, identity=None, ssh_signing=False, *,
                 raise TimeoutError("connection setup deadline exceeded before dispatch")
             status, stderr, had_stdout = run_once(
                 command, gate, deadline, ack_marker, api_get,
+                notify_signatures=ssh_signing,
             )
             if status == 0:
                 gate.authenticated()

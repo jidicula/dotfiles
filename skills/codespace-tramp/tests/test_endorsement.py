@@ -663,22 +663,48 @@ class SignedHistoryTests(EndorsementTestCase):
         output = io.StringIO()
         original_run = self.helper.run
         requests = []
+        transport = self.load_script("copilot-gh-retry")
+        progress = transport.SigningProgressNotifier()
+        cursor = 0
 
         def track(arguments, **kwargs):
+            nonlocal cursor
             if arguments[:3] == ["ssh-keygen", "-Y", "sign"]:
                 requests.append(arguments)
                 self.assertIn(f"] signing {len(requests)}/2:", output.getvalue())
+                progress.feed(output.getvalue()[cursor:].encode())
+                cursor = output.tell()
+                self.assertEqual(notify.call_args_list,
+                                 [mock.call(index, 2) for index in range(1, len(requests) + 1)])
             return original_run(arguments, **kwargs)
 
-        with redirect_stdout(output), mock.patch.object(self.helper, "run", side_effect=track):
+        with redirect_stdout(output), mock.patch.object(self.helper, "run", side_effect=track), \
+                mock.patch.object(transport, "notify_signature") as notify:
             self.sign()
         self.assertEqual(len(requests), 2)
         output.seek(0)
         output.truncate()
-        with redirect_stdout(output), mock.patch.object(self.helper, "run", wraps=original_run) as calls:
+        with redirect_stdout(output), mock.patch.object(self.helper, "run", wraps=original_run) as calls, \
+                mock.patch.object(transport, "notify_signature") as notify:
             self.repository.verify(self.plan_id)
+            self.repository.sign(self.plan_id, self.approve())
+            progress.feed(output.getvalue().encode())
+            notify.assert_not_called()
         self.assertIn("] verifying 1/2:", output.getvalue())
         self.assertIn("] verifying 2/2:", output.getvalue())
+        self.assertNotIn("] signing ", output.getvalue())
+        self.assertFalse(any(call.args[0][:3] == ["ssh-keygen", "-Y", "sign"]
+                             for call in calls.call_args_list))
+
+    def test_payload_failure_does_not_announce_a_signing_request(self):
+        self.freeze()
+        output = io.StringIO()
+        with redirect_stdout(output), \
+                mock.patch.object(self.repository, "payload",
+                                  side_effect=ValueError("fixture payload failure")), \
+                mock.patch.object(self.helper, "run", wraps=self.helper.run) as calls:
+            with self.assertRaisesRegex(ValueError, "fixture payload failure"):
+                self.repository.sign(self.plan_id, self.approve())
         self.assertNotIn("] signing ", output.getvalue())
         self.assertFalse(any(call.args[0][:3] == ["ssh-keygen", "-Y", "sign"]
                              for call in calls.call_args_list))

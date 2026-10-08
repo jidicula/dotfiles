@@ -632,9 +632,9 @@ class Repository:
                     key_file = Path(directory) / "endorsement.pub"
                     key_file.write_text(key + "\n")
                     for index, original in enumerate(pending, 1):
+                        payload = self.payload(original, mapping, request.get("committer"))
                         print(f"[copilot-cs-endorse] signing {index}/{len(pending)}: {original}",
                               flush=True)
-                        payload = self.payload(original, mapping, request.get("committer"))
                         signature = run(
                             ["ssh-keygen", "-Y", "sign", "-n", "git", "-f", str(key_file)],
                             data=payload, env=environment,

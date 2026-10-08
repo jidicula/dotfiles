@@ -1922,6 +1922,351 @@ print(os.environ["SSH_AUTH_SOCK"])
                 self.assertFalse(self.calls.exists())
 
 
+class SigningNotificationTests(SecretiveTransportTestCase):
+    def setUp(self):
+        super().setUp()
+        self.helper = self.load_script("copilot-gh-retry")
+        self.notices = self.root / "signing-notices"
+        self.shell_flags = self.root / "notify-shell-flags"
+        self.shell_arguments = self.root / "notify-shell-arguments"
+        self.session_id = "01234567-89ab-4cde-8f01-23456789abcd"
+        self.env.update(
+            SHELL=shutil.which("bash"),
+            FAKE_GH_FAILURES="0",
+            COPILOT_AGENT_SESSION_ID=self.session_id,
+            EMACS_MCP_SOCKET_NAME="copilot-" + self.session_id[:8],
+            NOTIFY_LOG=str(self.notices),
+            NOTIFY_FLAGS=str(self.shell_flags),
+            NOTIFY_ARGUMENTS=str(self.shell_arguments),
+        )
+        (self.root / ".bashrc").write_text(
+            'printf "%s\\n" "$-" > "$NOTIFY_FLAGS"\n'
+            'printf "%s\\n" "$#" > "$NOTIFY_ARGUMENTS"\n'
+        )
+        self.configuration = self.root / ".shared_shell_configs"
+        self.configuration.write_text(
+            'notify() {\n'
+            '  printf "%s\\n" "$*" >> "$NOTIFY_LOG"\n'
+            '  printf "\\a"\n'
+            '  printf "notification-private-fixture\\n" >&2\n'
+            '  return "${NOTIFY_STATUS:-0}"\n'
+            '}\n'
+        )
+
+    def progress(self, index=1, total=2, oid=None, ending=b"\n"):
+        return (f"[copilot-cs-endorse] signing {index}/{total}: "
+                f"{oid or 'a' * 40}").encode() + ending
+
+    def transport_output(self, output, status=0, *, stderr=False):
+        self.executable(
+            "gh",
+            f"import os, sys\nos.write({2 if stderr else 1}, {output!r})\n"
+            f"sys.exit({status})\n",
+        )
+
+    def test_signing_stream_notifies_each_signature_without_changing_output(self):
+        output = (
+            b"__COPILOT_CS_ACK_job-fixture__\n"
+            + self.progress()
+            + self.progress(2, 2, "b" * 64, b"\r\n")
+            + b"[copilot-cs-endorse] verifying 1/2: " + b"a" * 40 + b"\n"
+            + b"\x80\n__COPILOT_CS_DONE_job-fixture__:0\n"
+        )
+        self.transport_output(output)
+        result = subprocess.run(
+            ["bash", str(SETUP / "copilot-ghcs"), "ssh-sign", "test-codespace",
+             "--job-id", "job-fixture", "fixture-sign"],
+            cwd=self.root, env=self.env, capture_output=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, output)
+        self.assertEqual(self.notices.read_text().splitlines(), [
+            f"Copilot endorsement (session {self.session_id}) is requesting SSH signature 1/2. "
+            "Check Secretive for approval.",
+            f"Copilot endorsement (session {self.session_id}) is requesting SSH signature 2/2. "
+            "Check Secretive for approval.",
+        ])
+        self.assertIn("i", self.shell_flags.read_text())
+        self.assertEqual(self.shell_arguments.read_text(), "0\n")
+        self.assertNotIn(b"notification-private-fixture", result.stderr)
+        self.assertNotIn("a" * 40, self.notices.read_text())
+        self.assertNotIn("b" * 64, self.notices.read_text())
+
+    def test_zsh_uses_the_same_interactive_shell_function(self):
+        shell = shutil.which("zsh")
+        if shell is None:
+            self.skipTest("zsh is not installed")
+        self.env["SHELL"] = shell
+        (self.root / ".zshrc").write_text((self.root / ".bashrc").read_text())
+        self.transport_output(self.progress(1, 1))
+        result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.notices.read_text().splitlines(), [
+            f"Copilot endorsement (session {self.session_id}) is requesting SSH signature 1/1. "
+            "Check Secretive for approval.",
+        ])
+        self.assertIn("i", self.shell_flags.read_text())
+        self.assertEqual(self.shell_arguments.read_text(), "0\n")
+
+    def test_notifications_distinguish_the_originating_sessions(self):
+        self.transport_output(self.progress(1, 1))
+        sessions = (self.session_id, "FEDCBA98-7654-4321-8ABC-DEF012345678")
+        self.env["COPILOT_SESSION_TITLE"] = "private-task-title-fixture"
+        self.env["COPILOT_CS_ID"] = "private-repository-fixture"
+        for session in sessions:
+            self.env["COPILOT_AGENT_SESSION_ID"] = session
+            self.env["EMACS_MCP_SOCKET_NAME"] = "copilot-" + session[:8]
+            result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.notices.read_text().splitlines(), [
+            f"Copilot endorsement (session {session}) is requesting SSH signature 1/1. "
+            "Check Secretive for approval." for session in sessions
+        ])
+        self.assertNotIn("private-", self.notices.read_text())
+
+    def test_emacs_job_preserves_the_originating_session_context(self):
+        self.transport_output(
+            b"__COPILOT_CS_ACK_job-fixture__\n" + self.progress(1, 1)
+            + b"__COPILOT_CS_DONE_job-fixture__:0\n"
+        )
+        self.emacs(
+            """(progn
+              (copilot-cs-use "test-codespace" "/workspaces/fixture")
+              (let* ((job (copilot-cs--start "job-fixture" "fixture-sign" nil t))
+                     (process (plist-get job :process))
+                     (deadline (+ (float-time) 5)))
+                (while (and (process-live-p process) (< (float-time) deadline))
+                  (accept-process-output process 0.05))
+                (when (process-live-p process)
+                  (delete-process process)
+                  (error "Fixture signing transport did not finish"))
+                (unless (equal (copilot-cs--rc job) 0)
+                  (error "Fixture signing transport failed: %s" (copilot-cs--text job)))))"""
+        )
+        self.assertEqual(self.notices.read_text().splitlines(), [
+            f"Copilot endorsement (session {self.session_id}) is requesting SSH signature 1/1. "
+            "Check Secretive for approval.",
+        ])
+
+    def test_daemon_identifier_supplies_context_when_cli_session_is_missing(self):
+        del self.env["COPILOT_AGENT_SESSION_ID"]
+        self.transport_output(self.progress(1, 1))
+        daemons = ("copilot-01234567", "copilot-pid-4321")
+        for daemon in daemons:
+            self.env["EMACS_MCP_SOCKET_NAME"] = daemon
+            result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("session context unavailable", result.stderr)
+        self.assertEqual(self.notices.read_text().splitlines(), [
+            f"Copilot endorsement (daemon {daemon}) is requesting SSH signature 1/1. "
+            "Check Secretive for approval." for daemon in daemons
+        ])
+
+    def test_unavailable_context_warns_without_sending_arbitrary_metadata(self):
+        self.transport_output(self.progress(1, 1))
+        for session, daemon in (
+            ("", ""),
+            ("private-task-title-fixture", "copilot-private-repository"),
+            (self.session_id + "\nprivate-context", "copilot-01234567\nprivate-context"),
+            ("a" * 4096, "copilot-" + "b" * 4096),
+        ):
+            with self.subTest(session=session[:40], daemon=daemon[:40]):
+                self.env["COPILOT_AGENT_SESSION_ID"] = session
+                self.env["EMACS_MCP_SOCKET_NAME"] = daemon
+                result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, self.progress(1, 1).decode())
+                self.assertIn("session context unavailable", result.stderr)
+                self.assertIn("signing continues", result.stderr)
+                self.assertNotIn("private-", result.stderr)
+        self.assertEqual(self.notices.read_text().splitlines(), [
+            "Copilot endorsement (session unavailable) is requesting SSH signature 1/1. "
+            "Check Secretive for approval."
+        ] * 4)
+
+    def test_shell_startup_cannot_relabel_the_originating_session(self):
+        other_session = "fedcba98-7654-4321-8abc-def012345678"
+        with (self.root / ".bashrc").open("a") as startup:
+            startup.write(f'export COPILOT_AGENT_SESSION_ID="{other_session}"\n')
+        self.transport_output(self.progress(1, 1))
+        result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(self.session_id, self.notices.read_text())
+        self.assertNotIn(other_session, self.notices.read_text())
+
+    def test_notifications_finish_after_authentication_but_before_forwarding(self):
+        output = (b"__COPILOT_CS_ACK_job-fixture__\n" + self.progress(1, 1)
+                  + b"__COPILOT_CS_DONE_job-fixture__:0\n")
+        events = []
+        gate = mock.Mock()
+        gate.authenticated.side_effect = lambda: events.append("authenticated")
+        destination = mock.Mock()
+        destination.buffer.write.side_effect = lambda data: events.append(("output", data))
+        with mock.patch.object(self.helper, "notify_signature",
+                               side_effect=lambda *_: events.append("notified")), \
+                mock.patch.object(self.helper.sys, "stdout", destination), \
+                mock.patch.object(self.helper, "stop_process",
+                                  side_effect=lambda process: process.wait(timeout=5)):
+            result = self.helper.run_once(
+                [sys.executable, "-c", f"import os; os.write(1, {output!r})"],
+                gate, time.monotonic() + 5, "__COPILOT_CS_ACK_job-fixture__",
+                notify_signatures=True,
+            )
+        self.assertEqual(result, (0, b"", True))
+        self.assertEqual(events, ["authenticated", "notified", ("output", output)])
+
+    def test_other_transports_and_verification_do_not_notify(self):
+        self.transport_output(self.progress())
+        for arguments in (
+            ("ssh", "test-codespace", "ordinary"),
+            ("cp", "test-codespace", "fixture", "remote:/tmp/fixture"),
+        ):
+            with self.subTest(mode=arguments[0]):
+                result = self.invoke(*arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(self.notices.exists())
+        for output, stderr in (
+            (self.progress().replace(b"signing", b"verifying"), False),
+            (self.progress().removesuffix(b"\n"), False),
+            (self.progress(), True),
+            (b'Authenticated to localhost ([127.0.0.1]:1234) using "publickey".\n', True),
+        ):
+            with self.subTest(output=output):
+                self.transport_output(output, stderr=stderr)
+                result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(self.notices.exists())
+
+    def test_fragmented_records_notify_once_after_the_complete_line(self):
+        progress = self.helper.SigningProgressNotifier()
+        with mock.patch.object(self.helper, "notify_signature") as notify:
+            for byte in self.progress()[:-1]:
+                progress.feed(bytes([byte]))
+                notify.assert_not_called()
+            progress.feed(b"\n" + self.progress(2, 2, "b" * 64, b"\r\n"))
+            self.assertEqual(notify.call_args_list, [mock.call(1, 2), mock.call(2, 2)])
+
+    def test_malformed_and_oversized_lines_cannot_become_signing_records(self):
+        progress = self.helper.SigningProgressNotifier()
+        with mock.patch.object(self.helper, "notify_signature") as notify:
+            for output in (
+                b"remote: " + self.progress(),
+                self.progress(0, 1),
+                self.progress(2, 1),
+                self.progress(1, 0),
+                self.progress(oid="a" * 41),
+                self.progress(oid="A" * 40),
+                self.progress().replace(b"signing", b"verifying"),
+            ):
+                progress.feed(output)
+            progress.feed(b"x" * 4096)
+            progress.feed(self.progress())
+            notify.assert_not_called()
+            progress.feed(self.progress())
+            notify.assert_called_once_with(1, 2)
+
+    def test_repeated_signing_attempts_each_notify(self):
+        progress = self.helper.SigningProgressNotifier()
+        with mock.patch.object(self.helper, "notify_signature") as notify:
+            progress.feed(self.progress(1, 1) * 2)
+            self.assertEqual(notify.call_args_list, [mock.call(1, 1), mock.call(1, 1)])
+
+    def test_notification_failure_warns_without_changing_signing_outcome(self):
+        self.env["NOTIFY_STATUS"] = "10"
+        self.transport_output(self.progress(1, 1), status=17)
+        result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+        self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertEqual(result.stdout, self.progress(1, 1).decode())
+        self.assertIn("notification failed (exit 10)", result.stderr)
+        self.assertIn("signing continues", result.stderr)
+        self.assertNotIn("notification-private-fixture", result.stderr)
+        self.assertEqual(len(self.notices.read_text().splitlines()), 1)
+        self.assertFalse(self.sleeps.exists())
+
+    def test_missing_shell_function_does_not_fall_back_to_an_executable(self):
+        self.configuration.write_text("true\n")
+        self.executable(
+            "notify",
+            'from pathlib import Path\nimport os\n'
+            'Path(os.environ["NOTIFY_LOG"]).write_text("wrong notifier\\n")\n',
+        )
+        self.transport_output(self.progress(1, 1))
+        for shell in ("bash", "zsh"):
+            path = shutil.which(shell)
+            if path is None:
+                continue
+            with self.subTest(shell=shell):
+                self.env["SHELL"] = path
+                result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("notification failed", result.stderr)
+                self.assertIn("signing continues", result.stderr)
+                self.assertFalse(self.notices.exists())
+
+    def test_missing_shell_or_configuration_warns_and_preserves_success(self):
+        self.transport_output(self.progress(1, 1))
+        shell = self.env["SHELL"]
+        for missing in ("shell", "configuration"):
+            with self.subTest(missing=missing):
+                if missing == "shell":
+                    self.env["SHELL"] = str(self.root / "missing-shell")
+                else:
+                    self.env["SHELL"] = shell
+                    self.configuration.unlink()
+                result = self.invoke("ssh-sign", "test-codespace", "fixture-sign")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, self.progress(1, 1).decode())
+                self.assertIn("warning: signing notification", result.stderr)
+                self.assertIn("signing continues", result.stderr)
+                self.assertFalse(self.notices.exists())
+
+    def test_notification_timeout_stops_its_own_process_group(self):
+        child_pid = self.root / "notification-child.pid"
+        self.env["NOTIFY_CHILD_PID"] = str(child_pid)
+        self.executable(
+            "notify-blocker",
+            'import os, time\nfrom pathlib import Path\n'
+            'Path(os.environ["NOTIFY_CHILD_PID"]).write_text(str(os.getpid()))\n'
+            'time.sleep(30)\n',
+        )
+        self.configuration.write_text("notify() ( result=$(notify-blocker) )\n")
+        output = self.progress(1, 1)
+        destination = mock.Mock()
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(self.helper, "SIGNING_NOTIFY_TIMEOUT", 0.5), \
+                mock.patch.object(self.helper, "log") as messages, \
+                mock.patch.object(self.helper.sys, "stdout", destination), \
+                mock.patch.object(self.helper, "stop_process",
+                                  side_effect=lambda process: process.wait(timeout=5)):
+            started = time.monotonic()
+            result = self.helper.run_once(
+                [sys.executable, "-c", f"import os; os.write(1, {output!r}); raise SystemExit(17)"],
+                mock.Mock(), time.monotonic() + 5, notify_signatures=True,
+            )
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(result, (17, b"", True))
+        self.assertEqual(destination.buffer.write.call_args_list, [mock.call(output)])
+        self.assertTrue(child_pid.exists(), "notification fixture never started")
+        self.assertFalse(JobCancellationTests.live(int(child_pid.read_text())))
+        self.assertTrue(any("notification timed out" in call.args[0]
+                            and "signing continues" in call.args[0]
+                            for call in messages.call_args_list))
+
+    def test_cancellation_cleans_up_the_notification_and_still_propagates(self):
+        process = mock.Mock(pid=12345, returncode=None)
+        process.wait.side_effect = [self.helper.Interrupted(signal.SIGTERM), -signal.SIGKILL]
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(self.helper.subprocess, "Popen", return_value=process) as start, \
+                mock.patch.object(self.helper.os, "killpg") as kill, \
+                mock.patch.object(self.helper, "log") as messages:
+            with self.assertRaises(self.helper.Interrupted):
+                self.helper.notify_signature(1, 1)
+        self.assertTrue(start.call_args.kwargs["start_new_session"])
+        kill.assert_called_once_with(process.pid, signal.SIGKILL)
+        self.assertEqual(process.wait.call_count, 2)
+        messages.assert_not_called()
+
+
 class JobStateTests(HelperTestCase):
     def test_job_transport_requires_the_matching_acknowledgement(self):
         self.emacs(

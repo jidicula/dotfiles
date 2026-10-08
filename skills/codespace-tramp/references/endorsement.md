@@ -337,6 +337,21 @@ and do not use **Leave Unlocked** when fresh approval is wanted. Login profiles
 may replace `SSH_AUTH_SOCK`; the helper restores the forwarded socket only
 for the signer.
 
+For each commit-signature request, the local `ssh-sign` transport invokes the
+operator's `notify` shell function from `~/.shared_shell_configs`, using the
+default interactive shell. Notifications include the originating Copilot session
+UUID from `COPILOT_AGENT_SESSION_ID`, or the per-session MCP daemon identifier
+when that UUID is unavailable. Only opaque UUID/hex or PID-based identifiers and
+endorsement progress are sent; repository names, task titles, commit IDs, key
+details, and signing payloads are excluded. Missing or unsupported session
+context is labelled `session unavailable` and produces a warning without
+stopping signing.
+Notification credentials stay local. Each attempt has a ten-second timeout;
+unavailable configuration, delivery failures, and timeouts produce a visible
+warning without stopping or retrying signing. Notifications do not replace
+revision-specific consent or Secretive approval. Ordinary SSH authentication,
+signature verification, preserved commits, and receipt reuse do not notify.
+
 The helper reconstructs raw commits rather than using `rebase --exec`. It
 preserves trees, messages, authors, timestamps, empty commits and merge parent
 order. Committer name/email are preserved unless the approved plan explicitly
