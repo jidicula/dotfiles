@@ -513,6 +513,8 @@ EXISTING=$(gh codespace list -R "$NWO" --json name,displayName,state \
   2. **Create a new Codespace** following the naming convention with an
      additional numeric suffix for disambiguation (`CS_NAME-2`, `CS_NAME-3`, …).
 
+  When reusing an existing Codespace, retain its selected `.name` as `CS_ID`.
+
   To compute the next free suffix when they choose option 2:
 
   ```bash
@@ -606,6 +608,12 @@ while IFS= read -r MACHINE; do
   if CREATE_OUTPUT=$(gh codespace create -R "$NWO" -d "$CS_NAME" -m "$MACHINE" \
        -b "$BRANCH" --devcontainer-path "$DEVCONTAINER" 2>&1); then
     printf '%s\n' "$CREATE_OUTPUT"
+    CS_ID=$(printf '%s\n' "$CREATE_OUTPUT" | tail -n 1)
+    case "$CS_ID" in
+      ""|*[!A-Za-z0-9._-]*)
+        echo "creation succeeded but its id is unconfirmed; retain the output and do not create a replacement" >&2
+        exit 1 ;;
+    esac
     CREATED=1
     break
   fi
@@ -657,15 +665,16 @@ them merely by rebuilding; use a newly authorised Codespace if needed. Never
 create or copy a PAT as a workaround.
 
 `gh codespace create` prints the Codespace **`name`** (id) on stdout as its
-last line, so you can capture it directly instead of re-deriving it below.
+last line. The creation loop retains it as `CS_ID`; reuse that immutable name
+for every later step rather than re-deriving it from a display-name lookup.
+When provisioning multiple repositories, retain a separate id for each one.
 
-Then resolve the immutable Codespace **`name`** (id), which every later step
-uses to address the Codespace:
+Do not replace a selected or successfully created id with a list lookup.
+`gh codespace list` defaults to 30 entries; absence from that result does not
+establish that a known Codespace is missing. Read its details directly:
 
 ```bash
-CS_ID=$(gh codespace list -R "$NWO" --json name,displayName \
-  -q ".[] | select(.displayName==\"$CS_NAME\") | .name") || exit 1
-[ -n "$CS_ID" ] || { echo "could not resolve the Codespace id" >&2; exit 1; }
+gh api --method GET "user/codespaces/$CS_ID" --jq '{name, state}'
 ```
 
 Start or restart the selected task Codespace as needed without another
@@ -690,21 +699,28 @@ and, in `watch`'s case, need a TTY this shell does not have:
 
 ```bash
 state=""
-for i in $(seq 1 60); do            # ~5 min cap (60 × 5s)
-  state=$(gh codespace list -R "$NWO" --json name,state \
-    -q ".[] | select(.name==\"$CS_ID\") | .state") || {
+for i in $(seq 1 60); do
+  state=$(gh api --method GET "user/codespaces/$CS_ID" --jq '.state') || {
     echo "could not read Codespace state; stop and check connectivity" >&2
     exit 1
   }
-  echo "codespace $CS_ID: ${state:-unknown}"
+  case "$state" in
+    ""|null) echo "missing Codespace state for $CS_ID; stop and inspect its details" >&2; exit 1 ;;
+  esac
+  echo "codespace $CS_ID: $state"
   [ "$state" = "Available" ] && break
-  sleep 5
+  [ "$i" -eq 60 ] || sleep 5
 done
-[ "$state" = "Available" ] || { echo "not Available after timeout"; exit 1; }
+[ "$state" = "Available" ] || {
+  echo "codespace $CS_ID not Available after 60 polls; last state: $state" >&2
+  exit 1
+}
 ```
 
-If the deadline expires, retain the immutable Codespace name and report its
-last state. Recheck that same Codespace before resuming; a late transition to
+Poll each retained id directly; do not filter a possibly incomplete list or
+require all environments to appear on the same list page. If the poll limit
+is reached, retain the immutable Codespace name and report its last state.
+Recheck that same Codespace before resuming; a late transition to
 `Available` is not a reason to create a duplicate or wait without a deadline.
 
 Run this as one synchronous shell call with a long `initial_wait` (it returns as

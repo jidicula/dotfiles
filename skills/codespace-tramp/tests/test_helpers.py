@@ -323,6 +323,123 @@ if sys.argv[1:3] == ["apt-get", "install"]:
         self.assertEqual(self.recorded_calls(), [])
 
 
+class CodespaceAvailabilityTests(HelperTestCase):
+    def setUp(self):
+        super().setUp()
+        self.calls = self.root / "gh-calls"
+        self.sleeps = self.root / "sleep-calls"
+        self.env.update(
+            CS_ID="test-codespace", NWO="example/project",
+            FAKE_GH_CALLS=str(self.calls), FAKE_SLEEP_CALLS=str(self.sleeps),
+            FAKE_STATES=json.dumps(["Starting", "Available"]),
+            FAKE_API_STATUS="0",
+        )
+        skill = (SETUP.parent / "SKILL.md").read_text()
+        _, marker, section = skill.partition(
+            "**Wait until the Codespace is `Available` before sending task commands.**")
+        self.assertTrue(marker)
+        _, marker, section = section.partition("```bash\n")
+        self.assertTrue(marker)
+        self.poll, marker, _ = section.partition("\n```")
+        self.assertTrue(marker)
+        self.executable(
+            "gh",
+            """import json, os, sys
+from pathlib import Path
+path = Path(os.environ["FAKE_GH_CALLS"])
+calls = path.read_text().splitlines() if path.exists() else []
+calls.append(json.dumps(sys.argv[1:]))
+path.write_text("\\n".join(calls) + "\\n")
+if sys.argv[1:3] == ["codespace", "create"]:
+    print("created-codespace")
+    sys.exit(0)
+if sys.argv[1:3] == ["codespace", "list"]:
+    print("[]")
+    sys.exit(0)
+expected = ["api", "--method", "GET", "user/codespaces/" + os.environ["CS_ID"]]
+assert sys.argv[1:5] == expected, sys.argv
+assert sys.argv[5:] == ["--jq", ".state"], sys.argv
+status = int(os.environ["FAKE_API_STATUS"])
+if status:
+    print("fixture API read failed", file=sys.stderr)
+    sys.exit(status)
+states = json.loads(os.environ["FAKE_STATES"])
+print(states[min(len(calls) - 1, len(states) - 1)])
+""",
+        )
+        self.executable(
+            "sleep",
+            """import os, sys
+with open(os.environ["FAKE_SLEEP_CALLS"], "a") as output:
+    output.write(" ".join(sys.argv[1:]) + "\\n")
+""",
+        )
+
+    def invoke(self):
+        return self.run_command(["bash", "-eu", "-c", self.poll])
+
+    def recorded_calls(self):
+        return [json.loads(line) for line in self.calls.read_text().splitlines()]
+
+    def test_successful_creation_retains_its_id_without_a_list_lookup(self):
+        skill = (SETUP.parent / "SKILL.md").read_text()
+        _, marker, section = skill.partition("Then create the Codespace:\n\n```bash\n")
+        self.assertTrue(marker)
+        creation, marker, _ = section.partition("\n```")
+        self.assertTrue(marker)
+        self.env.update(CS_ID="", CS_NAME="fixture", BRANCH="main",
+                        DEVCONTAINER=".devcontainer/devcontainer.json", MACHINES="large\nsmall")
+        result = self.run_command([
+            "bash", "-eu", "-c", creation + '\nprintf "retained-id:%s\\n" "$CS_ID"',
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("retained-id:created-codespace", result.stdout)
+        self.assertEqual(len(self.recorded_calls()), 1)
+        self.assertEqual(self.recorded_calls()[0][:2], ["codespace", "create"])
+
+    def test_availability_uses_the_retained_id_not_the_limited_list(self):
+        for name in ("first-codespace", "second-codespace", "third-codespace"):
+            with self.subTest(name=name):
+                self.calls.unlink(missing_ok=True)
+                self.sleeps.unlink(missing_ok=True)
+                self.env["CS_ID"] = name
+                result = self.invoke()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.recorded_calls(), [
+                    ["api", "--method", "GET", f"user/codespaces/{name}", "--jq", ".state"],
+                ] * 2)
+                self.assertEqual(self.sleeps.read_text(), "5\n")
+
+    def test_api_failure_is_not_treated_as_a_missing_codespace(self):
+        self.env["FAKE_API_STATUS"] = "7"
+        result = self.invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("fixture API read failed", result.stderr)
+        self.assertEqual(len(self.recorded_calls()), 1)
+        self.assertFalse(self.sleeps.exists())
+
+    def test_empty_state_stops_instead_of_waiting_or_creating_a_replacement(self):
+        for state in ("", "null"):
+            with self.subTest(state=state):
+                self.calls.unlink(missing_ok=True)
+                self.env["FAKE_STATES"] = json.dumps([state])
+                result = self.invoke()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("missing Codespace state", result.stderr)
+                self.assertEqual(len(self.recorded_calls()), 1)
+                self.assertFalse(self.sleeps.exists())
+
+    def test_poll_limit_reports_the_same_id_and_last_state(self):
+        self.env["FAKE_STATES"] = json.dumps(["Starting"])
+        result = self.invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(self.recorded_calls()), 60)
+        self.assertEqual(self.sleeps.read_text().splitlines(), ["5"] * 59)
+        self.assertIn("test-codespace", result.stderr)
+        self.assertIn("Starting", result.stderr)
+        self.assertIn("not Available", result.stderr)
+
+
 class SecretiveTransportTestCase(HelperTestCase):
     rpc_error = DEADLINE_ERROR
 
