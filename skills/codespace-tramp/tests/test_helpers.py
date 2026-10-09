@@ -38,6 +38,7 @@ REFRESH_ERROR = (
     'getting full codespace details: error making request: Get '
     '"https://api.github.com/user/codespaces/test-codespace?internal=true&refresh=true": '
 )
+CONNECT_TIMEOUT = "dial tcp 192.0.2.1:443: connect: operation timed out"
 
 
 class HelperTestCase(unittest.TestCase):
@@ -626,8 +627,8 @@ class ApiConnectionTests(WarmupTests):
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(len(self.recorded_calls()), before + 1)
 
-    def test_metadata_get_retries_tls_timeout_and_eof_without_replaying_connect(self):
-        for diagnostic in ("net/http: TLS handshake timeout", "unexpected EOF"):
+    def test_metadata_get_retries_network_failures_without_replaying_connect(self):
+        for diagnostic in ("net/http: TLS handshake timeout", "unexpected EOF", CONNECT_TIMEOUT):
             error = f'Get "https://api.github.com/user/codespaces": {diagnostic}'
             with self.subTest(error=error):
                 self.calls.unlink(missing_ok=True)
@@ -689,6 +690,49 @@ class CodespaceDetailsServerErrorTests(WarmupTests):
                 self.env["FAKE_GH_ERROR"] = self.rpc_error.replace("500", str(status))
                 result = self.invoke("ssh", "test-codespace", "run-once")
                 self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(len(self.recorded_calls()), 1)
+                self.assertFalse(self.sleeps.exists())
+
+
+class CodespaceConnectTimeoutTests(WarmupTests):
+    rpc_error = REFRESH_ERROR + CONNECT_TIMEOUT
+
+    def test_ipv6_details_refresh_timeout_recovers_before_copy_dispatch(self):
+        self.env["FAKE_GH_ERROR"] = self.rpc_error.replace("192.0.2.1", "[2001:db8::1]")
+        result = self.invoke("cp", "test-codespace", "local-file", "remote:/tmp/file")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.recorded_calls()), 2)
+        self.assertEqual(*self.recorded_calls())
+
+    def test_output_and_authentication_prevent_timeout_retry(self):
+        for extra in (
+            {"FAKE_GH_STDOUT": "__COPILOT_CS_ACK_job-fixture__"},
+            {"FAKE_GH_STDOUT": "_"},
+            {"FAKE_GH_AUTHENTICATED": "1"},
+        ):
+            with self.subTest(extra=extra):
+                self.calls.unlink(missing_ok=True)
+                with mock.patch.dict(self.env, extra):
+                    result = self.invoke("ssh", "test-codespace", "run-once")
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(len(self.recorded_calls()), 1)
+                self.assertFalse(self.sleeps.exists())
+
+    def test_other_targets_and_ambiguous_timeout_errors_are_not_retried(self):
+        for error in (
+            self.rpc_error.replace("api.github.com", "example.invalid"),
+            self.rpc_error.replace(":443:", ":22:"),
+            self.rpc_error.replace("192.0.2.1", "proxy.example.invalid"),
+            self.rpc_error.replace("connect: operation timed out", "read: operation timed out"),
+            self.rpc_error.replace("connect: operation timed out", "connect: connection refused"),
+            self.rpc_error + "\ntunnel closed: EOF",
+            CONNECT_TIMEOUT,
+        ):
+            with self.subTest(error=error):
+                self.calls.unlink(missing_ok=True)
+                self.env["FAKE_GH_ERROR"] = error
+                result = self.invoke("cp", "test-codespace", "local-file", "remote:/tmp/file")
+                self.assertEqual(result.returncode, 1)
                 self.assertEqual(len(self.recorded_calls()), 1)
                 self.assertFalse(self.sleeps.exists())
 
@@ -815,6 +859,7 @@ sys.exit(17)
             REFRESH_ERROR + "net/http: TLS handshake timeout",
             REFRESH_ERROR + "unexpected EOF",
             CodespaceDetailsServerErrorTests.rpc_error,
+            CodespaceConnectTimeoutTests.rpc_error,
         ):
             with self.subTest(error=error):
                 self.assertTrue(helper.startup_failure(error.encode(), False))

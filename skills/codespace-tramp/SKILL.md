@@ -738,11 +738,11 @@ handles the first task and later copies as well as an explicit warm-up: it
 retries only complete, known `gh` diagnostics proving that API/SSH setup failed
 **before ssh or scp was dispatched**. Those include SSH RPC `DeadlineExceeded`,
 `Unavailable`, `error connecting to api.github.com`, and the complete
-Codespace-details refresh diagnostic ending in a TLS handshake timeout or
-unexpected EOF. The exact
+Codespace-details refresh diagnostic ending in a TLS handshake timeout,
+unexpected EOF, or `dial tcp <IP>:443: connect: operation timed out`. The exact
 `getting full codespace details: error making request: received response with status code 500`
 diagnostic is also retryable; other HTTP errors are not. The strictly GET-only
-discovery helper also handles those two raw GitHub API GET errors.
+discovery helper also handles these raw GitHub API GET errors.
 There are at most three attempts with five-/ten-second
 backoff. Any stdout, a remote exit or tunnel error, an authentication failure,
 or an unrecognized error prevents retry.
