@@ -1527,11 +1527,15 @@ Ask the user for the correct commands if none are supplied.
 
 ## Troubleshooting
 
-- **GitHub MCP reports a missing `Mcp-Param-owner` header despite an `owner`
-  argument:** rediscover the tool schema and retry the read-only request once.
-  If the valid request still fails, use the operator's authenticated local `gh`
-  for the equivalent API read. Do not alter credentials, permissions, or the
-  requested repository to work around a tool-dispatch failure.
+- **GitHub MCP reports a missing `Mcp-Param-owner` or `Mcp-Param-repo` header
+  despite the corresponding `owner` or `repo` argument:** rediscover the tool
+  schema and retry the same read-only request once. If the valid request still
+  fails, use the operator's authenticated local `gh` for the equivalent API
+  read, preserving the owner, repository, path, and requested revision. For
+  `get_file_contents`, a supplied `sha` takes precedence over `ref`; pass that
+  revision as the Contents API's `ref` parameter rather than reading the default
+  branch. Do not alter credentials, permissions, or the requested repository to
+  work around a tool-dispatch failure.
 - **`Found 0 tools` for the optional `emacs-codespace` registration:** this is
   local Copilot MCP discovery, not Codespace availability. The canonical direct
   client does not need this registration. If also using the native tool,
