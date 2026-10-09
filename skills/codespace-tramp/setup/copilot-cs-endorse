@@ -692,6 +692,25 @@ class Repository:
             require(self.remote_refs(request).get(target) == receipt["head"],
                     "remote head was not confirmed after pushing")
             self.snapshot(request, published=receipt["head"], publication=publication)
+            signed_branch = request["target_branch"]
+            self.ref("refs/heads/" + signed_branch)
+            for setting, value in (("remote", "origin"), ("merge", target), ("pushRemote", "origin")):
+                self.git("config", "--local", "--replace-all",
+                         f"branch.{signed_branch}.{setting}", value)
+            upstream = ("for-each-ref", "--format=%(upstream)", "refs/heads/" + signed_branch)
+            tracking = self.git(*upstream).decode().strip()
+            if not tracking:
+                self.git("remote", "set-branches", "--add", "origin", destination)
+                tracking = self.git(*upstream).decode().strip()
+            require(tracking.startswith("refs/remotes/"),
+                    "signed branch upstream must use a remote-tracking ref")
+            previous = self.git("for-each-ref", "--format=%(objectname)", tracking).decode().strip()
+            if previous != receipt["head"]:
+                require(self.remote_refs(request).get(target) == receipt["head"],
+                        "remote destination changed while configuring upstream; inspect it before resuming")
+                self.git("update-ref", tracking, receipt["head"],
+                         previous or "0" * len(receipt["head"]))
+            self.git("config", "--local", "--replace-all", "push.default", "upstream")
             self.write_record(f"{plan_id}.{publication}.published.json", receipt)
             return receipt
 

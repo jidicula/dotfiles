@@ -1149,6 +1149,118 @@ class PlanningTests(EndorsementTestCase):
 
 
 class PublicationTests(EndorsementTestCase):
+    def assert_signed_branch_tracks_publication(self, publication, destination):
+        self.git("config", "--local", "push.default", "simple")
+        self.git("config", "--local", "remote.pushDefault", "other")
+        self.git("branch", "--set-upstream-to=origin/feature", "feature")
+        receipt = self.sign(publication)
+        self.repository.push(self.plan_id, self.approve(publication))
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "feature-signed@{upstream}").strip(),
+                         "origin/" + destination)
+        self.assertEqual(self.git("config", "--local", "--get", "branch.feature-signed.remote").strip(),
+                         "origin")
+        self.assertEqual(self.git("config", "--local", "--get", "branch.feature-signed.merge").strip(),
+                         "refs/heads/" + destination)
+        self.assertEqual(self.git("config", "--local", "--get", "branch.feature-signed.pushRemote").strip(),
+                         "origin")
+        self.assertEqual(self.git("config", "--local", "--get", "push.default").strip(), "upstream")
+        self.assertEqual(self.git("config", "--local", "--get", "remote.pushDefault").strip(), "other")
+        self.assertEqual(self.git("rev-parse", "feature-signed@{upstream}").strip(), receipt["head"])
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "feature@{upstream}").strip(),
+                         "origin/feature")
+        self.assertEqual(self.git("branch", "--show-current").strip(), "feature")
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), self.head)
+        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
+
+        self.git("switch", "--quiet", "feature-signed")
+        self.git("commit", "--quiet", "--allow-empty", "-m", "manual follow-up")
+        manual_head = self.git("rev-parse", "HEAD").strip()
+        self.git("push", "--quiet")
+        self.assertEqual(self.remote_head(destination), manual_head)
+        self.assertEqual(self.git("rev-parse", "feature").strip(), self.head)
+        if publication == "replacement":
+            self.assertEqual(self.remote_head("feature"), self.head)
+
+    def test_replacement_branch_tracks_its_pr_and_accepts_a_plain_follow_up_push(self):
+        self.assert_signed_branch_tracks_publication("replacement", "feature-signed")
+
+    def test_in_place_signed_branch_tracks_the_original_pr_for_plain_follow_up_pushes(self):
+        self.assert_signed_branch_tracks_publication("replace", "feature")
+
+    def test_replacement_tracking_extends_a_single_branch_fetch_mapping(self):
+        self.git("config", "--local", "--replace-all", "remote.origin.fetch",
+                 "+refs/heads/feature:refs/remotes/origin/feature")
+        self.assert_signed_branch_tracks_publication("replacement", "feature-signed")
+        self.assertEqual(self.git("config", "--get-all", "remote.origin.fetch").splitlines(), [
+            "+refs/heads/feature:refs/remotes/origin/feature",
+            "+refs/heads/feature-signed:refs/remotes/origin/feature-signed",
+        ])
+
+    def test_resumed_publication_restores_missing_tracking_without_pushing_again(self):
+        receipt = self.sign()
+        self.repository.push(self.plan_id, self.approve())
+        self.git("config", "--remove-section", "branch.feature-signed")
+        self.git("update-ref", "-d", "refs/remotes/origin/feature-signed")
+        with mock.patch.object(self.repository, "git", wraps=self.repository.git) as calls:
+            self.assertEqual(self.repository.push(self.plan_id, self.approve()), receipt)
+        self.assertFalse(any(call.args[0] == "push" for call in calls.call_args_list))
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "feature-signed@{upstream}").strip(),
+                         "origin/feature-signed")
+        self.assertEqual(self.git("rev-parse", "feature-signed@{upstream}").strip(), receipt["head"])
+
+    def test_failed_publication_leaves_tracking_and_push_policy_unchanged(self):
+        self.sign()
+        self.git("config", "--local", "push.default", "simple")
+        config = self.root / ".git" / "config"
+        original = config.read_bytes()
+        hook = self.root / ".git" / "hooks" / "pre-push"
+        hook.parent.mkdir(exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        with self.assertRaises(RuntimeError):
+            self.repository.push(self.plan_id, self.approve())
+        self.assertEqual(config.read_bytes(), original)
+        self.assertFalse(list(self.repository.state.glob("*.published.json")))
+
+    def test_tracking_configuration_failure_is_explicit_and_can_resume_without_republication(self):
+        receipt = self.sign("replace")
+        original_git = self.repository.git
+
+        def fail_configuration(*arguments, **kwargs):
+            if arguments[:2] == ("config", "--local") and arguments[-2] == "push.default":
+                raise RuntimeError("fixture tracking configuration failed")
+            return original_git(*arguments, **kwargs)
+
+        with mock.patch.object(self.repository, "git", side_effect=fail_configuration):
+            with self.assertRaisesRegex(RuntimeError, "tracking configuration failed"):
+                self.repository.push(self.plan_id, self.approve("replace"))
+        self.assertEqual(self.remote_head("feature"), receipt["head"])
+        self.assertFalse(list(self.repository.state.glob("*.published.json")))
+        with mock.patch.object(self.repository, "git", wraps=self.repository.git) as calls:
+            self.assertEqual(self.repository.push(self.plan_id, self.approve("replace")), receipt)
+        self.assertFalse(any(call.args[0] == "push" for call in calls.call_args_list))
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "feature-signed@{upstream}").strip(),
+                         "origin/feature")
+        self.assertEqual(self.git("config", "--local", "--get", "push.default").strip(), "upstream")
+
+    def test_upstream_refresh_does_not_mask_a_changed_remote_destination(self):
+        self.sign()
+        original_git = self.repository.git
+        tracking = "refs/remotes/origin/feature-signed"
+
+        def advance_after_confirmation(*arguments, **kwargs):
+            if arguments == ("for-each-ref", "--format=%(objectname)", tracking):
+                self.git("--git-dir=" + str(self.remote), "update-ref",
+                         "refs/heads/feature-signed", self.first)
+                self.git("update-ref", tracking, self.first)
+            return original_git(*arguments, **kwargs)
+
+        with mock.patch.object(self.repository, "git", side_effect=advance_after_confirmation):
+            with self.assertRaisesRegex(ValueError, "remote destination changed while configuring upstream"):
+                self.repository.push(self.plan_id, self.approve())
+        self.assertEqual(self.git("rev-parse", tracking).strip(), self.first)
+        self.assertFalse(list(self.repository.state.glob("*.published.json")))
+
     def test_pty_push_preserves_terminal_for_git_hooks(self):
         receipt = self.sign()
         hook = self.root / ".git" / "hooks" / "pre-push"
@@ -1269,6 +1381,8 @@ class PublicationTests(EndorsementTestCase):
             receipt = self.repository.push(self.plan_id, self.approve("replacement"))
         self.assertEqual(receipt["publication"], "replacement")
         self.assertEqual(self.remote_head("feature"), self.head)
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "feature-signed@{upstream}").strip(),
+                         "origin/feature-signed")
         self.assertEqual(json.loads((self.repository.state /
                                     f"{self.plan_id}.replacement.published.json").read_text()), receipt)
 

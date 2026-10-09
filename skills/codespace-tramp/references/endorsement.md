@@ -421,6 +421,21 @@ uses unconditional force. Changed source/destination refs or collisions require
 an operator decision; do not refresh the lease expectation automatically. A
 verified clean base advance leaves that exact-head lease and approval unchanged.
 
+After publication is confirmed, the local `<source>-signed` branch tracks the
+PR's remote branch: `origin/<source>-signed` for `replacement`, or
+`origin/<source>` for `replace`. Its push remote is pinned to `origin`, and
+repository-local `push.default=upstream` lets an ordinary `git push` follow that
+upstream even when the local and remote branch names differ. This push policy
+applies throughout the repository; global Git configuration is unchanged.
+Existing fetch mappings are retained, with a narrow mapping added only when
+the published branch is not covered.
+
+The helper does not switch branches or change the original source ref, index,
+or working tree. Switch to `<source>-signed` before making manual follow-up
+commits. An interrupted tracking update is an explicit publication error;
+resuming the same approved `push` repairs tracking without re-signing or
+republishing an already confirmed head.
+
 If the operator explicitly chooses the other permitted method after a failed
 push of the same unchanged plan, reuse signatures with `push` and the new
 approval token, not `sign`. Do not switch after either method has published.
