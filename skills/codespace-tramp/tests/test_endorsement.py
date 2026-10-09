@@ -1568,9 +1568,12 @@ class GitHubEndorsementTests(EndorsementTestCase):
         if endpoint == f"repos/example/project/git/ref/heads/{quote(base_branch, safe='')}":
             return {"ref": "refs/heads/" + base_branch,
                     "object": {"type": "commit", "sha": self.live_base}}
-        for branch, head in ((self.original["head"]["ref"], self.original["head"]["sha"]),
-                             (self.request["target_branch"], self.receipt["head"])):
-            if endpoint == f"repos/example/project/git/ref/heads/{quote(branch, safe='')}":
+        for repository, branch, head in (
+            (self.original["head"]["repo"]["full_name"],
+             self.original["head"]["ref"], self.original["head"]["sha"]),
+            ("example/project", self.request["target_branch"], self.receipt["head"]),
+        ):
+            if endpoint == f"repos/{repository}/git/ref/heads/{quote(branch, safe='')}":
                 return {"ref": "refs/heads/" + branch,
                         "object": {"type": "commit", "sha": self.published_head or head}}
         if "/branches/" in endpoint:
@@ -3206,6 +3209,121 @@ class GitHubEndorsementTests(EndorsementTestCase):
         policy.assert_not_called()
         operator.assert_not_called()
         self.assertEqual(self.original, original)
+        self.assert_read_only_preparation()
+
+    def test_check_ci_reads_fork_head_and_upstream_policy_without_endorsement(self):
+        self.original["head"]["repo"]["full_name"] = "contributor/project"
+        original = copy.deepcopy(self.original)
+        self.add_required_workflow()
+        with mock.patch.object(Path, "read_text") as read_key, mock.patch.object(
+                self.helper, "replacement_allowed") as policy, mock.patch.object(
+                self.helper, "authenticated_operator") as operator:
+            result = self.helper.check_ci("example/project", 12)
+        self.assertEqual(result, {
+            "repository": "example/project", "source_repository": "contributor/project",
+            "pr": 12, "url": self.original["html_url"], "head": self.head, "base": self.base,
+            "source_branch": "feature", "base_branch": "main",
+        })
+        read_key.assert_not_called()
+        policy.assert_not_called()
+        operator.assert_not_called()
+        endpoints = [endpoint for _, endpoint, _ in self.calls]
+        self.assertIn("repos/contributor/project/git/ref/heads/feature", endpoints)
+        self.assertNotIn("repos/example/project/git/ref/heads/feature", endpoints)
+        self.assertIn("repos/example/project/rules/branches/main?per_page=100", endpoints)
+        self.assertEqual(self.original, original)
+        self.assert_read_only_preparation()
+
+    def test_fork_ci_cli_keeps_pending_failed_and_missing_checks_blocking(self):
+        self.original["head"]["repo"]["full_name"] = "contributor/project"
+        args = ["copilot-cs-endorse", "check-ci", "--repo", "example/project", "--pr", "12"]
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), mock.patch.object(
+                sys, "argv", args), mock.patch.object(self.helper, "prepare") as prepare:
+            for state in ("pending", "failed", "absent", "passing"):
+                with self.subTest(state=state):
+                    self.check_pages = [[]] if state == "absent" else [[{
+                        "__typename": "CheckRun", "name": "ci", "isRequired": True,
+                        "status": "IN_PROGRESS" if state == "pending" else "COMPLETED",
+                        "conclusion": (None if state == "pending" else
+                                       "FAILURE" if state == "failed" else "SUCCESS"),
+                    }]]
+                    with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
+                        status = self.helper.main()
+                    if state == "passing":
+                        self.assertEqual(status, 0, errors.getvalue())
+                        result = json.loads(output.getvalue())
+                        self.assertEqual(result["required_ci"], "passed")
+                        self.assertEqual(result["source_repository"], "contributor/project")
+                    else:
+                        self.assertEqual(status, 1)
+                        self.assertEqual(output.getvalue(), "")
+                        self.assertIn("quality gate blocked", errors.getvalue())
+                    self.assert_read_only_preparation()
+            prepare.assert_not_called()
+
+    def test_fork_ci_handles_base_advances_without_reading_an_upstream_head_branch(self):
+        self.original["head"]["repo"]["full_name"] = "contributor/project"
+        self.check_pages.append([])
+        self.mutate_on_checks = lambda pr: setattr(self, "live_base", self.first)
+        result = self.helper.check_ci("example/project", 12)
+        self.assertEqual(result["base"], self.base)
+        self.assertEqual(result["source_repository"], "contributor/project")
+        endpoints = [endpoint for _, endpoint, _ in self.calls]
+        self.assertIn("repos/contributor/project/git/ref/heads/feature", endpoints)
+        self.assertNotIn("repos/example/project/git/ref/heads/feature", endpoints)
+        self.assert_read_only_preparation()
+
+    def test_fork_source_branch_may_have_the_upstream_base_name(self):
+        self.original["head"]["repo"]["full_name"] = "contributor/project"
+        self.original["head"]["ref"] = "main"
+        result = self.helper.check_ci("example/project", 12)
+        self.assertEqual(result["source_branch"], "main")
+        self.assertEqual(result["base_branch"], "main")
+        self.assertEqual(result["head"], self.head)
+        self.assertIn(("GET", "repos/contributor/project/git/ref/heads/main", None), self.calls)
+        self.assert_read_only_preparation()
+
+    def test_fork_ci_rejects_source_or_target_changes_during_checks(self):
+        self.original["head"]["repo"]["full_name"] = "contributor/project"
+        original = copy.deepcopy(self.original)
+        for change in (
+            lambda pr: pr["head"].update(repo={"full_name": "other/project"}),
+            lambda pr: pr["head"].update(repo=None),
+            lambda pr: pr["head"].update(ref="other"),
+            lambda pr: pr["head"].update(sha=self.first),
+            lambda pr: pr["base"].update(repo={"full_name": "other/project"}),
+        ):
+            with self.subTest(change=change):
+                self.original = copy.deepcopy(original)
+                self.mutate_on_checks = change
+                with self.assertRaises(ValueError):
+                    self.helper.check_ci("example/project", 12)
+                self.assert_read_only_preparation()
+
+    def test_fork_ci_rejects_a_changed_live_head_despite_a_stale_pr_snapshot(self):
+        self.original["head"]["repo"]["full_name"] = "contributor/project"
+        self.published_head = self.first
+        with self.assertRaisesRegex(ValueError, "PR head branch changed"):
+            self.helper.check_ci("example/project", 12)
+        self.assert_read_only_preparation()
+
+    def test_fork_support_does_not_extend_to_preparation_or_signed_requests(self):
+        self.original["head"]["repo"]["full_name"] = "contributor/project"
+        with mock.patch.object(Path, "read_text") as read_key, mock.patch.object(
+                self.helper, "replacement_allowed") as policy, mock.patch.object(
+                self.helper, "authenticated_operator") as operator:
+            with self.assertRaisesRegex(ValueError, "same-repository"):
+                self.helper.prepare("example/project", 12, str(self.key_file) + ".pub")
+        read_key.assert_not_called()
+        policy.assert_not_called()
+        operator.assert_not_called()
+        self.assertEqual(self.calls, [("GET", "repos/example/project/pulls/12", None)])
+        with self.assertRaisesRegex(ValueError, "same-repository"):
+            self.helper.validate_request(dict(self.request, source_repository="contributor/project"))
+        with self.assertRaisesRegex(ValueError, "same-repository"):
+            self.helper.await_attestation(self.plan)
+        with self.assertRaisesRegex(ValueError, "same-repository"):
+            self.finish()
         self.assert_read_only_preparation()
 
     def test_check_ci_cli_reports_success_only_after_the_quality_gate_passes(self):

@@ -117,6 +117,8 @@ def validate_request(request):
     require(isinstance(request.get("repository"), str)
             and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]),
             "invalid repository")
+    require("source_repository" not in request,
+            "endorsement currently requires a same-repository pull request")
     require(type(request.get("pr")) is int and request["pr"] > 0, "invalid pull request")
     require(request.get("url") == f"https://github.com/{request['repository']}/pull/{request['pr']}",
             "pull-request URL does not match the repository")
@@ -156,11 +158,17 @@ def validate_request(request):
     require(request.get("fingerprint") == fingerprint(request["key"]), "signing fingerprint mismatch")
 
 
-def pull_request(repository, number, *, require_draft=True):
+def pull_request(repository, number, *, require_draft=True, allow_fork=False):
     pr = github(f"repos/{repository}/pulls/{number}")
-    require(pr["head"]["repo"] is not None
-            and pr["head"]["repo"]["full_name"] == repository
-            and pr["base"]["repo"]["full_name"] == repository,
+    head_repository = pr["head"]["repo"]
+    require(isinstance(head_repository, dict)
+            and isinstance(head_repository.get("full_name"), str)
+            and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", head_repository["full_name"]),
+            "pull request head repository is unavailable or invalid")
+    require(isinstance(pr["base"]["repo"], dict)
+            and pr["base"]["repo"].get("full_name") == repository,
+            "pull request target repository changed; quality gate not confirmed")
+    require(allow_fork or head_repository["full_name"] == repository,
             "endorsement currently requires a same-repository pull request")
     require(not pr["merged"], "endorsement requires an unmerged pull request")
     require(not require_draft or pr["draft"], "endorsement requires a draft pull request")
@@ -204,6 +212,7 @@ def require_base_compatibility(request, base, mergeable):
 
 def confirm_base_compatibility(request, pr):
     """Check GitHub's mergeability for the exact head and current base, without mutation."""
+    source_repository = request.get("source_repository", request["repository"])
     query = """
         query EndorsementBaseCompatibility($id: ID!) {
           node(id: $id) {
@@ -235,7 +244,7 @@ def confirm_base_compatibility(request, pr):
         base = current["baseRef"]["target"].get("oid")
         require_base_compatibility(request, base, current.get("mergeable"))
         if branch_head(request["repository"], request["base_branch"]) == base:
-            require(branch_head(request["repository"], pr["head"]["ref"]) == pr["head"]["sha"],
+            require(branch_head(source_repository, pr["head"]["ref"]) == pr["head"]["sha"],
                     "PR head branch changed; quality gate not confirmed")
             return
     raise ValueError("base kept advancing during mergeability checks; retry the same plan")
@@ -264,9 +273,9 @@ def replacement_allowed(repository, branch):
         return False
 
 
-def check_ci(repository, number, *, allow_no_required_ci=False):
+def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True):
     """Check an unsigned draft without starting endorsement preparation."""
-    pr = pull_request(repository, number)
+    pr = pull_request(repository, number, allow_fork=allow_fork)
     require(pr["state"] == "open", "the original draft PR is not open")
     source = pr["head"]["ref"]
     base_branch = pr["base"]["ref"]
@@ -276,6 +285,8 @@ def check_ci(repository, number, *, allow_no_required_ci=False):
         "base_branch": base_branch, "head": pr["head"]["sha"],
         "base": branch_head(repository, base_branch),
     }
+    if pr["head"]["repo"]["full_name"] != repository:
+        request["source_repository"] = pr["head"]["repo"]["full_name"]
     if allow_no_required_ci:
         request["ci_exception"] = "no_required_ci"
     checked = require_passing_checks(request, number, request["head"], source, require_draft=True)
@@ -288,7 +299,8 @@ def check_ci(repository, number, *, allow_no_required_ci=False):
 
 def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=(),
             allow_no_required_ci=False):
-    request = check_ci(repository, number, allow_no_required_ci=allow_no_required_ci)
+    request = check_ci(repository, number, allow_no_required_ci=allow_no_required_ci,
+                       allow_fork=False)
     required_ci = request.pop("required_ci", None)
     require(not allow_no_required_ci or required_ci == "not_configured",
             "required CI is configured or reported; prepare without --allow-no-required-ci")
@@ -922,14 +934,17 @@ def confirm_ci_revision(request, number, head, branch, *, require_draft=False, a
                         merge_pr=None):
     """Confirm the expected revision, allowing closed originals only on resume."""
     repository = request["repository"]
-    current = pull_request(repository, number, require_draft=require_draft)
+    source_repository = request.get("source_repository", repository)
+    current = pull_request(repository, number, require_draft=require_draft,
+                           allow_fork=source_repository != repository)
     require(current["state"] in (("open", "closed") if allow_closed else ("open",))
+            and current["head"]["repo"]["full_name"] == source_repository
             and current["head"]["sha"] == head
             and current["head"]["ref"] == branch
             and current["base"]["ref"] == request["base_branch"],
             "PR changed or is no longer open; quality gate not confirmed")
     confirm_base_compatibility(request, merge_pr or current)
-    require(branch_head(repository, branch) == head,
+    require(branch_head(source_repository, branch) == head,
             "PR head branch changed; quality gate not confirmed")
     return current
 

@@ -7,6 +7,13 @@ The helper implements CI, revision and signing guards. CCR interpretation and
 remediation are agent-driven policy in the skill, not a text classifier inside
 the signing helper.
 
+`check-ci` supports fork drafts: it reads required policy from the target
+repository and verifies the live head branch in the fork. Its result includes
+`source_repository` for a fork and remains bound to that source, branch, and
+revision. Endorsement preparation, signing, and publication still require a
+same-repository pull request; a passing fork CI result does not bypass that
+restriction.
+
 Use this skill's existing runtime. Ordinary SSH, copies and
 Eglot use `~/.ssh/secretive-codespaces-agent-sep-2026{,.pub}`. Endorsement uses
 the distinct `~/.ssh/secretive-stormbreaker-github-sep-2026.pub`. Changing the
