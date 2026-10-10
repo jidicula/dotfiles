@@ -387,7 +387,11 @@ For an unrecorded file, a query reuses a ready server only after checking the
 Codespace, project and language. File preparation has its own 12-second bound
 and rejects missing files and paths that resolve outside that project. The
 requested file gets its own managed buffer and state; requests never use the
-representative file's contents or location. Status calls do not open files,
+representative file's contents or location. Within the same preparation bound,
+queries bypass TRAMP's attribute cache and refresh already-open, unmodified
+buffers when the file changes on disk. Eglot notifies the existing server before
+the query. Conflicting unsaved edits produce an error instead of being discarded;
+reconcile them before querying again. Status calls do not open or refresh files,
 and a query cannot start a missing server or restart a stopped one.
 `copilot-cs-eglot-stop` is server-scoped: stopping any managed file stops the
 shared language server for every buffer using it in that Emacs session.

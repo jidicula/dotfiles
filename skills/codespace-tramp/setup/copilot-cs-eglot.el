@@ -368,21 +368,45 @@ MODE defaults from PATH and must be a member of
              path 'ready :mode major-mode :buffer buffer :server server)))))))
 
 (defun copilot-cs-eglot--server (path)
-  "Return PATH's running Eglot server, or signal a useful error."
-  (let ((entry (or (gethash path copilot-cs-eglot--states)
-                   (copilot-cs-eglot--adopt-project-buffer path))))
-    (when (eq (plist-get entry :status) 'error)
-      (error "%s" (plist-get entry :error)))
-    (let ((buffer (copilot-cs-eglot--state-buffer path)))
-      (unless buffer
-        (error "Eglot is not ready for `%s'" path))
-      (with-current-buffer buffer
-        (unless (eglot-managed-p)
-          (error "Eglot is not managing `%s'" path))
-        (let ((server (eglot-current-server)))
-          (unless (and server (jsonrpc-running-p server))
-            (error "Eglot server is not running for `%s'" path))
-          server)))))
+  "Prepare PATH's current buffer and return its running Eglot server."
+  (with-timeout (copilot-cs-eglot-preparation-timeout
+                 (error "Eglot file preparation timed out for `%s'" path))
+    (let* ((remote-file-name-inhibit-cache t)
+           (entry (or (gethash path copilot-cs-eglot--states)
+                      (copilot-cs-eglot--adopt-project-buffer path))))
+      (when (eq (plist-get entry :status) 'error)
+        (error "%s" (plist-get entry :error)))
+      (let ((buffer (copilot-cs-eglot--state-buffer path)))
+        (unless buffer
+          (error "Eglot is not ready for `%s'" path))
+        (with-current-buffer buffer
+          (unless (eglot-managed-p)
+            (error "Eglot is not managing `%s'" path))
+          (let ((server (eglot-current-server)))
+            (unless (and server (jsonrpc-running-p server)
+                         (not (eglot--shutdown-requested server)))
+              (error "Eglot server is not running for `%s'" path))
+            (unless (and (copilot-cs-eglot--editable-path-p path)
+                         (file-in-directory-p path (project-root (eglot--project server))))
+              (error "Refusing Eglot access outside its ready Codespace project"))
+            (unless (file-regular-p path)
+              (error "Eglot query path is not a regular file: `%s'" path))
+            (let ((fresh (verify-visited-file-modtime buffer)))
+              (unless (eq entry (gethash path copilot-cs-eglot--states))
+                (error "Eglot state changed while preparing `%s'" path))
+              (unless fresh
+                (when (buffer-modified-p)
+                  (error "File `%s' changed on disk with unsaved buffer edits; reconcile before querying"
+                         path))
+                (revert-buffer t t t)
+                (unless (verify-visited-file-modtime buffer)
+                  (error "File `%s' changed again while refreshing its Eglot buffer" path))))
+            (unless (and (eq entry (gethash path copilot-cs-eglot--states))
+                         (eglot-managed-p) (eq server (eglot-current-server))
+                         (jsonrpc-running-p server)
+                         (not (eglot--shutdown-requested server)))
+              (error "Eglot state changed while preparing `%s'" path))
+            server))))))
 
 (defun copilot-cs-eglot-status (path)
   "Return the current Eglot startup and connection status for PATH."

@@ -3349,10 +3349,14 @@ class EglotProjectQueryTests(HelperTestCase):
                      (scope-allowed t)
                      (same-project t)
                      (file-present t)
+                     (file-fresh t)
                      (cancel-during-read nil)
+                     (cancel-during-refresh nil)
                      (slow-stage nil)
                      (file-reads 0)
+                     (refreshes 0)
                      (activations 0)
+                     (fresh-text "class Target\\n\\n\\n  def fresh; end\\nend\\n")
                      requests diagnostic-path)
                 (unwind-protect
                     (progn
@@ -3369,7 +3373,8 @@ class EglotProjectQueryTests(HelperTestCase):
                         (setq-local buffer-file-name target
                                     major-mode '{language}-mode
                                     eglot--cached-server server)
-                        (insert "class Target\\n  def example; end\\nend\\n"))
+                        (insert "class Target\\n  def example; end\\nend\\n")
+                        (set-buffer-modified-p nil))
                       (copilot-cs-eglot--record
                        anchor 'ready :mode '{language}-mode
                        :buffer anchor-buffer :server server)
@@ -3392,6 +3397,25 @@ class EglotProjectQueryTests(HelperTestCase):
                               (when cancel-during-read (copilot-cs-eglot-stop target))
                               (when (eq slow-stage 'read) (sleep-for 2))
                               target-buffer))
+                           ((symbol-function 'verify-visited-file-modtime)
+                            (lambda (buffer)
+                              (unless (and (eq buffer target-buffer)
+                                           (eq remote-file-name-inhibit-cache t))
+                                (error "Freshness check used the wrong buffer or cached metadata"))
+                              (when (eq slow-stage 'refresh) (sleep-for 2))
+                              (when cancel-during-refresh
+                                (copilot-cs-eglot--record target 'stopped))
+                              file-fresh))
+                           ((symbol-function 'revert-buffer)
+                            (lambda (ignore-auto noconfirm preserve-modes)
+                              (unless (and ignore-auto noconfirm preserve-modes
+                                           (eq (current-buffer) target-buffer))
+                                (error "Refresh must preserve modes and avoid prompts"))
+                              (cl-incf refreshes)
+                              (erase-buffer)
+                              (insert fresh-text)
+                              (set-buffer-modified-p nil)
+                              (setq file-fresh t)))
                            ((symbol-function 'eglot)
                             (lambda (&rest _) (error "Query attempted to launch a server")))
                            ((symbol-function 'eglot--maybe-activate-editing-mode)
@@ -3410,7 +3434,8 @@ class EglotProjectQueryTests(HelperTestCase):
                                                     :character (current-column)))))
                            ((symbol-function 'eglot--request)
                             (lambda (connection method params &rest _)
-                              (push (list connection method params buffer-file-name)
+                              (push (list connection method params buffer-file-name
+                                          (buffer-string))
                                     requests)
                               '(:fixture t)))
                            ((symbol-function 'flymake-diagnostics)
@@ -3482,6 +3507,164 @@ class EglotProjectQueryTests(HelperTestCase):
                                            :mode) 'go-mode))
                  (error "Go query did not adopt its ready project server"))""",
             language="go",
+        )
+
+    def test_recorded_buffers_refresh_before_semantic_queries(self):
+        for query in (
+            "(copilot-cs-eglot-document-symbols target)",
+            "(copilot-cs-eglot-hover target 4 6)",
+            "(copilot-cs-eglot-definition target 4 6)",
+            "(copilot-cs-eglot-references target 4 6)",
+        ):
+            with self.subTest(query=query):
+                self.project_query(
+                    f"""(copilot-cs-eglot-document-symbols target)
+                        (setq file-fresh nil requests nil)
+                        {query}
+                        (unless (and (= refreshes 1) (= file-reads 1)
+                                     (= activations 1) (= (length requests) 1)
+                                     (equal (nth 4 (car requests)) fresh-text)
+                                     (jsonrpc-running-p server))
+                          (error "Query used a stale buffer or restarted its server"))"""
+                )
+
+    def test_unchanged_buffers_and_unsaved_edits_are_not_reverted(self):
+        self.project_query(
+            """(copilot-cs-eglot-document-symbols target)
+               (copilot-cs-eglot-document-symbols target)
+               (unless (zerop refreshes) (error "Unchanged file was reverted"))
+               (with-current-buffer target-buffer
+                 (goto-char (point-max))
+                 (insert "# unsaved edit\\n"))
+               (copilot-cs-eglot-hover target 2 3)
+               (unless (and (zerop refreshes)
+                            (string-match-p "unsaved edit" (nth 4 (car requests)))
+                            (buffer-modified-p target-buffer))
+                 (error "Query discarded unsaved edits to an unchanged file"))"""
+        )
+
+    def test_external_edits_conflicting_with_unsaved_edits_block_queries(self):
+        self.project_query(
+            """(copilot-cs-eglot-document-symbols target)
+               (with-current-buffer target-buffer (insert "# unsaved\\n"))
+               (setq file-fresh nil requests nil)
+               (let ((before (with-current-buffer target-buffer (buffer-string))) reason)
+                 (condition-case err (copilot-cs-eglot-document-symbols target)
+                   (error (setq reason (error-message-string err))))
+                 (unless (and reason (string-match-p "unsaved" reason)
+                              (zerop refreshes) (null requests)
+                              (buffer-modified-p target-buffer)
+                              (equal before (with-current-buffer target-buffer
+                                              (buffer-string))))
+                   (error "External edit conflict was ignored or discarded: %S" reason)))"""
+        )
+
+    def test_recorded_files_are_rechecked_for_scope_and_existence(self):
+        for flag in ("scope-allowed", "same-project", "file-present"):
+            with self.subTest(flag=flag):
+                self.project_query(
+                    f"""(copilot-cs-eglot-document-symbols target)
+                        (setq {flag} nil requests nil)
+                        (let (reason)
+                          (condition-case err (copilot-cs-eglot-document-symbols target)
+                            (error (setq reason (error-message-string err))))
+                          (unless (and reason (null requests) (zerop refreshes))
+                            (error "Recorded query skipped file validation")))"""
+                )
+
+    def test_stopping_during_refresh_prevents_reversion_and_query(self):
+        self.project_query(
+            """(copilot-cs-eglot-document-symbols target)
+               (setq file-fresh nil cancel-during-refresh t requests nil)
+               (let (reason)
+                 (condition-case err (copilot-cs-eglot-document-symbols target)
+                   (error (setq reason (error-message-string err))))
+                 (unless (and reason (null requests) (zerop refreshes)
+                              (eq (plist-get (gethash target copilot-cs-eglot--states)
+                                             :status) 'stopped)
+                              (jsonrpc-running-p server))
+                   (error "Refresh ignored cancellation or stopped the shared server")))"""
+        )
+
+    def test_recorded_buffer_refresh_remains_bounded(self):
+        self.project_query(
+            """(copilot-cs-eglot-document-symbols target)
+               (setq slow-stage 'refresh requests nil)
+               (let ((copilot-cs-eglot-preparation-timeout 0.05)
+                     (started (float-time)) reason)
+                 (condition-case err (copilot-cs-eglot-document-symbols target)
+                   (error (setq reason (error-message-string err))))
+                 (unless (and reason (string-match-p "preparation timed out" reason)
+                              (< (- (float-time) started) 0.5)
+                              (null requests) (zerop refreshes)
+                              (jsonrpc-running-p server))
+                   (error "Refresh was unbounded or returned stale results: %S" reason)))"""
+        )
+
+    def test_reverting_a_real_file_updates_the_server_before_querying(self):
+        path = self.root / "target.rb"
+        path.write_text("class Target\n  def original; end\nend\n")
+        self.emacs(
+            f"""(progn
+              (require 'copilot-cs-eglot)
+              (let* ((path {json.dumps(str(path))})
+                     (buffer (find-file-noselect path))
+                     (fresh-text "class Target\\n\\n  def replacement; end\\nend\\n")
+                     (copilot-cs-eglot--states (make-hash-table :test #'equal))
+                     (eglot-stay-out-of '(flymake eldoc imenu))
+                     (eglot-autoshutdown nil)
+                     (process (make-process :name "eglot-refresh-fixture" :command '("cat")
+                                            :connection-type 'pipe :noquery t))
+                     (server (make-instance 'eglot-lsp-server :name "eglot-refresh-fixture"
+                                            :process process :on-shutdown #'ignore))
+                     server-text notifications requests)
+                (unwind-protect
+                    (cl-letf (((symbol-function 'copilot-cs-eglot--editable-path-p)
+                               (lambda (_) t))
+                              ((symbol-function 'jsonrpc-notify)
+                               (lambda (_server method params)
+                                 (push method notifications)
+                                 (when (eq method :textDocument/didOpen)
+                                   (setq server-text
+                                         (plist-get (plist-get params :textDocument) :text)))))
+                              ((symbol-function 'jsonrpc-request)
+                               (lambda (_server method _params &rest _)
+                                 (push (list method server-text) requests)
+                                 (list :contents server-text))))
+                      (unwind-protect
+                          (progn
+                            (setf (eglot--project server)
+                                  (cons 'transient (file-name-directory path))
+                                  (eglot--languages server) '((ruby-mode . "ruby"))
+                                  (eglot--capabilities server) '(:textDocumentSync 1))
+                            (with-current-buffer buffer
+                              (ruby-mode)
+                              (setq-local eglot--cached-server server)
+                              (eglot--managed-mode 1)
+                              (eglot--signal-textDocument/didOpen))
+                            (copilot-cs-eglot--record
+                             path 'ready :mode 'ruby-mode :buffer buffer :server server)
+                            (with-temp-file path (insert fresh-text))
+                            (set-file-times path (time-add (current-time) 2))
+                            (setq notifications nil)
+                            (copilot-cs-eglot-document-symbols path)
+                            (unless (and (equal server-text fresh-text)
+                                         (equal (cadar requests) fresh-text)
+                                         (equal (reverse notifications)
+                                                '(:textDocument/didClose :textDocument/didOpen)))
+                              (error "Language server retained the old file: %S" requests))
+                            (with-current-buffer buffer
+                              (unless (and (equal (buffer-string) fresh-text)
+                                           (not (buffer-modified-p))
+                                           (eglot-managed-p)
+                                           (eq (eglot-current-server) server))
+                                (error "Refresh lost the file or its managed server"))))
+                        (when (buffer-live-p buffer)
+                          (with-current-buffer buffer
+                            (when eglot--managed-mode (eglot--managed-mode -1))
+                            (set-buffer-modified-p nil))
+                          (kill-buffer buffer))))
+                  (when (process-live-p process) (delete-process process)))))"""
         )
 
     def test_unmatched_queries_do_not_open_files_or_start_servers(self):

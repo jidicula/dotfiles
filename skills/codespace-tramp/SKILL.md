@@ -854,8 +854,12 @@ or Go file served by the same Codespace project and language server:
 
 Queries prepare an unrecorded file within the same 12-second preparation bound,
 checking its canonical project boundary before opening it. They reuse the
-existing server rather than starting or reconnecting one. Status reads remain
-passive.
+existing server rather than starting or reconnecting one. Queries also bypass
+TRAMP's attribute cache to check already-open files and refresh unmodified
+buffers after external changes, notifying the existing language server. If a
+changed file has unsaved buffer edits, the query fails without discarding them;
+reconcile the edits before querying again. These checks share the preparation
+deadline. Status reads remain passive.
 `copilot-cs-eglot-stop` is server-scoped: stopping any managed file stops the
 shared language server for every buffer using it in that Emacs session.
 
