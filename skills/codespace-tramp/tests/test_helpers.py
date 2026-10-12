@@ -43,7 +43,9 @@ CONNECT_TIMEOUT = "dial tcp 192.0.2.1:443: connect: operation timed out"
 
 class HelperTestCase(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="cs-test-", dir="/tmp")
+        temporary = tempfile.TemporaryDirectory(
+            prefix="", dir=os.environ.get("TMPDIR", "/tmp")
+        )
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.bin = self.root / "bin"

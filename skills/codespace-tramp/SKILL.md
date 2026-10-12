@@ -1270,8 +1270,9 @@ confirms that no required CI is configured or reported, the operator may
 authorise proceeding for this PR without it. Record that decision before
 using `check-ci --allow-no-required-ci` and `prepare --allow-no-required-ci`.
 This yields `required_ci: "not_configured"`, not passing CI. The version 4
-request is only prepared when that exception is actually needed; if required CI
-exists and passes, omit the option and use normal preparation. The
+request (version 5 for a fork) is only prepared when that exception is actually
+needed; if required CI exists and passes, omit the option and use normal
+preparation. The
 plan binds `ci_exception: "no_required_ci"` to its exact scope; disclose it
 in the endorsement prompt. All actual or later-added requirements remain
 mandatory, and missing, pending, failing or unreadable CI cannot use this
@@ -1280,8 +1281,17 @@ exception. Defaults remain fail-closed. See the
 This decision does not authorise signatures or bypass CCR, exact-plan human
 endorsement, assignment, publication verification or readiness monitoring.
 
-Use bounded read-only polling for pending CI. Fix failures through the existing
-Codespace workflow, passing Gate 0 again before committing fixes, keeping commits
+A separate, explicitly operator-selected per-PR ordering exception can defer
+one strictly pending collaborator-approval check until after signing,
+publication, and signed-head executable CI. Use the
+[guarded version 5 protocol](references/endorsement.md#explicit-ordering-exception-for-pending-collaborator-approvals),
+not a general check skip. It binds the exact check, app provenance, and approval
+count into the plan; it is never passing CI and cannot waive readiness.
+All other draft-triggerable CI and current-head CCR remain mandatory.
+It is independent of, and cannot be combined with, the absent-CI exception.
+
+Use bounded read-only polling for all other pending CI. Fix failures through the
+existing Codespace workflow, passing Gate 0 again before committing fixes, keeping commits
 unsigned and the PR in draft. Do not prepare a plan, ask for attestation, or
 request signatures.
 
@@ -1377,7 +1387,7 @@ inspected before another mutation.
 
 #### Gate 3 - exact-revision human endorsement
 
-Proceed only after CI passes (or the explicit no-required-CI exception above)
+Proceed only after CI passes (or one of the explicit, scoped CI exceptions above)
 and CCR is either explicitly unavailable,
 approval-recommended or human-review-recommended. Recheck the current head and
 base branch against the recorded gate evidence. A changed head or retargeted
@@ -1427,8 +1437,10 @@ complete protocol:
    the new signing count and IDs, the preserved commit IDs,
    any separately preserved GitHub base-only merge IDs,
    any proposed committer change (existing identities and proposed name/email)
-   and material validation limitations, including any explicit version 4
-   no-required-CI exception. State that endorsement also approves
+   and material validation limitations, including any explicit
+   no-required-CI exception or version 5 collaborator-approval deferral. For the latter,
+   show the check name, app ID/slug, required count, and original run ID, and do not
+   describe it as passing CI. State that endorsement also approves
    the shown metadata change. Include any required verified-email confirmation
    in this same request, not an earlier prompt. Explain that signatures change
    OIDs and signed-head CI must pass before readiness.
@@ -1459,6 +1471,10 @@ complete protocol:
 revision CCR reviewed. Only verified publication, passing required CI and
 confirmed attestor unassignment permit marking that PR ready for review, except
 for the plan's explicit, freshly verified no-required-CI exception.
+For an approved collaborator-approval ordering exception, use `finish --draft-only`
+to verify the signed draft's publication and other required CI without readiness.
+This does not clear or satisfy the pending approval check. Ordinary `finish`
+remains fail-closed until that check and every other requirement pass.
 Old CCR reviews and discussions do not migrate to a replacement PR or count as
 formal approval of its new OIDs; retain their links with the verified mapping.
 
