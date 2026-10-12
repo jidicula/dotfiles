@@ -105,20 +105,60 @@ def authenticated_operator():
     return operator["login"]
 
 
+def source_repository(request):
+    return request.get("source_repository", request["repository"])
+
+
+def validate_ci_deferral(deferral, *, frozen=True):
+    fields = {"kind", "check_name", "app_id", "app_slug", "required_approvals"}
+    if frozen:
+        fields.add("check_run_id")
+    require(isinstance(deferral, dict) and set(deferral) == fields
+            and deferral.get("kind") == "pending_collaborator_approvals",
+            "invalid collaborator-approval deferral")
+    require(isinstance(deferral["check_name"], str) and deferral["check_name"].strip()
+            and not re.search(r"[\x00-\x1f\x7f]", deferral["check_name"])
+            and type(deferral["app_id"]) is int and deferral["app_id"] > 0
+            and isinstance(deferral["app_slug"], str)
+            and re.fullmatch(r"[a-z0-9-]+", deferral["app_slug"])
+            and type(deferral["required_approvals"]) is int
+            and deferral["required_approvals"] > 0,
+            "invalid collaborator-approval check identity")
+    if frozen:
+        require(type(deferral["check_run_id"]) is int and deferral["check_run_id"] > 0,
+                "missing original collaborator-approval check run")
+
+
 def validate_request(request):
     require(isinstance(request, dict), "expected an endorsement request object")
-    require(type(request.get("version")) is int and request["version"] in (1, 2, 3, 4),
+    require(type(request.get("version")) is int and request["version"] in (1, 2, 3, 4, 5),
             "unsupported endorsement request version")
     if request["version"] == 4:
         require(request.get("ci_exception") == "no_required_ci" and "attestor" in request,
                 "version 4 requires an explicit no-required-CI exception and attestor")
+    elif request["version"] == 5:
+        require("attestor" in request
+                and ("source_repository" in request or "ci_deferral" in request),
+                "version 5 requires a fork or collaborator-approval deferral and attestor")
+        require("ci_exception" not in request or request["ci_exception"] == "no_required_ci",
+                "invalid CI exception")
     else:
         require("ci_exception" not in request, "CI exceptions require a version 4 request")
+    if "ci_deferral" in request:
+        require(request["version"] == 5 and "ci_exception" not in request,
+                "collaborator-approval deferral requires version 5 and cannot waive absent CI")
+        validate_ci_deferral(request["ci_deferral"])
     require(isinstance(request.get("repository"), str)
             and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]),
             "invalid repository")
-    require("source_repository" not in request,
-            "endorsement currently requires a same-repository pull request")
+    if "source_repository" in request:
+        require(request["version"] == 5,
+                "versions 1-4 require a same-repository pull request")
+        require(isinstance(request["source_repository"], str)
+                and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+                                 request["source_repository"])
+                and request["source_repository"].casefold() != request["repository"].casefold(),
+                "source_repository must identify the actual, distinct source fork")
     require(type(request.get("pr")) is int and request["pr"] > 0, "invalid pull request")
     require(request.get("url") == f"https://github.com/{request['repository']}/pull/{request['pr']}",
             "pull-request URL does not match the repository")
@@ -126,8 +166,8 @@ def validate_request(request):
         require(isinstance(request.get(field), str) and OID.fullmatch(request[field]),
                 f"invalid {field} object id")
     if request["version"] == 3 or "preserve_base_merges" in request:
-        require(request["version"] in (3, 4),
-                "base-merge preservation requires a version 3 or 4 request")
+        require(request["version"] in (3, 4, 5),
+                "base-merge preservation requires a version 3, 4, or 5 request")
         merges = request.get("preserve_base_merges")
         require(isinstance(merges, list) and merges
                 and all(isinstance(oid, str) and OID.fullmatch(oid) for oid in merges)
@@ -135,7 +175,8 @@ def validate_request(request):
     for field in ("source_branch", "base_branch", "target_branch"):
         require(isinstance(request.get(field), str), f"missing {field}")
         run(["git", "check-ref-format", "refs/heads/" + request[field]])
-    require(request["source_branch"] != request["base_branch"], "cannot endorse the base branch")
+    require(source_repository(request) != request["repository"]
+            or request["source_branch"] != request["base_branch"], "cannot endorse the base branch")
     require(request["target_branch"] == request["source_branch"] + "-signed",
             "signed branch must append -signed to the source branch")
     require(request.get("publication_options") in (["replacement"], ["replacement", "replace"]),
@@ -175,6 +216,25 @@ def pull_request(repository, number, *, require_draft=True, allow_fork=False):
     return pr
 
 
+def planned_pull_request(request, number, *, require_draft=True):
+    pr = pull_request(request["repository"], number, require_draft=require_draft,
+                      allow_fork=source_repository(request) != request["repository"])
+    require(pr.get("number") == number
+            and pr.get("html_url") == f"https://github.com/{request['repository']}/pull/{number}"
+            and pr["head"]["repo"]["full_name"] == source_repository(request),
+            "pull request repository or identity changed")
+    return pr
+
+
+def confirm_graphql_repositories(request, pr):
+    if "source_repository" in request or "ci_deferral" in request:
+        require(isinstance(pr.get("repository"), dict)
+                and pr["repository"].get("nameWithOwner") == request["repository"]
+                and isinstance(pr.get("headRepository"), dict)
+                and pr["headRepository"].get("nameWithOwner") == source_repository(request),
+                "PR repository identity changed or is unavailable")
+
+
 def branch_head(repository, branch):
     """Read the live tip; a PR's base.sha may be a historical snapshot."""
     ref = github(f"repos/{repository}/git/ref/heads/{quote(branch, safe='')}")
@@ -190,6 +250,10 @@ def require_base_compatibility(request, base, mergeable):
     """Keep the reviewed range fixed while accepting a conflict-free base advance."""
     require(isinstance(base, str) and OID.fullmatch(base), "invalid current base commit")
     if base == request["base"]:
+        if source_repository(request) != request["repository"]:
+            require(mergeable != "CONFLICTING", "upstream base has merge conflicts")
+            require(mergeable == "MERGEABLE",
+                    "upstream base mergeability is unconfirmed; retry the same plan")
         return
     comparison = github(
         f"repos/{request['repository']}/compare/{request['base']}...{base}?per_page=1")
@@ -218,13 +282,16 @@ def confirm_base_compatibility(request, pr):
           node(id: $id) {
             ... on PullRequest {
               id state headRefOid headRefName baseRefName mergeable
+              repository { nameWithOwner }
+              headRepository { nameWithOwner }
               baseRef { target { oid } }
             }
           }
         }
     """
     for _ in range(3):
-        if branch_head(request["repository"], request["base_branch"]) == request["base"]:
+        if (branch_head(request["repository"], request["base_branch"]) == request["base"]
+                and source_repository == request["repository"]):
             return
         response = github("graphql", "POST", {
             "query": query, "variables": {"id": pr["node_id"]},
@@ -241,6 +308,7 @@ def confirm_base_compatibility(request, pr):
                 and isinstance(current.get("baseRef"), dict)
                 and isinstance(current["baseRef"].get("target"), dict),
                 "PR changed or base mergeability is unavailable; quality gate not confirmed")
+        confirm_graphql_repositories(request, current)
         base = current["baseRef"]["target"].get("oid")
         require_base_compatibility(request, base, current.get("mergeable"))
         if branch_head(request["repository"], request["base_branch"]) == base:
@@ -255,7 +323,9 @@ def replacement_allowed(repository, branch):
     path = quote(branch, safe="")
     try:
         rules = github(f"repos/{repository}/rules/branches/{path}")
-        require(isinstance(rules, list), "invalid branch-rule response")
+        require(isinstance(rules, list) and all(
+            isinstance(rule, dict) and isinstance(rule.get("type"), str) for rule in rules),
+            "invalid branch-rule response")
         if any(rule.get("type") == "non_fast_forward" for rule in rules):
             return False
         branch_info = github(f"repos/{repository}/branches/{path}")
@@ -276,8 +346,11 @@ def replacement_allowed(repository, branch):
         return False
 
 
-def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True):
+def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
+             defer_collaborator_approvals=None):
     """Check an unsigned draft without starting endorsement preparation."""
+    require(not (allow_no_required_ci and defer_collaborator_approvals is not None),
+            "collaborator approvals and absent-CI exceptions are independent and cannot be combined")
     pr = pull_request(repository, number, allow_fork=allow_fork)
     require(pr["state"] == "open", "the original draft PR is not open")
     source = pr["head"]["ref"]
@@ -292,7 +365,17 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True)
         request["source_repository"] = pr["head"]["repo"]["full_name"]
     if allow_no_required_ci:
         request["ci_exception"] = "no_required_ci"
-    checked = require_passing_checks(request, number, request["head"], source, require_draft=True)
+    if defer_collaborator_approvals is not None:
+        validate_ci_deferral(defer_collaborator_approvals, frozen=False)
+        request["ci_deferral"] = dict(defer_collaborator_approvals)
+    checked = require_passing_checks(
+        request, number, request["head"], source, require_draft=True,
+        allow_collaborator_deferral=defer_collaborator_approvals is not None,
+        preparing_deferral=defer_collaborator_approvals is not None,
+    )
+    if defer_collaborator_approvals is not None:
+        request["ci_deferral"]["check_run_id"] = checked["approval_check"]["id"]
+        request["required_ci"] = "deferred_collaborator_approvals"
     if allow_no_required_ci:
         request["required_ci"] = (
             "not_configured" if checked["ci_scope"] == "operator_approved_no_required_ci"
@@ -301,19 +384,20 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True)
 
 
 def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=(),
-            allow_no_required_ci=False):
+            allow_no_required_ci=False, defer_collaborator_approvals=None):
     request = check_ci(repository, number, allow_no_required_ci=allow_no_required_ci,
-                       allow_fork=False)
+                       defer_collaborator_approvals=defer_collaborator_approvals)
     required_ci = request.pop("required_ci", None)
     require(not allow_no_required_ci or required_ci == "not_configured",
             "required CI is configured or reported; prepare without --allow-no-required-ci")
     source = request["source_branch"]
     key = public_key(Path(key_path).expanduser().read_text())
     request.update(
-        version=4 if allow_no_required_ci else (3 if preserve_base_merges else 2),
+        version=(5 if "source_repository" in request or "ci_deferral" in request
+                 else 4 if allow_no_required_ci else 3 if preserve_base_merges else 2),
         target_branch=source + "-signed",
         publication_options=["replacement"] + (
-            ["replace"] if replacement_allowed(repository, source) else []),
+            ["replace"] if replacement_allowed(source_repository(request), source) else []),
         key=key, fingerprint=fingerprint(key), attestor=authenticated_operator(),
     )
     if committer is not None:
@@ -327,7 +411,7 @@ def prepare(repository, number, key_path, *, committer=None, preserve_base_merge
                 "base-merge preservation requires the repository's default branch")
         for oid in request["preserve_base_merges"]:
             verify_github_base_merge(
-                request, oid, github(f"repos/{repository}/git/commits/{oid}"))
+                request, oid, github(f"repos/{source_repository(request)}/git/commits/{oid}"))
         confirm_ci_revision(request, number, request["head"], source, require_draft=True)
     if committer is not None:
         keys = github_pages("users/" + quote(request["attestor"], safe="")
@@ -360,7 +444,7 @@ class Repository:
         return self.git("rev-parse", "--verify", name).decode().strip()
 
     def validate_origin(self, request):
-        expected = request["repository"].lower()
+        expected = source_repository(request).lower()
         for options in (("--all",), ("--push", "--all")):
             urls = self.git("remote", "get-url", *options, "origin").decode().splitlines()
             require(len(urls) == 1, "origin must have exactly one fetch and one push URL")
@@ -375,19 +459,41 @@ class Repository:
 
     def remote_refs(self, request):
         self.validate_origin(request)
+        fields = ["source_branch", "target_branch"]
+        if source_repository(request) == request["repository"]:
+            fields.append("base_branch")
         output = self.git("ls-remote", "--heads", "origin",
-                          *("refs/heads/" + request[field] for field in
-                            ("source_branch", "base_branch", "target_branch")))
+                          *("refs/heads/" + request[field] for field in fields))
         return {line.split()[1]: line.split()[0] for line in output.decode().splitlines()}
 
-    def ensure_commit(self, oid):
+    def base_remote(self, request):
+        if source_repository(request) == request["repository"]:
+            return "origin"
+        remote = f"https://github.com/{request['repository']}.git"
+        resolved = self.git("ls-remote", "--get-url", remote).decode().strip()
+        match = re.fullmatch(
+            r"(?:https://github\.com/|git@github\.com:)(.+?)(?:\.git)?/?", resolved)
+        require(match and match[1].lower() == request["repository"].lower(),
+                "upstream fetch URL does not match the reviewed GitHub repository")
+        return remote
+
+    def remote_base(self, request, refs):
+        branch = "refs/heads/" + request["base_branch"]
+        if source_repository(request) == request["repository"]:
+            return refs.get(branch)
+        lines = self.git("ls-remote", "--heads", self.base_remote(request), branch).decode().splitlines()
+        require(len(lines) == 1 and lines[0].split()[1:] == [branch]
+                and OID.fullmatch(lines[0].split()[0]), "upstream base branch is unavailable")
+        return lines[0].split()[0]
+
+    def ensure_commit(self, oid, request):
         object_type = self.git("cat-file", "--batch-check=%(objecttype)",
                                data=(oid + "\n").encode()).strip()
         if object_type == (oid + " missing").encode():
             print(f"[copilot-cs-endorse] fetching base history: {oid}",
                   file=sys.stderr, flush=True)
             self.git("fetch", "--progress", "--no-tags", "--no-write-fetch-head",
-                     "--no-recurse-submodules", "--refmap=", "origin", oid)
+                     "--no-recurse-submodules", "--refmap=", self.base_remote(request), oid)
             object_type = self.git("cat-file", "--batch-check=%(objecttype)",
                                    data=(oid + "\n").encode()).strip()
         require(object_type == b"commit", "base is not an available commit")
@@ -395,8 +501,8 @@ class Repository:
     def check_base_merge(self, request, base, head):
         require(isinstance(base, str) and OID.fullmatch(base),
                 "remote base branch is missing; obtain a new endorsement")
-        self.ensure_commit(request["base"])
-        self.ensure_commit(base)
+        self.ensure_commit(request["base"], request)
+        self.ensure_commit(base, request)
         require(self.git("merge-base", request["base"], base).decode().strip() == request["base"],
                 "remote base changed without a fast-forward; obtain a new endorsement")
         result = subprocess.run(
@@ -420,15 +526,15 @@ class Repository:
             refs = self.remote_refs(request)
             require(refs.get("refs/heads/" + request["source_branch"]) == expected,
                     "remote source branch changed; obtain a new endorsement")
-            base = refs.get("refs/heads/" + request["base_branch"])
-            if base == request["base"]:
+            base = self.remote_base(request, refs)
+            if base == request["base"] and source_repository(request) == request["repository"]:
                 return refs
             self.check_base_merge(request, base, merge_head or published or request["head"])
             current = self.remote_refs(request)
             require(current.get("refs/heads/" + request["source_branch"]) == expected
                     and self.ref("refs/heads/" + request["source_branch"]) == request["head"],
                     "source branch changed during mergeability checks; obtain a new endorsement")
-            if current.get("refs/heads/" + request["base_branch"]) == base:
+            if self.remote_base(request, current) == base:
                 return current
         raise ValueError("remote base kept advancing during mergeability checks; retry the same plan")
 
@@ -551,7 +657,7 @@ class Repository:
         self.snapshot(request)
         require(not self.git("status", "--porcelain", "--untracked-files=no").strip(),
                 "commit or set aside tracked worktree changes before requesting endorsement")
-        self.ensure_commit(request["base"])
+        self.ensure_commit(request["base"], request)
         self.snapshot(request)
         commits = self.commits(request)
         require(commits, "the draft PR introduces no commits")
@@ -919,11 +1025,16 @@ def await_attestation(result):
             ("request", "root", "commits", "plan_id")), "expected the complete planning result")
     plan = {key: value for key, value in result.items() if key != "plan_id"}
     request = reviewed_plan_request(plan, result["plan_id"])
-    require_passing_checks(request, request["pr"], request["head"], request["source_branch"],
-                           require_draft=True)
+    checked = require_passing_checks(
+        request, request["pr"], request["head"], request["source_branch"], require_draft=True,
+        allow_collaborator_deferral="ci_deferral" in request,
+    )
     set_attestation_assignment(request, True)
-    return {"url": request["url"], "head": request["head"],
-            "attestor": request["attestor"], "awaiting_attestation": True}
+    result = {"url": request["url"], "head": request["head"],
+              "attestor": request["attestor"], "awaiting_attestation": True}
+    if "ci_deferral" in request:
+        result.update(ci_deferral=request["ci_deferral"], ci_scope=checked["ci_scope"])
+    return result
 
 
 def complete_attestation(receipt, approval):
@@ -957,8 +1068,7 @@ def confirm_ci_revision(request, number, head, branch, *, require_draft=False, a
     """Confirm the expected revision, allowing closed originals only on resume."""
     repository = request["repository"]
     source_repository = request.get("source_repository", repository)
-    current = pull_request(repository, number, require_draft=require_draft,
-                           allow_fork=source_repository != repository)
+    current = planned_pull_request(request, number, require_draft=require_draft)
     require(current["state"] in (("open", "closed") if allow_closed else ("open",))
             and current["head"]["repo"]["full_name"] == source_repository
             and current["head"]["sha"] == head
@@ -1117,11 +1227,24 @@ def require_passing_workflows(request, number, head, branch, workflows):
                 ("head-branch", candidate.get("head_branch") == branch),
                 ("event", candidate.get("event") in ("pull_request", "pull_request_target")),
                 ("repository", candidate["repository"].get("full_name") == repository),
+                ("source-repository", "source_repository" not in request or (
+                    isinstance(candidate.get("head_repository"), dict)
+                    and candidate["head_repository"].get("full_name")
+                    == request["source_repository"])),
                 ("pull-request-association", any(
                     isinstance(pr, dict) and pr.get("number") == number
                     and isinstance(pr.get("head"), dict) and pr["head"].get("sha") == head
                     and isinstance(pr.get("base"), dict)
                     and pr["base"].get("ref") == request["base_branch"]
+                    and ("source_repository" not in request or (
+                        pr.get("url") == f"https://api.github.com/repos/{repository}/pulls/{number}"
+                        and pr["head"].get("ref") == branch
+                        and isinstance(pr["head"].get("repo"), dict)
+                        and pr["head"]["repo"].get("url")
+                        == f"https://api.github.com/repos/{request['source_repository']}"
+                        and isinstance(pr["base"].get("repo"), dict)
+                        and pr["base"]["repo"].get("url")
+                        == f"https://api.github.com/repos/{repository}"))
                     for pr in candidate["pull_requests"])),
             ) if not matches
         ]
@@ -1182,7 +1305,8 @@ def require_passing_workflows(request, number, head, branch, workflows):
         require(isinstance(current, dict) and all(
             current.get(field) == candidate.get(field) for field in (
                 "id", "workflow_id", "workflow_url", "check_suite_node_id", "run_attempt",
-                "head_sha", "head_branch", "event", "path", "repository", "pull_requests")),
+                "head_sha", "head_branch", "event", "path", "repository", "head_repository",
+                "pull_requests")),
             f"required workflow changed for {label}; quality gate blocked")
         status, conclusion = current.get("status"), current.get("conclusion")
         if status != "completed" or conclusion != "success":
@@ -1194,10 +1318,74 @@ def require_passing_workflows(request, number, head, branch, workflows):
         raise error_type("; ".join(failures) + "; quality gate blocked")
 
 
-def require_passing_checks(request, number, head, branch, *, require_draft=False):
+def collaborator_approval_check(request, head, checks, policy_apps, *, preparing):
+    deferral = request["ci_deferral"]
+    validate_ci_deferral(deferral, frozen=not preparing)
+    matching = [check for check in checks
+                if check.get("name", check.get("context")) == deferral["check_name"]]
+    require(len(matching) == 1, "missing or ambiguous collaborator-approval check")
+    check = matching[0]
+    require(check.get("__typename") == "CheckRun" and check.get("isRequired") is True
+            and isinstance(check.get("status"), str)
+            and "conclusion" in check
+            and (check["conclusion"] is None or isinstance(check["conclusion"], str))
+            and type(check.get("databaseId")) is int and check["databaseId"] > 0,
+            "collaborator-approval deferral requires an exact required check run")
+    suite = check.get("checkSuite")
+    require(isinstance(suite, dict) and isinstance(suite.get("app"), dict)
+            and type(suite["app"].get("databaseId")) is int
+            and suite["app"]["databaseId"] == deferral["app_id"]
+            and suite["app"].get("slug") == deferral["app_slug"],
+            "collaborator-approval check app provenance differs")
+    require(all(app in (None, -1, deferral["app_id"]) for app in policy_apps),
+            "required collaborator-approval policy specifies a different app")
+    if not preparing and head == request["head"]:
+        require(check["databaseId"] == deferral["check_run_id"],
+                "original collaborator-approval check run changed; prepare a new plan")
+    endpoint = f"repos/{request['repository']}/check-runs/{check['databaseId']}"
+    current = github(endpoint)
+    require(isinstance(current, dict) and type(current.get("id")) is int
+            and current["id"] == check["databaseId"]
+            and current.get("url") == "https://api.github.com/" + endpoint
+            and current.get("name") == deferral["check_name"]
+            and current.get("head_sha") == head
+            and isinstance(current.get("app"), dict)
+            and type(current["app"].get("id")) is int
+            and current["app"]["id"] == deferral["app_id"]
+            and current["app"].get("slug") == deferral["app_slug"]
+            and current.get("status") == check.get("status", "").lower()
+            and current.get("conclusion") == (
+                check["conclusion"].lower() if isinstance(check.get("conclusion"), str) else None),
+            "collaborator-approval check changed or its provenance is unavailable")
+    passed = current["status"] == "completed" and current["conclusion"] == "success"
+    title = current.get("output", {}).get("title") if isinstance(current.get("output"), dict) else None
+    count = (re.fullmatch(r"Awaiting approvals \((0|[1-9][0-9]*)/([1-9][0-9]*)\)", title)
+             if isinstance(title, str) else None)
+    pending = (current["status"] == "in_progress" and current["conclusion"] is None
+               and count is not None and int(count[2]) == deferral["required_approvals"]
+               and int(count[1]) < deferral["required_approvals"])
+    require(passed or pending,
+            "check is neither successful nor strictly awaiting the selected collaborator approvals")
+    require(not preparing or pending,
+            "unused collaborator-approval deferral; prepare without the deferral option")
+    return {"id": current["id"], "name": current["name"], "app_id": deferral["app_id"],
+            "app_slug": deferral["app_slug"], "title": title, "pending": pending}
+
+
+def require_passing_checks(request, number, head, branch, *, require_draft=False,
+                           allow_collaborator_deferral=False, preparing_deferral=False):
     """Read the exact revision's required CI without changing its PR."""
     allow_empty = request.get("ci_exception") == "no_required_ci"
     require("ci_exception" not in request or allow_empty, "invalid CI exception")
+    deferral = request.get("ci_deferral")
+    if deferral is not None:
+        require(not allow_empty, "collaborator approvals cannot waive absent CI")
+        validate_ci_deferral(deferral, frozen=not preparing_deferral)
+    require(not allow_collaborator_deferral or deferral is not None,
+            "collaborator-approval deferral was not selected")
+    require(not preparing_deferral or allow_collaborator_deferral,
+            "invalid collaborator-approval preparation")
+    policy_apps = []
     repository = request["repository"]
     pr = confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
     url = pr["html_url"]
@@ -1226,15 +1414,25 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 require(isinstance(check, dict) and isinstance(check.get("context"), str)
                         and check["context"], "invalid required status-check context")
                 expected.add(check["context"])
+                if deferral is not None and check["context"] == deferral["check_name"]:
+                    app = check.get("integration_id")
+                    require(app is None or type(app) is int and (app == -1 or app > 0),
+                            "invalid required collaborator-approval app policy")
+                    policy_apps.append(app)
 
     query = """
         query EndorsementRequiredChecks($id: ID!, $cursor: String) {
           node(id: $id) {
             ... on PullRequest {
               id state headRefOid headRefName baseRefName mergeable
+              repository { nameWithOwner }
+              headRepository { nameWithOwner }
               baseRef {
                 target { oid }
-                branchProtectionRule { requiresStatusChecks requiredStatusCheckContexts }
+                branchProtectionRule {
+                  requiresStatusChecks requiredStatusCheckContexts
+                  requiredStatusChecks { context app { databaseId slug } }
+                }
               }
               commits(last: 1) {
                 nodes {
@@ -1242,9 +1440,11 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                     oid
                     statusCheckRollup {
                       contexts(first: 100, after: $cursor) {
+                        totalCount
                         nodes {
                           __typename
                           ... on CheckRun {
+                            databaseId checkSuite { app { databaseId slug } }
                             name status conclusion isRequired(pullRequestId: $id)
                           }
                           ... on StatusContext {
@@ -1266,6 +1466,9 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     failed = False
     cursor = None
     cursors = set()
+    observed_checks = []
+    total_checks = None
+    protection_snapshot = None
     while True:
         response = github("graphql", "POST", {
             "query": query, "variables": {"id": pr["node_id"], "cursor": cursor},
@@ -1282,9 +1485,14 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 and isinstance(current.get("baseRef"), dict)
                 and isinstance(current["baseRef"].get("target"), dict),
                 "PR or base changed while checking required CI")
+        confirm_graphql_repositories(request, current)
         require_base_compatibility(
             request, current["baseRef"]["target"].get("oid"), current.get("mergeable"))
         protection = current["baseRef"]["branchProtectionRule"]
+        if deferral is not None:
+            require(protection_snapshot is None or protection_snapshot == canonical(protection),
+                    "required-check policy changed during discovery")
+            protection_snapshot = canonical(protection)
         if protection is not None:
             require(isinstance(protection, dict)
                     and type(protection.get("requiresStatusChecks")) is bool,
@@ -1296,6 +1504,23 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                         and all(isinstance(name, str) and name for name in contexts),
                         "invalid classic required status-check contexts")
                 expected.update(contexts)
+                if deferral is not None:
+                    detailed = protection.get("requiredStatusChecks")
+                    require(isinstance(detailed, list)
+                            and all(isinstance(item, dict) and isinstance(item.get("context"), str)
+                                    for item in detailed)
+                            and {item["context"] for item in detailed} == set(contexts),
+                            "incomplete classic required-check app policy")
+                    for item in detailed:
+                        if item["context"] != deferral["check_name"]:
+                            continue
+                        app = item.get("app")
+                        require(app is None or isinstance(app, dict)
+                                and type(app.get("databaseId")) is int and app["databaseId"] > 0,
+                                "invalid classic collaborator-approval app policy")
+                        policy_apps.append(None if app is None else app["databaseId"])
+                        require(app is None or app.get("slug") == deferral["app_slug"],
+                                "classic collaborator-approval app provenance differs")
         commits = current["commits"]["nodes"]
         require(isinstance(commits, list) and len(commits) == 1
                 and commits[0]["commit"]["oid"] == head,
@@ -1308,10 +1533,17 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
         contexts = rollup["contexts"]
         require(isinstance(contexts, dict) and isinstance(contexts.get("nodes"), list),
                 "invalid required CI response")
+        if deferral is not None:
+            count = contexts.get("totalCount")
+            require(type(count) is int and count >= 0
+                    and (total_checks is None or total_checks == count),
+                    "incomplete or changing required-check discovery")
+            total_checks = count
         for check in contexts["nodes"]:
             require(isinstance(check, dict) and type(check.get("isRequired")) is bool,
                     "invalid required CI result")
-            if not check["isRequired"]:
+            observed_checks.append(check)
+            if not check["isRequired"] and deferral is None:
                 continue
             if check["__typename"] == "CheckRun":
                 name = check["name"]
@@ -1328,7 +1560,8 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 passed = state == "SUCCESS"
                 failed |= state in ("FAILURE", "ERROR")
             require(isinstance(name, str) and name, "missing required CI check name")
-            reported.add(name)
+            if check["isRequired"]:
+                reported.add(name)
             if not passed:
                 failures.append(f"{name}: {state}")
         page = contexts["pageInfo"]
@@ -1341,6 +1574,8 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 "invalid CI pagination cursor")
         cursors.add(cursor)
 
+    require(deferral is None or len(observed_checks) == total_checks,
+            "incomplete required-check discovery")
     message = f"required CI is not succeeding for {url}: {'; '.join(failures)}; quality gate blocked"
     if failed:
         raise RequiredCIFailure(message)
@@ -1348,6 +1583,14 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
         require_passing_workflows(request, number, head, branch, workflows)
     require(not expected - reported,
             f"missing required CI checks for {url}: {', '.join(sorted(expected - reported))}; quality gate blocked")
+    approval_check = None
+    deferred = False
+    if deferral is not None:
+        approval_check = collaborator_approval_check(
+            request, head, observed_checks, policy_apps, preparing=preparing_deferral)
+        deferred = approval_check["pending"] and allow_collaborator_deferral
+        if deferred:
+            failures.remove(f"{deferral['check_name']}: IN_PROGRESS")
     require(not failures, message)
     exception_applied = allow_empty and not status_policy and not reported and not workflows
     require(reported or workflows or exception_applied,
@@ -1357,8 +1600,18 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
         print(f"[copilot-cs-endorse] {url}: no required CI is configured or reported; "
               "using the explicit revision-scoped exception, not a passing CI result",
               file=sys.stderr)
-    return dict(current, ci_scope=(
+    if deferred:
+        print(f"[copilot-cs-endorse] {url}: deferring only "
+              f"{deferral['check_name']} from {deferral['app_slug']} "
+              f"(app {deferral['app_id']}); {approval_check['title']}; "
+              "not a passing CI result; all requirements still block readiness",
+              file=sys.stderr)
+    result = dict(current, ci_scope=(
+        "operator_deferred_collaborator_approvals" if deferred else
         "operator_approved_no_required_ci" if exception_applied else "observed_required_checks"))
+    if approval_check is not None:
+        result["approval_check"] = approval_check
+    return result
 
 
 def ready_for_review(request, number, head, branch):
@@ -1428,12 +1681,13 @@ def ready_for_review(request, number, head, branch):
             "ci_scope": pr["ci_scope"]}
 
 
-def finish(receipt, approval):
+def finish(receipt, approval, *, draft_only=False):
     request, publication = signed_receipt_request(receipt, approval)
     plan = receipt["plan"]
     plan_id = receipt["plan_id"]
     repository = request["repository"]
-    pr = pull_request(repository, request["pr"], require_draft=publication != "replace")
+    source = source_repository(request)
+    pr = planned_pull_request(request, request["pr"], require_draft=publication != "replace")
     expected = receipt["head"] if publication == "replace" else request["head"]
     require(pr["head"]["sha"] == expected
             and pr["head"]["ref"] == request["source_branch"]
@@ -1443,13 +1697,13 @@ def finish(receipt, approval):
     replacement = None
     if publication == "replacement":
         candidates = github_pages(f"repos/{repository}/pulls?state=all&head="
-                                  + quote(repository.split("/")[0] + ":" + target, safe="")
+                                  + quote(source.split("/")[0] + ":" + target, safe="")
                                   + "&per_page=100")
         require(len(candidates) <= 1, "multiple replacement PRs exist; operator decision required")
         if candidates:
             require(marker in (candidates[0]["body"] or ""),
                     "existing PR is not this endorsement's replacement")
-            replacement = pull_request(repository, candidates[0]["number"], require_draft=False)
+            replacement = planned_pull_request(request, candidates[0]["number"], require_draft=False)
             require(replacement["state"] == "open"
                     and replacement["head"]["sha"] == receipt["head"]
                     and replacement["head"]["ref"] == target
@@ -1457,12 +1711,13 @@ def finish(receipt, approval):
                     and marker in (replacement["body"] or ""), "replacement draft PR does not match")
     merge_pr = replacement or pr
     confirm_base_compatibility(request, merge_pr)
-    branch = github(f"repos/{repository}/branches/{quote(target, safe='')}")
-    require(branch["commit"]["sha"] == receipt["head"], "published signed branch changed")
+    require(branch_head(source, target) == receipt["head"], "published signed branch changed")
+    require(branch_head(source, request["source_branch"]) == expected,
+            "original source branch changed after endorsement")
     preserved = retained_commits(plan)
     for original in plan["commits"]:
-        before = github(f"repos/{repository}/git/commits/{original}")
-        after = github(f"repos/{repository}/git/commits/{receipt['mapping'][original]}")
+        before = github(f"repos/{source}/git/commits/{original}")
+        after = github(f"repos/{source}/git/commits/{receipt['mapping'][original]}")
         require(isinstance(before["committer"], dict), "invalid reviewed committer metadata")
         override = {} if original in preserved else request.get("committer", {})
         expected_committer = {**before["committer"], **override}
@@ -1485,9 +1740,25 @@ def finish(receipt, approval):
             require_draft=publication != "replace", merge_pr=merge_pr,
         )
         pr["assignees"] = updated["assignees"]
+
+    def finish_ci(number):
+        if not draft_only:
+            return ready_for_review(request, number, receipt["head"], target)
+        checked = require_passing_checks(
+            request, number, receipt["head"], target, require_draft=True,
+            allow_collaborator_deferral="ci_deferral" in request,
+        )
+        require(request.get("attestor", "").casefold() not in assignee_logins(checked),
+                "attestor is still assigned; clear the attestation wait before draft verification")
+        result = {"url": checked["html_url"], "head": receipt["head"],
+                  "ready_for_review": False, "ci_scope": checked["ci_scope"]}
+        if "ci_deferral" in request:
+            result["ci_deferral"] = request["ci_deferral"]
+        return result
+
     if publication == "replace":
         require(pr["state"] == "open", "the original draft PR is no longer open")
-        return ready_for_review(request, request["pr"], receipt["head"], target)
+        return finish_ci(request["pr"])
 
     title = full_references(pr["title"], repository)
     body = (full_references(pr["body"] or "", repository)
@@ -1496,11 +1767,16 @@ def finish(receipt, approval):
         require(pr["state"] == "open", "original PR closed before replacement creation")
         replacement = github(f"repos/{repository}/pulls", "POST", {
             "title": title, "body": body,
-            "base": request["base_branch"], "head": target, "draft": True,
+            "base": request["base_branch"],
+            "head": target if source == repository else source.split("/")[0] + ":" + target,
+            **({"head_repo": source.split("/")[1]} if source != repository else {}),
+            "draft": True,
         })
-    replacement = pull_request(repository, replacement["number"], require_draft=False)
+    replacement = planned_pull_request(request, replacement["number"], require_draft=False)
     require(replacement["state"] == "open" and replacement["head"]["sha"] == receipt["head"]
-            and replacement["base"]["ref"] == request["base_branch"], "replacement draft PR does not match")
+            and replacement["head"]["ref"] == target
+            and replacement["base"]["ref"] == request["base_branch"]
+            and marker in (replacement["body"] or ""), "replacement draft PR does not match")
     confirm_base_compatibility(request, replacement)
     github(f"repos/{repository}/issues/{replacement['number']}", "PATCH", pull_metadata(pr))
     current_reviewers = {user["login"] for user in replacement["requested_reviewers"]}
@@ -1516,14 +1792,14 @@ def finish(receipt, approval):
                 "requested reviewers were not preserved; leaving the original PR open")
 
     def confirm_drafts():
-        latest = pull_request(repository, request["pr"])
+        latest = planned_pull_request(request, request["pr"])
         require(latest["head"]["sha"] == request["head"]
                 and latest["head"]["ref"] == request["source_branch"]
                 and latest["base"]["ref"] == request["base_branch"]
                 and latest["title"] == pr["title"] and latest["body"] == pr["body"]
                 and pull_metadata(latest) == pull_metadata(pr),
                 "original PR changed; leaving both drafts open")
-        current = pull_request(repository, replacement["number"], require_draft=False)
+        current = planned_pull_request(request, replacement["number"], require_draft=False)
         require(current["state"] == "open" and current["head"]["sha"] == receipt["head"]
                 and current["head"]["ref"] == request["target_branch"]
                 and current["base"]["ref"] == request["base_branch"]
@@ -1532,6 +1808,9 @@ def finish(receipt, approval):
                 and pull_metadata(current) == pull_metadata(pr),
                 "replacement metadata differs; leaving the original PR open")
         confirm_base_compatibility(request, current)
+        require(branch_head(source, request["source_branch"]) == request["head"]
+                and branch_head(source, target) == receipt["head"],
+                "source branches changed; leaving both drafts open")
         return latest
 
     confirm_drafts()
@@ -1549,7 +1828,7 @@ def finish(receipt, approval):
     latest = confirm_drafts()
     if latest["state"] == "open":
         github(f"repos/{repository}/pulls/{request['pr']}", "PATCH", {"state": "closed"})
-    result = ready_for_review(request, replacement["number"], receipt["head"], target)
+    result = finish_ci(replacement["number"])
     return dict(result, replaces=request["url"])
 
 
@@ -1564,7 +1843,7 @@ def main():
         "--allow-no-required-ci", action="store_true",
         help="explicit operator exception only when no required CI is configured or reported")
     prepare_parser = actions.add_parser(
-        "prepare", help="LOCAL: require passing CI, then snapshot draft PR and publication policy")
+        "prepare", help="LOCAL: check required CI, then snapshot draft PR and publication policy")
     prepare_parser.add_argument("--repo", required=True)
     prepare_parser.add_argument("--pr", required=True, type=int)
     prepare_parser.add_argument("--key", default=os.environ.get("COPILOT_SECRETIVE_SIGNING_PUBLIC_KEY", SIGNING_ALIAS))
@@ -1576,6 +1855,11 @@ def main():
     prepare_parser.add_argument(
         "--preserve-base-merge", action="append", default=[], metavar="OID",
         help="preserve this verified GitHub default-branch merge without endorsing it again")
+    for subparser in (ci_parser, prepare_parser):
+        subparser.add_argument(
+            "--defer-collaborator-approvals", nargs=4, metavar=("CHECK", "APP_ID", "APP_SLUG", "COUNT"),
+            help="operator-selected, per-PR ordering exception for a strictly pending collaborator "
+                 "approval check; never waives readiness")
     plan_parser = actions.add_parser("plan", help="CODESPACE: freeze the commit range for human review")
     plan_parser.add_argument("--request", required=True)
     awaiting_parser = actions.add_parser(
@@ -1595,9 +1879,20 @@ def main():
         "finish", help="LOCAL: verify publication and mark the signed PR ready after required CI passes")
     finish_parser.add_argument("--receipt", required=True)
     finish_parser.add_argument("--approve-plan", required=True)
+    finish_parser.add_argument(
+        "--draft-only", action="store_true",
+        help="verify signed-head CI and finalise a draft without readiness; only the plan's "
+             "selected collaborator-approval check may remain pending")
     args = parser.parse_args()
     remote = args.action in ("plan", "sign", "verify", "push")
     try:
+        deferred_check = getattr(args, "defer_collaborator_approvals", None)
+        deferral = None
+        if deferred_check is not None:
+            name, app_id, app_slug, count = deferred_check
+            deferral = {"kind": "pending_collaborator_approvals", "check_name": name,
+                        "app_id": int(app_id), "app_slug": app_slug,
+                        "required_approvals": int(count)}
         if remote:
             require(os.environ.get("CODESPACES") == "true", "run this action inside the selected Codespace")
             repository = Repository()
@@ -1610,7 +1905,8 @@ def main():
         elif args.action == "check-ci":
             require(os.environ.get("CODESPACES") != "true",
                     "check GitHub CI locally with the operator's authenticated gh")
-            result = check_ci(args.repo, args.pr, allow_no_required_ci=args.allow_no_required_ci)
+            result = check_ci(args.repo, args.pr, allow_no_required_ci=args.allow_no_required_ci,
+                              defer_collaborator_approvals=deferral)
             result.setdefault("required_ci", "passed")
         elif args.action == "prepare":
             require(os.environ.get("CODESPACES") != "true",
@@ -1621,7 +1917,8 @@ def main():
                          if args.committer_name is not None else None)
             result = prepare(args.repo, args.pr, args.key, committer=committer,
                              preserve_base_merges=args.preserve_base_merge,
-                             allow_no_required_ci=args.allow_no_required_ci)
+                             allow_no_required_ci=args.allow_no_required_ci,
+                             defer_collaborator_approvals=deferral)
         elif args.action in ("await-attestation", "complete-attestation"):
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub attestation tracking locally with the operator's authenticated gh")
@@ -1633,7 +1930,8 @@ def main():
         else:
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub finalisation locally with the operator's authenticated gh")
-            result = finish(json.loads(Path(args.receipt).read_text()), args.approve_plan)
+            result = finish(json.loads(Path(args.receipt).read_text()), args.approve_plan,
+                            draft_only=args.draft_only)
         print((RESULT_PREFIX if remote else "") + canonical(result))
         return 0
     except (ValueError, RuntimeError, OSError, KeyError, subprocess.TimeoutExpired) as error:

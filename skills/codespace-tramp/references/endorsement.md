@@ -7,12 +7,21 @@ The helper implements CI, revision and signing guards. CCR interpretation and
 remediation are agent-driven policy in the skill, not a text classifier inside
 the signing helper.
 
-`check-ci` supports fork drafts: it reads required policy from the target
-repository and verifies the live head branch in the fork. Its result includes
-`source_repository` for a fork and remains bound to that source, branch, and
-revision. Endorsement preparation, signing, and publication still require a
-same-repository pull request; a passing fork CI result does not bypass that
-restriction.
+Fork endorsements use version 5. `repository` identifies the upstream PR and
+policy repository; `source_repository` identifies the actual source fork.
+Both identities, branches, and revisions are immutable plan inputs. `origin`
+must have exactly one fetch URL and one push URL, both identifying that fork.
+The helper fetches missing base history from the validated upstream GitHub URL
+without adding a remote or changing refs. The fork's base branch is irrelevant:
+a source branch named `main` can target upstream `main` at a different OID.
+
+Rewrite permission is checked in the source repository. Both publication
+methods push only to the fork; signature and content readback also use the
+fork. Replacement PRs are created in upstream from the qualified fork branch
+and resumed only with their exact source identity and plan marker. Upstream
+policy, base ancestry, mergeability, and required workflows remain mandatory.
+Version 1–4 plans and receipts retain their original same-repository semantics;
+never retrofit a fork or a new exception into an existing plan.
 
 Use this skill's existing runtime. Ordinary SSH, copies and
 Eglot use `~/.ssh/secretive-codespaces-agent-sep-2026{,.pub}`. Endorsement uses
@@ -61,7 +70,8 @@ activate if policy later disappears.
 
 When the exception is actually used, `check-ci` reports
 `required_ci: "not_configured"` and a diagnostic, never `"passed"`. Preparation
-creates a version 4 request with `ci_exception: "no_required_ci"`, bound by the
+creates a version 4 request (version 5 for forks) with
+`ci_exception: "no_required_ci"`, bound by the
 plan digest to the repository, PR, source/base revision and attestor. Version 4
 also supports explicit verified base-merge preservation. Older helpers reject
 the new version; never retrofit the exception into an existing plan.
@@ -72,6 +82,58 @@ Assignment and signed-head finalisation re-read policy: newly configured
 requirements must pass normally. Finalisation reports
 `ci_scope: "operator_approved_no_required_ci"` only when no requirements exist.
 No repository policy, global setting or other PR is changed.
+
+### Explicit ordering exception for pending collaborator approvals
+
+An operator may separately select **one check for one PR** to wait until after
+endorsement, fork publication, and signed-head executable CI. This is an ordering
+exception, not a waiver of approvals or permission to sign. Complete every other
+draft-triggerable CI check and the current-head CCR gate first.
+
+Use the same explicit selector for `check-ci` and `prepare`:
+
+```sh
+copilot-cs-endorse prepare --repo "$NWO" --pr "$PR_NUMBER" \
+  --defer-collaborator-approvals "$CHECK_NAME" "$APP_ID" "$APP_SLUG" "$REQUIRED_COUNT"
+```
+
+The helper completes normal policy, check, and enforced-workflow discovery.
+It requires exactly one required check run with that name, matching app ID and
+slug in both the PR rollup and REST readback, on the exact head. Configured app
+pins must agree. The only deferrable state is `in_progress`, with no conclusion
+and an exact title `Awaiting approvals (n/required)`, where `n` is non-negative,
+less than the selected count, and `required` equals it. Missing, ambiguous,
+failed, queued, malformed, unreadable, or differently sourced checks cannot use
+this option. It is not an arbitrary check-skip mechanism.
+When this exception is selected, other reported checks must succeed even if
+GitHub does not mark them required. Ordinary paths retain their existing policy.
+
+Version 5 freezes `ci_deferral`, including that identity, count, and original
+check-run ID, in the plan digest. An unused selector is rejected during
+preparation; a changed original run requires a new plan. This exception cannot
+be combined with `--allow-no-required-ci`. Disclose it in the exact-plan human
+prompt. `check-ci` reports `required_ci: "deferred_collaborator_approvals"`,
+never `"passed"`. A verified commit signature is not collaborator approval.
+
+After separately authorised signing and publication, finalise and verify the
+signed **draft** without a readiness transition:
+
+```sh
+copilot-cs-endorse finish --receipt "$RECEIPT" --approve-plan "$APPROVAL" --draft-only
+```
+
+This verifies publication, signatures, attestor unassignment, and signed-head
+CI. It can create or resume the marked replacement and close its original, as
+ordinary finalisation does, but the result stays draft. Only the plan's selected,
+still-pending approval check may wait; all other requirements must pass.
+The result reports `ci_scope: "operator_deferred_collaborator_approvals"` while
+waiting. Do not infer final readiness or request new reviews from that result.
+
+Repeat ordinary `finish` with the same receipt after approvals complete.
+Without `--draft-only`, every requirement is enforced, including a successful
+result from the selected approval app; neutral or skipped approval checks do
+not suffice. No new signature, push, plan edit, policy change, or trusted-key
+allowlist change is needed to resume.
 
 Required workflows are discovered from the exact commit's fully paginated
 check suites, not the repository-wide run search. The gate still verifies the
@@ -99,7 +161,8 @@ exact object, the default branch, and second-parent ancestry. Planning requires
 a preserved first parent and recomputes the clean merge tree. Conflict resolution,
 extra content, unsigned merges and unrelated history cannot use this exception.
 
-This opt-in creates a version 3 request. Its plan records `preserved_base_merges`
+This opt-in creates a version 3 request (version 5 for forks). Its plan records
+`preserved_base_merges`
 separately from operator-endorsed `preserved_commits`; both keep their exact OIDs,
 metadata and signatures. The former are verified base updates, **not** the
 operator's endorsement. Signing covers only the remaining commits, and
@@ -140,13 +203,16 @@ still requires GitHub to verify the actual published signatures.
 
 Before planning, check `git rev-parse --is-shallow-repository` in the selected
 Codespace. A shallow checkout cannot establish the full reviewed ancestry.
-If it returns `true`, verify that `origin` matches the prepared repository and
-check free disk space, then restore history through the login-aware runner.
-Replace `BASE_OID` and `HEAD_OID` below with the exact prepared request fields:
+If it returns `true`, verify that `origin` matches the prepared source repository
+and check free disk space, then restore history through the login-aware runner.
+Replace `HEAD_OID` below with the exact prepared source head:
 
 ```elisp
-(copilot-cs-login-sh "git fetch --progress --unshallow --no-tags --no-write-fetch-head --no-recurse-submodules --refmap= origin BASE_OID HEAD_OID" 10)
+(copilot-cs-login-sh "git fetch --progress --unshallow --no-tags --no-write-fetch-head --no-recurse-submodules --refmap= origin HEAD_OID" 10)
 ```
+
+Planning fetches any missing upstream base objects separately. Do not substitute
+the fork's same-named base branch for upstream history.
 
 This fetch can be large; poll its existing job without a total-duration cap.
 Verify that the checkout is no longer shallow and that the source head, refs,
@@ -176,7 +242,8 @@ in topological order. `publication_options` lists what may be offered; it is
 not a publication selection or an approval.
 
 If the prepared base commit is missing, planning fetches that exact OID and
-its history from the verified origin. It does not update local or
+its history from the verified upstream repository for forks, or from origin
+for same-repository PRs. It does not update local or
 remote-tracking refs, tags, `FETCH_HEAD`, the index or working tree. Source and
 base refs are checked again after the fetch. A changed source stops planning;
 a base advance is checked for ancestry and merge conflicts. Fetch or mergeability
@@ -315,6 +382,8 @@ updates, not operator endorsements. Exclude both lists from the signature count.
 For a committer proposal, show the existing identities and proposed name/email,
 confirm that authors and timestamps stay unchanged, and state that endorsement
 also approves this change. Include any verified-email confirmation here.
+Disclose any version 5 collaborator-approval deferral and its exact check/app
+identity, count, and original run ID; readiness still requires that check.
 
 Offer further work, leaving the draft unendorsed and the permitted publication
 choices from the skill. Preselect no endorsement. Explain that signing changes

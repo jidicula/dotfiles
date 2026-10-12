@@ -202,9 +202,9 @@ class EndorsementTestCase(HelperTestCase):
         self.git("push", "--quiet", "origin", "main", "feature")
         self.repository = self.helper.Repository()
         # Only the origin-address check is replaced; ref reads and pushes use real Git.
-        origin = mock.patch.object(self.repository, "validate_origin")
-        origin.start()
-        self.addCleanup(origin.stop)
+        self.origin_patch = mock.patch.object(self.repository, "validate_origin")
+        self.origin_patch.start()
+        self.addCleanup(self.origin_patch.stop)
         self.request = {
             "version": 1, "repository": "example/project", "pr": 12,
             "url": "https://github.com/example/project/pull/12",
@@ -1473,17 +1473,18 @@ class PublicationTests(EndorsementTestCase):
                                   "refs/heads/feature-signed"), "")
 
 
-class GitHubEndorsementTests(EndorsementTestCase):
+class GitHubEndorsementTestCase(EndorsementTestCase):
     def setUp(self):
         super().setUp()
-        self.request["version"] = 2
+        self.request["version"] = max(self.request["version"], 2)
         self.receipt = self.sign()
         self.original = {
             "number": 12, "node_id": "PR_original",
             "html_url": self.request["url"], "state": "open",
             "draft": True, "merged": False, "title": "Implement change",
             "body": "See example/other#23 and PR 45.\r\nOriginal context.",
-            "head": {"ref": "feature", "sha": self.head, "repo": {"full_name": "example/project"}},
+            "head": {"ref": "feature", "sha": self.head,
+                     "repo": {"full_name": self.helper.source_repository(self.request)}},
             "base": {"ref": "main", "sha": self.base, "repo": {"full_name": "example/project"}},
             "labels": [{"name": "review"}], "assignees": [{"login": "maintainer"}],
             "milestone": {"number": 7}, "requested_reviewers": [{"login": "reviewer"}],
@@ -1620,6 +1621,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
                   else self.replacement)
             if "EndorsementBaseCompatibility" in data["query"]:
                 return {"data": {"node": {
+                    "repository": {"nameWithOwner": pr["base"]["repo"]["full_name"]},
+                    "headRepository": {"nameWithOwner": pr["head"]["repo"]["full_name"]},
                     "id": pr["node_id"], "state": pr["state"].upper(),
                     "headRefOid": pr["head"]["sha"], "headRefName": pr["head"]["ref"],
                     "baseRefName": pr["base"]["ref"],
@@ -1649,6 +1652,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
             page = int(data["variables"]["cursor"] or 0)
             last = page == len(self.check_pages) - 1
             response = {"data": {"node": {
+                "repository": {"nameWithOwner": pr["base"]["repo"]["full_name"]},
+                "headRepository": {"nameWithOwner": pr["head"]["repo"]["full_name"]},
                 "id": pr["node_id"], "state": pr["state"].upper(),
                 "headRefOid": pr["head"]["sha"], "headRefName": pr["head"]["ref"],
                 "baseRefName": pr["base"]["ref"],
@@ -1658,11 +1663,14 @@ class GitHubEndorsementTests(EndorsementTestCase):
                     "branchProtectionRule": {
                         "requiresStatusChecks": bool(self.required_contexts),
                         "requiredStatusCheckContexts": self.required_contexts,
+                        "requiredStatusChecks": [{"context": name, "app": None}
+                                                 for name in self.required_contexts],
                     },
                 },
                 "commits": {"nodes": [{"commit": {
                     "oid": self.check_head or pr["head"]["sha"],
                     "statusCheckRollup": {"contexts": {
+                        "totalCount": sum(len(checks) for checks in self.check_pages),
                         "nodes": copy.deepcopy(self.check_pages[page]),
                         "pageInfo": {"hasNextPage": not last,
                                      "endCursor": None if last else str(page + 1)},
@@ -1685,7 +1693,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
         for repository, branch, head in (
             (self.original["head"]["repo"]["full_name"],
              self.original["head"]["ref"], self.original["head"]["sha"]),
-            ("example/project", self.request["target_branch"], self.receipt["head"]),
+            (self.original["head"]["repo"]["full_name"],
+             self.request["target_branch"], self.receipt["head"]),
         ):
             if endpoint == f"repos/{repository}/git/ref/heads/{quote(branch, safe='')}":
                 return {"ref": "refs/heads/" + branch,
@@ -1700,7 +1709,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 title=data["title"], body=data["body"], requested_reviewers=[], requested_teams=[],
                 labels=[], assignees=[], milestone=None,
             )
-            self.replacement["head"].update(ref=data["head"], sha=self.receipt["head"])
+            self.replacement["head"].update(ref=data["head"].split(":", 1)[-1],
+                                            sha=self.receipt["head"])
             return copy.deepcopy(self.replacement)
         if endpoint == "repos/example/project/pulls/13":
             return copy.deepcopy(self.replacement)
@@ -1765,9 +1775,18 @@ class GitHubEndorsementTests(EndorsementTestCase):
             "head_sha": self.original["head"]["sha"], "head_branch": "feature",
             "path": path, "status": "completed", "conclusion": "success",
             "repository": {"full_name": "example/project"},
+            "head_repository": {"full_name": self.original["head"]["repo"]["full_name"]},
             "pull_requests": [{
-                "number": 12, "head": {"sha": self.original["head"]["sha"]},
-                "base": {"ref": "main"},
+                "number": 12,
+                "url": "https://api.github.com/repos/example/project/pulls/12",
+                "head": {
+                    "sha": self.original["head"]["sha"],
+                    "ref": self.original["head"]["ref"],
+                    "repo": {"url": "https://api.github.com/repos/" +
+                             self.original["head"]["repo"]["full_name"]},
+                },
+                "base": {"ref": "main",
+                         "repo": {"url": "https://api.github.com/repos/example/project"}},
             }],
         }
         self.workflow_runs.append(run)
@@ -1784,6 +1803,8 @@ class GitHubEndorsementTests(EndorsementTestCase):
         }
         return run
 
+
+class GitHubEndorsementTests(GitHubEndorsementTestCase):
     def test_prepare_verifies_required_workflow_source_and_exact_head(self):
         self.add_required_workflow()
         self.add_required_workflow(run_id=101, path=".github/workflows/other.yml")
@@ -3421,17 +3442,10 @@ class GitHubEndorsementTests(EndorsementTestCase):
             self.helper.check_ci("example/project", 12)
         self.assert_read_only_preparation()
 
-    def test_fork_support_does_not_extend_to_preparation_or_signed_requests(self):
+    def test_fork_preparation_uses_version_five_without_relaxing_legacy_plans(self):
         self.original["head"]["repo"]["full_name"] = "contributor/project"
-        with mock.patch.object(Path, "read_text") as read_key, mock.patch.object(
-                self.helper, "replacement_allowed") as policy, mock.patch.object(
-                self.helper, "authenticated_operator") as operator:
-            with self.assertRaisesRegex(ValueError, "same-repository"):
-                self.helper.prepare("example/project", 12, str(self.key_file) + ".pub")
-        read_key.assert_not_called()
-        policy.assert_not_called()
-        operator.assert_not_called()
-        self.assertEqual(self.calls, [("GET", "repos/example/project/pulls/12", None)])
+        self.assertEqual(self.prepare(), dict(
+            self.request, version=5, source_repository="contributor/project"))
         with self.assertRaisesRegex(ValueError, "same-repository"):
             self.helper.validate_request(dict(self.request, source_repository="contributor/project"))
         with self.assertRaisesRegex(ValueError, "same-repository"):

@@ -525,7 +525,7 @@ exit 127; }; timeout --verbose --kill-after=5s %ds %s"
 (defun copilot-cs-endorse (action data &optional approved-plan wait tty)
   "Run endorsement ACTION using DATA inside the selected Codespace.
 ACTION is \"plan\", \"sign\", \"verify\", or \"push\".  DATA is the local
-prepare command's JSON request after required CI passes for \"plan\",
+prepare command's JSON request after the required CI gate for \"plan\",
 otherwise the exact plan id.
 Signing and pushing require APPROVED-PLAN to be \"ID:replacement\" or
 \"ID:replace\", matching the revision and publication method explicitly chosen
