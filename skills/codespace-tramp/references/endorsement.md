@@ -432,7 +432,12 @@ the published branch is not covered.
 
 The helper does not switch branches or change the original source ref, index,
 or working tree. Switch to `<source>-signed` before making manual follow-up
-commits. An interrupted tracking update is an explicit publication error;
+commits. In Magit, use `P u` (`magit-push-current-to-upstream`) to push those
+commits to the PR's branch. When the branch names differ, do not substitute
+`P p` (`magit-push-current-to-pushremote`): it pushes to the same-named branch on
+the push remote, regardless of `push.default`.
+
+An interrupted tracking update is an explicit publication error;
 resuming the same approved `push` repairs tracking without re-signing or
 republishing an already confirmed head.
 
