@@ -259,10 +259,13 @@ def replacement_allowed(repository, branch):
         if any(rule.get("type") == "non_fast_forward" for rule in rules):
             return False
         branch_info = github(f"repos/{repository}/branches/{path}")
+        require(isinstance(branch_info, dict)
+                and isinstance(branch_info.get("protected"), bool),
+                "invalid branch-protection response")
         # Rulesets can mark a branch protected without enabling classic protection.
         summary = branch_info.get("protection")
         classic_disabled = isinstance(summary, dict) and summary.get("enabled") is False
-        if not branch_info["protected"] or classic_disabled:
+        if branch_info["protected"] is False or classic_disabled:
             return True
         protection = github(f"repos/{repository}/branches/{path}/protection")
         return protection.get("allow_force_pushes", {}).get("enabled") is True

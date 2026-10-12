@@ -3953,6 +3953,36 @@ class GitHubEndorsementTests(EndorsementTestCase):
                 with mock.patch("sys.stderr"):
                     self.assertFalse(self.helper.replacement_allowed("example/project", "feature"))
 
+    def test_unknown_branch_protection_does_not_offer_rewriting(self):
+        responses = [None, [], {}]
+        for protected in (None, 0, 1, "", "false", "true", [], {}):
+            responses.extend((
+                {"protected": protected},
+                {"protected": protected, "protection": {"enabled": False}},
+            ))
+        for response in responses:
+            with self.subTest(response=response), mock.patch.object(
+                    self.helper, "github", side_effect=[
+                        [], response, {"allow_force_pushes": {"enabled": True}},
+                    ]) as api, redirect_stderr(io.StringIO()) as errors:
+                self.assertFalse(self.helper.replacement_allowed("example/project", "feature"))
+                self.assertIn("rewrite permission is uncertain", errors.getvalue())
+                self.assertIn("invalid branch-protection response", errors.getvalue())
+                self.assertEqual(api.call_args_list, [
+                    mock.call("repos/example/project/rules/branches/feature"),
+                    mock.call("repos/example/project/branches/feature"),
+                ])
+
+    def test_explicitly_unprotected_branch_offers_in_place_publication(self):
+        with mock.patch.object(self.helper, "github", side_effect=[
+            [], {"protected": False},
+        ]) as api:
+            self.assertTrue(self.helper.replacement_allowed("example/project", "feature"))
+        self.assertEqual(api.call_args_list, [
+            mock.call("repos/example/project/rules/branches/feature"),
+            mock.call("repos/example/project/branches/feature"),
+        ])
+
     def test_rule_and_branch_protection_checks_are_both_required(self):
         for allowed in (True, False):
             with self.subTest(allowed=allowed), mock.patch.object(self.helper, "github", side_effect=[
