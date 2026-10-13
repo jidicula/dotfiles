@@ -603,8 +603,8 @@ helper's revision guards, re-sign, re-push, create a duplicate or bypass readine
 with `gh pr ready`. The local source ref
 intentionally remains unsigned after an in-place publication; do not reset it.
 
-Same-repository github.com drafts and complete history are currently supported.
-Fork PRs, grafts/replacement objects and signed merge-tag headers require
+Same-repository github.com drafts and version 5 fork drafts with complete history
+are supported. Grafts/replacement objects and signed merge-tag headers require
 explicit manual handling, not a lossy rewrite. Ordinary merges and empty commits
 are supported. If policy rejects unsigned drafts, ask the operator; do not sign
 early to evade it.
