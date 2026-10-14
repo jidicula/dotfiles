@@ -1190,6 +1190,18 @@ weaker review gate.
    `blocked` result naming the required repository/ref/path, not a fallback to a
    laptop checkout or an undeclared repository. The parent must obtain any
    additional authorised Codespace evidence before review resumes.
+
+   **Identity and preflight checks use the same source allowlist.** Include the
+   existing `copilot-cs-use` target-selection result and relevant job receipts in
+   the handoff. Use that recorded immutable Codespace name; confirm the checkout
+   with `git rev-parse --show-toplevel` through the same canonical client and
+   runner. Do not rediscover identity by reading
+   `/workspaces/.codespaces/shared/environment-variables.json`, dumping the
+   environment, or browsing undeclared platform or sibling paths, even when
+   filtering the output to one field. Being inside the selected Codespace does
+   not authorise every file in it. Missing or contradictory identity evidence
+   requires a `blocked` result for the parent, not broader discovery.
+
    Review the frozen candidate with
    `git diff <HEAD> <TREE>` and `git show <TREE>:<path>` where working-copy
    contents differ. Serialize calls to the same daemon; the reviewer must not
@@ -1197,15 +1209,18 @@ weaker review gate.
 4. Ask the reviewer to challenge correctness, assumptions, regressions and missing
    coverage, with concrete locations and reasoning, and return an explicit
    `pass`, `changes-needed` or `blocked` assessment. Require a source inventory
-   identifying each inspected or cited repository/ref/path, its Codespace and
-   checkout, and the runner job or supplied-artifact reference, plus an explicit
-   declaration of scope deviations. The parent checks the complete result,
-   source inventory, and available tool/runner records; a bare assurance that
-   scope was respected is not sufficient.
+   identifying every inspected source, including identity and preflight reads
+   not cited in findings, its repository/ref/path, Codespace, and checkout where
+   applicable, and the runner job or supplied-artifact reference. Require an
+   explicit declaration of scope deviations. The parent checks the complete
+   result and reconciles that inventory against the actual tool calls and runner
+   commands, including preflight commands; a bare assurance that scope was
+   respected is not sufficient.
 
-   **Out-of-scope or unverifiable repository evidence invalidates the review,
-   regardless of its verdict.** Read-only laptop/dependency inspection is still
-   a violation. Keep committing blocked, preserve the violation evidence, and
+   **Out-of-scope reads or unverifiable evidence invalidate the review,
+   regardless of its verdict.** Read-only laptop, dependency, or undeclared
+   environment inspection is still a violation, even if it only supplies an
+   identity field. Keep committing blocked, preserve the violation evidence, and
    independently establish any potentially actionable finding in the authorised
    Codespace before changing code. Correct the review inputs/routing and obtain
    a fresh, scope-correct review; do not reuse a reviewer that inspected forbidden
