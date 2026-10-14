@@ -987,9 +987,50 @@ def assignee_logins(pr):
     return {user["login"].casefold() for user in pr["assignees"]}
 
 
+def attestation_assignment_scope(pr, attestor):
+    response = github("graphql", "POST", {
+        "query": """
+            query EndorsementAssignmentPermission($id: ID!) {
+              viewer { login }
+              node(id: $id) {
+                ... on PullRequest { id viewerCanAssign }
+              }
+            }
+        """,
+        "variables": {"id": pr["node_id"]},
+    })
+    message = f"PR assignment permission is unconfirmed for {pr['html_url']}"
+    require(isinstance(response, dict) and not response.get("errors")
+            and isinstance(response.get("data"), dict), message)
+    viewer = response["data"].get("viewer")
+    require(isinstance(viewer, dict) and isinstance(viewer.get("login"), str)
+            and viewer["login"].casefold() == attestor.casefold(),
+            "authenticated operator differs from the planned attestor")
+    node = response["data"].get("node")
+    require(isinstance(node, dict) and node.get("id") == pr["node_id"]
+            and isinstance(node.get("viewerCanAssign"), bool), message)
+    if node["viewerCanAssign"]:
+        return "required"
+    print(f"[copilot-cs-endorse] {pr['html_url']}: no permission to edit PR assignees; "
+          "skipping assignment tracking only, not human endorsement",
+          file=sys.stderr)
+    return "skipped_no_permission"
+
+
+def confirm_attestation_cleared(request, pr, message):
+    attestor = request.get("attestor")
+    if attestor is None:
+        return {}
+    assignees = assignee_logins(pr)
+    scope = attestation_assignment_scope(pr, attestor)
+    require(scope == "skipped_no_permission" or attestor.casefold() not in assignees,
+            message)
+    return {"assignment_scope": scope}
+
+
 def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=False,
                                require_draft=True, merge_pr=None):
-    """Change only the planned attestor's assignment, with revision readback."""
+    """Track the planned attestor when permitted, with revision readback."""
     login = request.get("attestor")
     require(login, "plan has no attestor; prepare a new plan before tracking attestation")
     require(authenticated_operator().casefold() == login.casefold(),
@@ -1003,7 +1044,11 @@ def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=Fal
         )
 
     pr = confirm()
+    scope = attestation_assignment_scope(pr, login)
+    pr = confirm()
     before = assignee_logins(pr)
+    if scope == "skipped_no_permission":
+        return dict(pr, assignment_scope=scope)
     assignee = login.casefold()
     if (assignee in before) != awaiting:
         response = github(
@@ -1017,7 +1062,7 @@ def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=Fal
     require((assignee in after) == awaiting,
             f"attestation assignment was not confirmed for {request['url']}")
     require(before - {assignee} <= after, "other PR assignees changed during attestation update")
-    return pr
+    return dict(pr, assignment_scope=scope)
 
 
 def await_attestation(result):
@@ -1029,9 +1074,10 @@ def await_attestation(result):
         request, request["pr"], request["head"], request["source_branch"], require_draft=True,
         allow_collaborator_deferral="ci_deferral" in request,
     )
-    set_attestation_assignment(request, True)
+    assigned = set_attestation_assignment(request, True)
     result = {"url": request["url"], "head": request["head"],
-              "attestor": request["attestor"], "awaiting_attestation": True}
+              "attestor": request["attestor"], "awaiting_attestation": True,
+              "assignment_scope": assigned["assignment_scope"]}
     if "ci_deferral" in request:
         result.update(ci_deferral=request["ci_deferral"], ci_scope=checked["ci_scope"])
     return result
@@ -1040,9 +1086,10 @@ def await_attestation(result):
 def complete_attestation(receipt, approval):
     """Clear the wait using the successful Codespace sign/verify receipt."""
     request, _ = signed_receipt_request(receipt, approval)
-    set_attestation_assignment(request, False)
+    assigned = set_attestation_assignment(request, False)
     return {"url": request["url"], "head": request["head"],
-            "attestor": request["attestor"], "awaiting_attestation": False}
+            "attestor": request["attestor"], "awaiting_attestation": False,
+            "assignment_scope": assigned["assignment_scope"]}
 
 
 def full_references(text, repository):
@@ -1649,9 +1696,8 @@ def ready_for_review(request, number, head, branch):
             ) from failure
 
     pr = verify_ci()
-    attestor = request.get("attestor")
-    require(attestor is None or attestor.casefold() not in assignee_logins(pr),
-            "attestor is still assigned; clear the attestation wait before readiness")
+    confirm_attestation_cleared(
+        request, pr, "attestor is still assigned; clear the attestation wait before readiness")
     if pr["draft"]:
         response = github("graphql", "POST", {
             "query": """
@@ -1675,10 +1721,10 @@ def ready_for_review(request, number, head, branch):
         pr = verify_ci()
     current = confirm_ci_revision(request, number, head, branch)
     require(current["draft"] is False, "ready-for-review transition not confirmed")
-    require(attestor is None or attestor.casefold() not in assignee_logins(current),
-            "attestor was assigned during the ready-for-review transition")
+    assignment = confirm_attestation_cleared(
+        request, current, "attestor was assigned during the ready-for-review transition")
     return {"url": pr["html_url"], "head": head, "ready_for_review": True,
-            "ci_scope": pr["ci_scope"]}
+            "ci_scope": pr["ci_scope"], **assignment}
 
 
 def finish(receipt, approval, *, draft_only=False):
@@ -1748,10 +1794,11 @@ def finish(receipt, approval, *, draft_only=False):
             request, number, receipt["head"], target, require_draft=True,
             allow_collaborator_deferral="ci_deferral" in request,
         )
-        require(request.get("attestor", "").casefold() not in assignee_logins(checked),
-                "attestor is still assigned; clear the attestation wait before draft verification")
+        assignment = confirm_attestation_cleared(
+            request, checked,
+            "attestor is still assigned; clear the attestation wait before draft verification")
         result = {"url": checked["html_url"], "head": receipt["head"],
-                  "ready_for_review": False, "ci_scope": checked["ci_scope"]}
+                  "ready_for_review": False, "ci_scope": checked["ci_scope"], **assignment}
         if "ci_deferral" in request:
             result["ci_deferral"] = request["ci_deferral"]
         return result
@@ -1863,11 +1910,13 @@ def main():
     plan_parser = actions.add_parser("plan", help="CODESPACE: freeze the commit range for human review")
     plan_parser.add_argument("--request", required=True)
     awaiting_parser = actions.add_parser(
-        "await-attestation", help="LOCAL: assign the operator before the exact-plan review prompt")
+        "await-attestation",
+        help="LOCAL: assign the operator when permitted before the exact-plan review prompt")
     awaiting_parser.add_argument("--plan", required=True, dest="plan_file",
                                  help="JSON file containing the complete planning result")
     completed_parser = actions.add_parser(
-        "complete-attestation", help="LOCAL: unassign after successful Codespace signing/verification")
+        "complete-attestation",
+        help="LOCAL: unassign when permitted after successful Codespace signing/verification")
     completed_parser.add_argument("--receipt", required=True)
     completed_parser.add_argument("--approve-plan", required=True)
     for action in ("sign", "verify", "push"):

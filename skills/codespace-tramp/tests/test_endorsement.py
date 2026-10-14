@@ -1501,6 +1501,8 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
         self.failure = None
         self.drop_metadata = False
         self.drop_assignment = False
+        self.assignment_permission = True
+        self.mutate_on_assignment_permission = None
         self.mutate_on_assignment = None
         self.mutate_on_comment = None
         self.required_contexts = ["ci"]
@@ -1619,6 +1621,14 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
                 }}}
             pr = (self.original if data["variables"]["id"] == "PR_original"
                   else self.replacement)
+            if "EndorsementAssignmentPermission" in data["query"]:
+                response = {"data": {
+                    "viewer": {"login": self.operator_login},
+                    "node": {"id": pr["node_id"], "viewerCanAssign": self.assignment_permission},
+                }}
+                if self.mutate_on_assignment_permission:
+                    self.mutate_on_assignment_permission(pr)
+                return response
             if "EndorsementBaseCompatibility" in data["query"]:
                 return {"data": {"node": {
                     "repository": {"nameWithOwner": pr["base"]["repo"]["full_name"]},
@@ -1751,7 +1761,8 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
             method in ("GET", "GET-PAGES")
             or (endpoint == "graphql" and any(name in data["query"] for name in (
                 "EndorsementRequiredChecks", "EndorsementWorkflowRun",
-                "EndorsementCommitWorkflows", "EndorsementBaseCompatibility")))
+                "EndorsementCommitWorkflows", "EndorsementBaseCompatibility",
+                "EndorsementAssignmentPermission")))
             for method, endpoint, data in self.calls
         ))
 
@@ -2198,6 +2209,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         self.assertEqual(result, {
             "url": self.original["html_url"], "head": self.head,
             "attestor": "fixture", "awaiting_attestation": True,
+            "assignment_scope": "required",
         })
         self.assertEqual(self.original["assignees"],
                          [{"login": "maintainer"}, {"login": "fixture"}])
@@ -2226,6 +2238,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         self.assertEqual(result, {
             "url": self.original["html_url"], "head": self.head,
             "attestor": "fixture", "awaiting_attestation": False,
+            "assignment_scope": "required",
         })
         self.assertEqual(self.original["assignees"], [{"login": "maintainer"}])
         self.assertEqual(self.assignment_calls(), [
@@ -2349,6 +2362,152 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                     with self.assertRaisesRegex(ValueError, "assignment.*not confirmed"):
                         (self.await_attestation if awaiting else self.complete_attestation)()
 
+    def test_assignment_permission_denial_skips_tracking_not_human_attestation(self):
+        self.assignment_permission = False
+        original = copy.deepcopy(self.original)
+        with redirect_stderr(io.StringIO()) as errors:
+            awaiting = self.await_attestation()
+            completed = self.complete_attestation()
+        self.assertTrue(awaiting["awaiting_attestation"])
+        self.assertFalse(completed["awaiting_attestation"])
+        for result in (awaiting, completed):
+            self.assertEqual(result["assignment_scope"], "skipped_no_permission")
+            self.assertEqual(result["attestor"], "fixture")
+        self.assertIn("no permission to edit PR assignees", errors.getvalue())
+        self.assertEqual(self.original, original)
+        self.assertFalse(self.assignment_calls())
+        self.assertFalse(self.readiness_calls())
+        self.assert_read_only_calls()
+
+    def test_assignment_permission_is_checked_again_after_a_change(self):
+        self.await_attestation()
+        self.calls.clear()
+        self.assignment_permission = False
+        with redirect_stderr(io.StringIO()):
+            result = self.complete_attestation()
+        self.assertEqual(result["assignment_scope"], "skipped_no_permission")
+        self.assertIn("fixture", self.helper.assignee_logins(self.original))
+        self.assertFalse(self.assignment_calls())
+        self.assignment_permission = True
+        self.assertEqual(self.complete_attestation()["assignment_scope"], "required")
+        self.assertEqual(self.original["assignees"], [{"login": "maintainer"}])
+        self.assertEqual(self.assignment_calls(), [
+            ("DELETE", "repos/example/project/issues/12/assignees", {"assignees": ["fixture"]}),
+        ])
+
+    def test_assignment_permission_requires_a_boolean_on_the_expected_pr(self):
+        valid = {"data": {
+            "viewer": {"login": "fixture"},
+            "node": {"id": "PR_original", "viewerCanAssign": False},
+        }}
+        responses = [None, [], {}, {"data": None}, {"data": {}},
+                     {**valid, "errors": [{"message": "permission unavailable"}]}]
+        for node in (None, [], {}, {"id": "another-pr", "viewerCanAssign": False},
+                     {"id": "PR_original"}):
+            responses.append({"data": {**valid["data"], "node": node}})
+        for value in (None, 0, 1, "", "false", "true", [], {}):
+            responses.append({"data": {**valid["data"], "node": {
+                "id": "PR_original", "viewerCanAssign": value,
+            }}})
+        for response in responses:
+            with self.subTest(response=response), mock.patch.object(
+                    self.helper, "github", return_value=response):
+                with self.assertRaisesRegex(ValueError, "assignment permission|operator"):
+                    self.helper.attestation_assignment_scope(self.original, "fixture")
+        for viewer in (None, {}, {"login": None}, {"login": "another-operator"}):
+            with self.subTest(viewer=viewer), mock.patch.object(
+                    self.helper, "github", return_value={
+                        "data": {**valid["data"], "viewer": viewer},
+                    }):
+                with self.assertRaisesRegex(ValueError, "operator"):
+                    self.helper.attestation_assignment_scope(self.original, "fixture")
+
+    def test_assignment_permission_api_errors_do_not_skip_the_gate(self):
+        for failure in (RuntimeError("HTTP 403"), RuntimeError("HTTP 404"),
+                        subprocess.TimeoutExpired("gh", 120)):
+            def api(endpoint, method="GET", data=None):
+                if endpoint == "graphql" and "EndorsementAssignmentPermission" in data["query"]:
+                    raise failure
+                return self.api(endpoint, method, data)
+
+            with self.subTest(failure=failure), mock.patch.object(
+                    self.helper, "github", side_effect=api):
+                for action in (self.await_attestation, self.complete_attestation, self.finish):
+                    with self.subTest(action=action), self.assertRaises(type(failure)):
+                        action()
+        self.assertFalse(self.assignment_calls())
+        self.assertFalse(self.readiness_calls())
+        self.assertIsNone(self.replacement)
+
+    def test_assignment_permission_read_rechecks_revision_before_updating(self):
+        for allowed in (True, False):
+            self.original["head"]["sha"] = self.head
+            self.assignment_permission = allowed
+            self.mutate_on_assignment_permission = lambda pr: pr["head"].update(sha=self.first)
+            with self.subTest(allowed=allowed), redirect_stderr(io.StringIO()):
+                with self.assertRaisesRegex(ValueError, "changed"):
+                    self.await_attestation()
+        self.assertFalse(self.assignment_calls())
+
+    def test_assignment_permission_denial_preserves_quality_and_approval_guards(self):
+        self.assignment_permission = False
+        self.check_pages[0][0].update(status="IN_PROGRESS", conclusion=None)
+        with self.assertRaisesRegex(ValueError, "required CI"):
+            self.await_attestation()
+        self.check_pages[0][0].update(status="COMPLETED", conclusion="SUCCESS")
+        with self.assertRaisesRegex(ValueError, "receipt"):
+            self.complete_attestation(dict(self.receipt, mapping={}))
+        with self.assertRaisesRegex(ValueError, "approval"):
+            self.complete_attestation(approval="")
+        self.operator_login = "another-operator"
+        with self.assertRaisesRegex(ValueError, "operator"):
+            self.await_attestation()
+        self.operator_login = "fixture"
+        self.original["head"]["sha"] = self.first
+        with self.assertRaisesRegex(ValueError, "changed"):
+            self.await_attestation()
+        self.assertFalse(self.assignment_calls())
+        self.assertFalse(self.readiness_calls())
+
+    def test_assignment_permission_denial_allows_verified_signed_finalisation(self):
+        self.assignment_permission = False
+        original = copy.deepcopy(self.original)
+        original["assignees"].append({"login": "fixture"})
+        for publication in ("replacement", "replace"):
+            for draft_only in (False, True):
+                with self.subTest(publication=publication, draft_only=draft_only), redirect_stderr(
+                        io.StringIO()):
+                    self.original = copy.deepcopy(original)
+                    self.original["head"]["sha"] = (
+                        self.head if publication == "replacement" else self.receipt["head"])
+                    self.receipt["publication"] = publication
+                    self.replacement = None
+                    self.calls.clear()
+                    result = self.helper.finish(self.receipt, self.approve(publication),
+                                                draft_only=draft_only)
+                    current = self.replacement if publication == "replacement" else self.original
+                    self.assertEqual(result["ready_for_review"], not draft_only)
+                    self.assertEqual(result["assignment_scope"], "skipped_no_permission")
+                    self.assertCountEqual(current["assignees"], original["assignees"])
+                    self.assertFalse(self.assignment_calls())
+
+    def test_assignment_permission_skip_does_not_apply_to_another_pr(self):
+        self.assignment_permission = False
+        self.original["assignees"].append({"login": "fixture"})
+
+        def api(endpoint, method="GET", data=None):
+            response = self.api(endpoint, method, data)
+            if (endpoint == "graphql" and "EndorsementAssignmentPermission" in data["query"]
+                    and data["variables"]["id"] == "PR_replacement"):
+                response["data"]["node"]["viewerCanAssign"] = True
+            return response
+
+        with mock.patch.object(self.helper, "github", side_effect=api), redirect_stderr(io.StringIO()):
+            with self.assertRaisesRegex(ValueError, "attestor.*assigned"):
+                self.finish()
+        self.assertFalse(self.readiness_calls())
+        self.assertTrue(self.replacement["draft"])
+
     def test_finalisation_removes_attestor_before_both_readiness_transitions(self):
         for publication in ("replacement", "replace"):
             with self.subTest(publication=publication):
@@ -2444,6 +2603,28 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                 self.assertEqual(json.loads(output.getvalue())["awaiting_attestation"], expected)
                 self.assertEqual(errors.getvalue(), "")
         self.assertTrue(self.original["draft"])
+        self.assertEqual(self.original["assignees"], [{"login": "maintainer"}])
+
+    def test_assignment_cli_reports_skipped_tracking_when_permission_is_denied(self):
+        self.assignment_permission = False
+        plan_file, receipt_file = self.root / "plan.json", self.root / "signed.json"
+        plan_file.write_text(json.dumps(self.plan))
+        receipt_file.write_text(json.dumps(self.receipt))
+        for arguments, awaiting in (
+            (["await-attestation", "--plan", str(plan_file)], True),
+            (["complete-attestation", "--receipt", str(receipt_file),
+              "--approve-plan", self.approve()], False),
+        ):
+            with self.subTest(action=arguments[0]), mock.patch.dict(
+                    os.environ, {"CODESPACES": ""}), mock.patch.object(
+                    sys, "argv", ["copilot-cs-endorse", *arguments]), redirect_stdout(
+                    io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(self.helper.main(), 0)
+                result = json.loads(output.getvalue())
+                self.assertEqual(result["awaiting_attestation"], awaiting)
+                self.assertEqual(result["assignment_scope"], "skipped_no_permission")
+                self.assertIn("no permission to edit PR assignees", errors.getvalue())
+        self.assertFalse(self.assignment_calls())
         self.assertEqual(self.original["assignees"], [{"login": "maintainer"}])
 
     def test_old_receipts_without_attestor_keep_existing_assignees(self):
@@ -2585,10 +2766,15 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
 
     def test_unreadable_or_incomplete_ci_never_causes_a_draft_rollback(self):
         self.finish()
-        self.failure = ("POST", "graphql")
-        with self.assertRaisesRegex(RuntimeError, "fixture API failure"):
-            self.finish()
-        self.failure = None
+
+        def api(endpoint, method="GET", data=None):
+            if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
+                raise RuntimeError("fixture API failure")
+            return self.api(endpoint, method, data)
+
+        with mock.patch.object(self.helper, "github", side_effect=api):
+            with self.assertRaisesRegex(RuntimeError, "fixture API failure"):
+                self.finish()
         for conclusion in (None, "UNKNOWN"):
             with self.subTest(conclusion=conclusion):
                 self.check_pages[0][0]["conclusion"] = conclusion
@@ -3051,12 +3237,16 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             self.helper.prepare("example/project", 12, str(self.key_file) + ".pub")
 
     def test_unreadable_ci_or_policy_never_falls_back_to_readiness(self):
-        self.failure = ("POST", "graphql")
-        with self.assertRaisesRegex(RuntimeError, "fixture API failure"):
-            self.finish()
+        def api(endpoint, method="GET", data=None):
+            if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
+                raise RuntimeError("fixture API failure")
+            return self.api(endpoint, method, data)
+
+        with mock.patch.object(self.helper, "github", side_effect=api):
+            with self.assertRaisesRegex(RuntimeError, "fixture API failure"):
+                self.finish()
         self.assertTrue(self.replacement["draft"])
         self.assertFalse(self.readiness_calls())
-        self.failure = None
         with mock.patch.object(self.helper, "github_pages", side_effect=RuntimeError("policy unavailable")):
             with self.assertRaisesRegex(RuntimeError, "policy unavailable"):
                 self.finish()
@@ -3076,7 +3266,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             with self.subTest(invalid=invalid):
                 def api(endpoint, method="GET", data=None):
                     response = self.api(endpoint, method, data)
-                    if endpoint == "graphql":
+                    if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                         invalid(response)
                     return response
                 with mock.patch.object(self.helper, "github", side_effect=api):

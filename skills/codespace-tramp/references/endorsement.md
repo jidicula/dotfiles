@@ -122,9 +122,9 @@ signed **draft** without a readiness transition:
 copilot-cs-endorse finish --receipt "$RECEIPT" --approve-plan "$APPROVAL" --draft-only
 ```
 
-This verifies publication, signatures, attestor unassignment, and signed-head
-CI. It can create or resume the marked replacement and close its original, as
-ordinary finalisation does, but the result stays draft. Only the plan's selected,
+This verifies publication, signatures, permitted attestor unassignment, and
+signed-head CI. It can create or resume the marked replacement and close its
+original, as ordinary finalisation does, but the result stays draft. Only the plan's selected,
 still-pending approval check may wait; all other requirements must pass.
 The result reports `ci_scope: "operator_deferred_collaborator_approvals"` while
 waiting. Do not infer final readiness or request new reviews from that result.
@@ -357,11 +357,18 @@ Only after both commands succeed, submit that generated file:
   await-attestation --plan "$SESSION_FILES/endorsement-plan.json"
 ```
 
-This rechecks required CI, the exact head and base compatibility, adds only the planned
-operator's assignment, preserves other assignees and confirms the result.
-It is safe to repeat for an unchanged plan. A failed or stale plan never
-reaches the mutation. Do not present the attestation prompt before success
-or switch the local authenticated account.
+This rechecks required CI, the exact head, and base compatibility, then reads
+`viewerCanAssign` on that PR using the same authenticated operator. When it is
+`true`, the helper adds only the planned operator's assignment, preserves other
+assignees, and confirms the result. An explicit `false` skips assignment tracking,
+prints the reason, and reports `assignment_scope: "skipped_no_permission"` instead
+of `"required"`. Human endorsement is still mandatory. Missing or malformed
+permission responses, API errors, and failed permitted updates remain blockers;
+they are not treated as permission denials.
+
+It is safe to repeat for an unchanged plan, and permissions are checked afresh.
+A failed or stale plan never reaches the mutation. Do not present the attestation
+prompt before success or switch the local authenticated account.
 
 If digest verification fails, preserve the error and recover the exact original
 record and plan identifier. Do not shorten fields, compute a replacement plan
@@ -392,8 +399,8 @@ passing signed-head CI will mark the result ready for review.
 
 Never infer approval from CCR, creating the draft, a previous endorsement or
 a generic request to finish. Declining, cancelling, requesting further work
-or a signing failure does not remove the assignment. Further work invalidates
-the plan and returns to the quality gates.
+or a signing failure does not remove any existing assignment. Further work
+invalidates the plan and returns to the quality gates.
 
 ## Sign and verify
 
@@ -457,7 +464,7 @@ a complete receipt without forwarding or signing again:
 Reuse a complete verified receipt. Partial attempts may require new signatures
 only after asking the operator; polling or reattachment never replays signing.
 
-## Unassign, publish and finalise
+## Unassign, publish, and finalise
 
 Only after the exact signing or recovery-verification job succeeds, save its
 complete receipt and clear the attestation wait before publication:
@@ -469,10 +476,12 @@ complete receipt and clear the attestation wait before publication:
 ```
 
 The local helper checks the receipt's plan, complete mapping, approval,
-operator and revision, then removes only that operator's assignment. A plan,
-prompt answer or partial receipt is insufficient. It neither signs nor pushes
-nor waits for signed-head CI. If the update fails or is dropped, inspect the
-PR and repeat only this idempotent update, not signing. Other assignees remain.
+operator, and revision, then removes only that operator's assignment when
+`viewerCanAssign` permits it. An explicit denial reports the skipped assignment
+tracking and leaves existing assignees unchanged. A plan, prompt answer, or
+partial receipt is insufficient. It neither signs nor pushes nor waits for
+signed-head CI. If a permitted update fails or is dropped, inspect the PR and
+repeat only this idempotent update, not signing. Other assignees remain.
 
 Publish in the Codespace with the same explicit choice:
 
@@ -542,9 +551,11 @@ the original after checking both drafts. Review discussions/check runs do not
 migrate. Reuse the same receipt after interrupted metadata work; never create
 an unmarked duplicate or manually close the original to hide a failure.
 
-`finish` also recovers outstanding operator unassignment before copying
-metadata or checking readiness. Legacy receipts without an attestor preserve
-their assignees; never guess whom to remove. New requests need a fresh `prepare`.
+`finish` also recovers permitted outstanding operator unassignment before copying
+metadata or checking readiness. Assignment permission is checked on each PR;
+a skip on the original does not waive the signed replacement's assignment gate.
+Legacy receipts without an attestor preserve their assignees; never guess whom
+to remove. New requests need a fresh `prepare`.
 
 ## Signed-head CI and readiness
 
@@ -566,9 +577,13 @@ ref movement does not invalidate it. Same-named ordinary workflows, other PRs,
 superseded successes, partial pagination and unreadable provenance cannot pass.
 These rules also apply before endorsement; there is no manual-success override.
 
-Only after verification, passing CI and attestor unassignment does `finish`
-mark the signed PR ready, recheck visible required CI, and confirm its head/base,
-assignment and ready state. Its success JSON contains `ready_for_review: true`
+Only after verification, passing CI, and attestor unassignment when permitted
+does `finish` mark the signed PR ready, recheck visible required CI, and confirm its head/base,
+assignment, and ready state. Unknown assignment permissions remain blockers;
+an explicit denial skips only assignment tracking, not the other gates or
+metadata preservation. The result reports `assignment_scope` as `"required"` or
+`"skipped_no_permission"` for plans with an attestor.
+Its success JSON contains `ready_for_review: true`
 and `ci_scope: "observed_required_checks"`: this is a point-in-time observation,
 not a promise that later runs will pass. GitHub metadata/readiness
 mutations have no expected-head lease; surrounding checks detect races but

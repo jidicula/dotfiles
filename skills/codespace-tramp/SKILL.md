@@ -1279,7 +1279,8 @@ mandatory, and missing, pending, failing or unreadable CI cannot use this
 exception. Defaults remain fail-closed. See the
 [exception protocol](references/endorsement.md#explicit-exception-for-unconfigured-required-ci).
 This decision does not authorise signatures or bypass CCR, exact-plan human
-endorsement, assignment, publication verification or readiness monitoring.
+endorsement, permission-aware assignment, publication verification, or readiness
+monitoring.
 
 A separate, explicitly operator-selected per-PR ordering exception can defer
 one strictly pending collaborator-approval check until after signing,
@@ -1425,8 +1426,12 @@ complete protocol:
    authors and timestamps in either case. The proposal affects only newly signed
    commits, never the metadata of preserved commits.
 2. Run local `await-attestation` for that exact plan. It rechecks the revision
-   and CI, assigns only the planned operator and confirms the result. Only
-   then present the human prompt.
+   and CI, then checks the authenticated operator's `viewerCanAssign` permission
+   on the PR. When permitted, it assigns only the planned operator and confirms
+   the result. An explicit `false` skips assignment tracking and reports
+   `assignment_scope: "skipped_no_permission"`; unknown permissions or a failed
+   permitted update remain blockers. Only then present the human prompt.
+   Skipping assignment never skips human endorsement.
 3. Print the full draft URL on its own line immediately before the interactive
    prompt. Start the prompt with the same URL and a blank line, then ask:
    **"Please review this implementation. Do you believe it is correct and
@@ -1455,22 +1460,26 @@ complete protocol:
    Keep the connection open and verify the complete receipt. Never replay a
    signing failure automatically or change key protection to avoid approval.
 6. After successful signing/verification, run local `complete-attestation`
-   with that receipt to unassign only the operator, before publication/readiness.
-   A prompt answer or partial signing result is insufficient. Declining or
-   cancelling leaves the draft unendorsed and the operator assigned. Further
+   with that receipt to unassign only the operator when permitted, before
+   publication/readiness. Permission is checked again; an explicit denial skips
+   only assignment tracking and leaves existing assignees unchanged. A prompt
+   answer or partial signing result is insufficient. Declining or cancelling
+   leaves the draft unendorsed and any existing assignment intact. Further
    work returns to the Codespace/quality-gate loop with a new plan.
 7. Publish only the verified receipt with the explicitly chosen method, then
    run local `finish`. This independently verifies published contents and
-   signatures, recovers any outstanding unassignment, and safely finalises an
-   in-place update or the marked replacement draft. No unconditional force push,
+   signatures, recovers any permitted outstanding unassignment, and safely
+   finalises an in-place update or the marked replacement draft. No unconditional force push,
    branch overwrite, silent method switch or local source reset is permitted.
 
 #### Gate 4 - signed-head CI and readiness
 
 `finish` checks required CI on the resulting signed head, not the unsigned
-revision CCR reviewed. Only verified publication, passing required CI and
-confirmed attestor unassignment permit marking that PR ready for review, except
-for the plan's explicit, freshly verified no-required-CI exception.
+revision CCR reviewed. Only verified publication, passing required CI, and
+confirmed attestor unassignment when permitted allow marking that PR ready for
+review, except for the plan's explicit, freshly verified no-required-CI exception.
+The assignment permission is checked on each PR, including a signed replacement;
+only an explicit denial waives assignment tracking, not the other readiness gates.
 For an approved collaborator-approval ordering exception, use `finish --draft-only`
 to verify the signed draft's publication and other required CI without readiness.
 This does not clear or satisfy the pending approval check. Ordinary `finish`

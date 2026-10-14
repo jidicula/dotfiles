@@ -300,6 +300,21 @@ class ForkGitHubTests(GitHubEndorsementTestCase, ForkRepositoryTestCase):
         self.assertIn(("GET", "repos/contributor/project/git/commits/" + self.receipt["head"], None),
                       self.calls)
 
+    def test_assignment_permission_comes_from_the_upstream_pr_not_the_fork(self):
+        self.assignment_permission = False
+        with redirect_stderr(io.StringIO()):
+            awaiting = self.helper.await_attestation(self.plan)
+            completed = self.helper.complete_attestation(self.receipt, self.approve())
+        for result in (awaiting, completed):
+            self.assertEqual(result["assignment_scope"], "skipped_no_permission")
+        queries = [data for _, endpoint, data in self.calls
+                   if endpoint == "graphql" and "EndorsementAssignmentPermission" in data["query"]]
+        self.assertEqual([query["variables"] for query in queries], [
+            {"id": "PR_original"}, {"id": "PR_original"},
+        ])
+        self.assertFalse(any(endpoint.endswith("/assignees") for _, endpoint, _ in self.calls))
+        self.assertEqual(self.original["assignees"], [{"login": "maintainer"}])
+
     def test_same_named_source_base_is_supported_by_github_finalisation(self):
         self.git("update-ref", "refs/heads/main", self.head)
         self.git("--git-dir=" + str(self.remote), "update-ref", "refs/heads/main", self.head)
@@ -497,6 +512,20 @@ class ApprovalDeferralTests(GitHubEndorsementTestCase):
         self.approval_node.update(status="COMPLETED", conclusion="SUCCESS")
         self.approval_run.update(status="completed", conclusion="success",
                                  output={"title": "Collaborator approvals confirmed"})
+
+    def test_assignment_permission_denial_does_not_waive_collaborator_approval(self):
+        self.assignment_permission = False
+        with redirect_stderr(io.StringIO()):
+            self.signed_deferral()
+            result = self.helper.finish(self.receipt, self.approve("replace"), draft_only=True)
+            self.assertFalse(result["ready_for_review"])
+            self.assertEqual(result["assignment_scope"], "skipped_no_permission")
+            self.assertEqual(result["ci_scope"], "operator_deferred_collaborator_approvals")
+            with self.assertRaisesRegex(ValueError, "required CI"):
+                self.finish()
+            self.approve_collaborators()
+            self.assertTrue(self.finish()["ready_for_review"])
+        self.assertFalse(any(endpoint.endswith("/assignees") for _, endpoint, _ in self.calls))
 
     def test_normal_path_remains_blocked_and_explicit_preparation_never_claims_passing_ci(self):
         with self.assertRaisesRegex(ValueError, "required CI"):
