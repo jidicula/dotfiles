@@ -1803,6 +1803,11 @@ Ask the user for the correct commands if none are supplied.
   current task, then explicitly call `copilot-cs-attach` with the same id.
   Known jobs retain their original target, and live or completed jobs do not
   open duplicate connections.
+- **Reattachment cannot confirm a live supervisor:** an incomplete log remains,
+  but its PID is missing, stale, or does not identify a live supervisor for that
+  job. The attachment reports `state=failed` with the retained log, not a command
+  exit code. Check the command's effects before rerunning; a Codespace restart
+  does not resume interrupted work. Completed logs retain their recorded result.
 - **A command returns rc=1 with no output at all:** you used `bash -lc`. Some
   Codespaces' login shell setup breaks it silently. Use `sh` syntax, which is
   what `copilot-cs-sh` runs, except for commands that explicitly need the

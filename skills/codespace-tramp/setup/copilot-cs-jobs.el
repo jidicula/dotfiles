@@ -336,8 +336,7 @@ output cannot be mistaken for it."
     (string-join
      (seq-remove (lambda (line)
                    (or (string-prefix-p ack line)
-                       (string-prefix-p done line)
-                       (string-match-p "\\`tail: " line)))
+                       (string-prefix-p done line)))
                  (split-string text "\n"))
      "\n")))
 
@@ -359,15 +358,32 @@ stdout or stderr" rc)
       output)))
 
 (defun copilot-cs--attach-command (id)
-  "Return the remote shell string that replays and follows job ID's log."
-  (format "test -f %s/%s.log || { printf '%%s\\n' \
-'copilot-cs: no log for this job in this Codespace'; exit 1; }; \
-echo %s; exec tail -c +1 -F %s/%s.log"
-          copilot-cs-remote-dir id
-          ;; Re-attaching skips the launcher, so stand in for its
-          ;; acknowledgement once the log is known to be there.
-          (copilot-cs--ack-marker id)
-          copilot-cs-remote-dir id))
+  "Replay job ID's log, following it only with evidence of a live supervisor."
+  (copilot-cs--check-id id)
+  (concat
+   "D=" copilot-cs-remote-dir "; L=\"$D/" id ".log\"; "
+   "test -f \"$L\" || { printf '%s\\n' "
+   "'copilot-cs: no log for this job in this Codespace'; exit 1; }; "
+   "finished() { "
+   ;; A partial final marker is not a recorded exit status.
+   "last=$(tail -c 1 \"$L\") || return 1; [ -z \"$last\" ] || return 1; "
+   "awk -v marker='" (copilot-cs--done-marker id) "' "
+   "'index($0, marker) == 1 && substr($0, length(marker) + 1) ~ /^[0-9]+$/ "
+   "{ found = 1 } END { exit !found }' \"$L\"; }; "
+   "live() { [ -r \"$D/" id ".pid\" ] || return 1; "
+   "P=$(sed -n '1p' \"$D/" id ".pid\") || return 1; "
+   "case \"$P\" in ''|*[!0-9]*|0|1) return 1;; esac; "
+   "I=$(ps -ww -p \"$P\" -o stat= -o args=) || return 1; "
+   "printf '%s\\n' \"$I\" | awk -v script='" id ".sh' "
+   "'$1 !~ /^Z/ && index($0, script) { found = 1 } "
+   "END { exit !found }'; }; "
+   ;; Completion can race the supervisor check. Never invent a command exit code.
+   "if finished || live || finished; then "
+   "echo " (copilot-cs--ack-marker id) "; exec tail -c +1 -F \"$L\"; fi; "
+   "printf 'copilot-cs: could not confirm a live supervisor for this job; "
+   "no exit status was recorded; the command may have been interrupted; "
+   "inspect its effects before rerunning\\n'; "
+   "cat \"$L\"; exit 1"))
 
 (defun copilot-cs--stop-command (id)
   "Return the remote command that cancels job ID's whole process tree."

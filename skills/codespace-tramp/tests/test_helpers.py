@@ -2776,6 +2776,19 @@ os.execv("/bin/sh", ["sh", "-c", command])
             live=True,
         )
 
+    def test_missing_tail_file_keeps_command_stderr(self):
+        self.emacs(
+            f"""(progn
+              (copilot-cs-use nil {json.dumps(str(self.root))})
+              (let* ((report (copilot-cs-sh "tail -n 70 missing-task.log" 3))
+                     (output (copilot-cs-output)))
+                (unless (and (string-match-p "state=done rc=1" report)
+                             (string-match-p "tail: .*missing-task.log" report)
+                             (string-match-p "tail: .*missing-task.log" output))
+                  (error "Missing-file diagnostic was discarded: %S / %S"
+                         report output))))"""
+        )
+
     def test_completed_job_never_reconnects(self):
         self.check_job(
             """(cl-letf (((symbol-function 'copilot-cs--resume)
@@ -2957,6 +2970,138 @@ raise SystemExit(255)
                   (error "Detached job outcome was misreported: %s" report)))""",
             output="__COPILOT_CS_ACK_job-state-fixture__\n",
         )
+
+
+class JobAttachmentTests(HelperTestCase):
+    def setUp(self):
+        super().setUp()
+        self.job = "job-attach-fixture"
+        self.log = self.root / f"{self.job}.log"
+        self.pid = self.root / f"{self.job}.pid"
+        self.log.write_text("validation started\n", encoding="utf-8")
+        (self.root / f"{self.job}.sh").write_text(
+            "touch command-replayed\n", encoding="utf-8"
+        )
+
+    def attach(self):
+        result = json.loads(self.emacs(
+            f"""(progn
+              (require 'json)
+              (copilot-cs-use nil {json.dumps(str(self.root))})
+              (setq copilot-cs-remote-dir
+                    (shell-quote-argument {json.dumps(str(self.root))}))
+              (let* ((report (copilot-cs-attach "{self.job}" 2))
+                     (job (copilot-cs--job "{self.job}"))
+                     (process (plist-get job :process)))
+                (unwind-protect
+                    (princ (json-encode
+                      `((report . ,report)
+                        (output . ,(copilot-cs-output "{self.job}"))
+                        (rc . ,(copilot-cs--rc job))
+                        (state . ,(symbol-name (copilot-cs--state job)))
+                        (acked . ,(and (copilot-cs--acked-p job) t)))))
+                  (when (process-live-p process) (delete-process process)))))"""
+        ))
+        self.assertFalse((self.root / "command-replayed").exists())
+        return result
+
+    def assert_unconfirmed(self, result):
+        self.assertEqual(result["state"], "failed", result)
+        self.assertIsNone(result["rc"])
+        self.assertIsNone(result["acked"])
+        self.assertIn("remote outcome is unconfirmed", result["report"])
+        self.assertIn("validation started", result["output"])
+        self.assertIn("could not confirm a live supervisor", result["output"])
+
+    def test_absent_supervisor_does_not_turn_a_stale_log_into_running_work(self):
+        child = self.run_command(
+            [sys.executable, "-c", "import os; print(os.getpid())"]
+        )
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.pid.write_text(child.stdout, encoding="utf-8")
+        self.assert_unconfirmed(self.attach())
+        self.assertEqual(self.log.read_text(), "validation started\n")
+
+    def test_missing_invalid_or_reused_pid_keeps_the_outcome_unconfirmed(self):
+        for pid in (None, "", "0", "1", "invalid", str(os.getpid())):
+            with self.subTest(pid=pid):
+                if pid is not None:
+                    self.pid.write_text(pid, encoding="utf-8")
+                self.assert_unconfirmed(self.attach())
+
+    def test_zombie_supervisor_is_not_running(self):
+        self.pid.write_text("12345\n", encoding="utf-8")
+        self.executable(
+            "ps",
+            f'print("Z sh -c sh {self.root}/{self.job}.sh")\n',
+        )
+        self.assert_unconfirmed(self.attach())
+
+    def test_completed_logs_preserve_the_command_exit_status_without_a_pid(self):
+        for rc in (0, 23):
+            with self.subTest(rc=rc):
+                self.log.write_text(
+                    f"validation finished\n__COPILOT_CS_DONE_{self.job}__:{rc}\n",
+                    encoding="utf-8",
+                )
+                result = self.attach()
+                self.assertEqual(result["state"], "done", result)
+                self.assertEqual(result["rc"], rc)
+                self.assertEqual(result["output"], "validation finished")
+
+    def test_partial_exit_marker_does_not_confirm_completion_or_running_work(self):
+        self.log.write_text(
+            f"validation started\n__COPILOT_CS_DONE_{self.job}__:23",
+            encoding="utf-8",
+        )
+        self.assert_unconfirmed(self.attach())
+
+    def test_completion_during_the_supervisor_check_is_not_reported_interrupted(self):
+        self.pid.write_text("12345\n", encoding="utf-8")
+        self.executable(
+            "ps",
+            f"""from pathlib import Path
+with Path({str(self.log)!r}).open("a") as log:
+    log.write("__COPILOT_CS_DONE_{self.job}__:23\\n")
+raise SystemExit(1)
+""",
+        )
+        result = self.attach()
+        self.assertEqual(result["state"], "done", result)
+        self.assertEqual(result["rc"], 23)
+        self.assertNotIn("could not confirm", result["output"])
+
+    def test_live_supervisor_reattaches_without_replaying_the_command(self):
+        self.emacs(
+            f"""(progn
+              (copilot-cs-use nil {json.dumps(str(self.root))})
+              (setq copilot-cs-remote-dir
+                    (shell-quote-argument {json.dumps(str(self.root))}))
+              (let* ((id "{self.job}")
+                     (job (copilot-cs--start id
+                            (copilot-cs--launcher id
+                              "printf once >> executions; sleep 3; printf finished")))
+                     (process (plist-get job :process)))
+                (unwind-protect
+                    (progn
+                      (copilot-cs--settle job 0.5)
+                      (unless (copilot-cs--acked-p job)
+                        (error "Fixture did not launch"))
+                      ;; Simulate stream loss, not a local process-group kill.
+                      (signal-process (process-id process) 'SIGKILL)
+                      (copilot-cs--settle job 0.5)
+                      (let ((report (copilot-cs-attach id 0.5)))
+                        (unless (string-match-p "state=running" report)
+                          (error "Live supervisor was not reattached: %s" report)))
+                      (unless (string-match-p "state=done rc=0"
+                                              (copilot-cs-poll id 5))
+                        (error "Reattached job did not finish"))
+                      (unless (equal (copilot-cs-output id) "finished")
+                        (error "Reattached output was lost")))
+                  (let ((stream (plist-get (copilot-cs--job id) :process)))
+                    (when (process-live-p stream) (delete-process stream))))))"""
+        )
+        self.assertEqual((self.root / "executions").read_text(), "once")
 
 
 class JobEnvironmentTests(HelperTestCase):

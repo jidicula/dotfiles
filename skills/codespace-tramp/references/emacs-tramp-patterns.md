@@ -934,6 +934,14 @@ and directory even if the selected target changed; an unknown job from an
 earlier daemon requires selecting its original target first. Attachment replays
 the log, never the command, and does not duplicate live or completed streams.
 
+An incomplete log alone does not establish that the job is still running.
+Reattachment checks that its recorded PID belongs to a live, non-zombie
+supervisor for that job. If it cannot confirm one, attachment reports
+`state=failed`, retains the log, and explains that the command may have been
+interrupted. Its exit status and effects remain unconfirmed; inspect them
+before deciding whether to rerun anything. A completed log remains authoritative
+even if the supervisor has exited.
+
 The daemon remains available while its owning Copilot CLI process is running,
 even when a human approval prompt outlasts an hour. The one-hour orphan grace
 starts after that process exits; each reattachment refreshes the owner without
@@ -947,6 +955,9 @@ If a command exits nonzero without writing anything, the runner records
 `command exited with status N without producing stdout or stderr`. This is a
 real silent failure rather than lost output; split the command or add
 command-specific diagnostics to identify the failing step.
+
+Command and transport diagnostics are retained, including `tail:` errors.
+The runner removes only its own job-specific acknowledgement and exit markers.
 
 `state=failed` means the connection ended without an acknowledgement. The
 original output and connection exit status remain available; repeated polling
