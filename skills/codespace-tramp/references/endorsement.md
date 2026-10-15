@@ -544,6 +544,13 @@ checks published content, mapped parents and each signature against the
 approved key; GitHub must also verify the signatures. A **Verified** badge
 or a `-signed` name alone is insufficient.
 
+For a scope-bound review, follow [Gate 0's artifact allowlist](../SKILL.md#gate-0---required-pre-commit-rubber-duck-review).
+Permission to read the exact published receipt does not include listing
+`copilot-endorsements/`, reading a sibling `<PLAN-ID>.receipt.json`, or invoking
+a helper that reads undeclared records. The parent must explicitly supply and
+authorise any additional plan or receipt needed for the review; otherwise the
+reviewer returns `blocked` before accessing it.
+
 In-place publication retains the PR. Replacement publication creates/reuses
 only the draft marked for that exact plan, preserves its title/body, labels,
 other assignees, milestone and requested reviewers/teams, then links and closes

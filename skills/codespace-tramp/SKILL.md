@@ -1191,6 +1191,22 @@ weaker review gate.
    laptop checkout or an undeclared repository. The parent must obtain any
    additional authorised Codespace evidence before review resumes.
 
+   **Supporting-artifact access is exact and non-transitive.** Before delegation,
+   identify the evidence the review needs and name each allowed artifact and
+   read operation. A named plan or published receipt does not authorise its
+   enclosing directory, sibling `.receipt.json` files, or paths referenced
+   inside it. Directory listings, globbing, and recursive searches are separate
+   reads, not harmless discovery. Do not widen a file-only grant to the whole
+   endorsement directory.
+
+   Apply the same limit to helpers' implicit reads: a verification helper that
+   loads a separate plan or signed receipt needs those exact inputs declared
+   too. If required evidence or an operation is missing from the allowlist,
+   return `blocked` before reading or invoking the helper. Name the missing
+   evidence and required operation, using the exact path if already known; do
+   not browse to discover it. The parent obtains authorised evidence and
+   explicitly updates the handoff before review resumes.
+
    **Identity and preflight checks use the same source allowlist.** Include the
    existing `copilot-cs-use` target-selection result and relevant job receipts in
    the handoff. Use that recorded immutable Codespace name; confirm the checkout
@@ -1209,10 +1225,11 @@ weaker review gate.
 4. Ask the reviewer to challenge correctness, assumptions, regressions and missing
    coverage, with concrete locations and reasoning, and return an explicit
    `pass`, `changes-needed` or `blocked` assessment. Require a source inventory
-   identifying every inspected source, including identity and preflight reads
-   not cited in findings, its repository/ref/path, Codespace, and checkout where
-   applicable, and the runner job or supplied-artifact reference. Require an
-   explicit declaration of scope deviations. The parent checks the complete
+   covering every inspected source, including directory listings, helpers'
+   implicit inputs, and identity or preflight reads not cited in findings.
+   For each source, include its repository/ref/path, Codespace, and checkout
+   where applicable, and the runner job or supplied-artifact reference. Require
+   an explicit declaration of scope deviations. The parent checks the complete
    result and reconciles that inventory against the actual tool calls and runner
    commands, including preflight commands; a bare assurance that scope was
    respected is not sufficient.
@@ -1220,7 +1237,9 @@ weaker review gate.
    **Out-of-scope reads or unverifiable evidence invalidate the review,
    regardless of its verdict.** Read-only laptop, dependency, or undeclared
    environment inspection is still a violation, even if it only supplies an
-   identity field. Keep committing blocked, preserve the violation evidence, and
+   identity field. Reading an undeclared sibling artifact or listing an
+   undeclared directory is also a violation; disclosing it does not waive the
+   allowlist. Keep committing blocked, preserve the violation evidence, and
    independently establish any potentially actionable finding in the authorised
    Codespace before changing code. Correct the review inputs/routing and obtain
    a fresh, scope-correct review; do not reuse a reviewer that inspected forbidden
