@@ -914,9 +914,9 @@ Wait values above 15 seconds are clamped. Repeated short polls leave enough
 time for MCP request and response overhead while the detached job continues
 unaffected in the Codespace.
 
-Repeat while the state is `connecting`, `running`, or `detached`. Stop on
-`done` or `failed`; a failed connection needs the recovery decision below, not
-an endless polling loop. Read the complete output with:
+Repeat while the state is `connecting` or `running`. Stop on `done`;
+`detached` and `failed` need the recovery decision below, not an endless
+passive polling loop. Read the complete output with:
 
 ```elisp
 (copilot-cs-output "job-124114-003")
@@ -924,6 +924,15 @@ an endless polling loop. Read the complete output with:
 
 Reports include only the tail of the output; `copilot-cs-output` always returns
 all of it.
+
+For a [Gate 0 review](../SKILL.md#gate-0---required-pre-commit-rubber-duck-review),
+retain every launched job ID, including each result in a zero-wait batch.
+Poll and read those exact jobs, not just the most recent one. Return each
+command's input scope, terminal state, exit status, and output reference or
+explained failure to the parent. Do not return a pass while a diagnostic is
+still running, unpolled, or has an unconfirmed remote outcome. Output reduced
+to a count or filtered to one filename still requires auditing the full input
+scope; the pipeline does not make a repository-wide scan a scoped read.
 
 `copilot-cs-poll` is passive: it never opens a connection. If an acknowledged
 job's stream has died, it reports `detached` and preserves the available output.

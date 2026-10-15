@@ -1184,12 +1184,27 @@ weaker review gate.
    and validation results. Explicitly list the allowed repository, checkout,
    frozen candidate/base, and any pre-approved supporting sources. Require all
    repository inspection through that Codespace runner, including read-only
-   searches and dependency lookups. Local access to this skill's instructions,
-   client, and designated session artifacts is not permission to inspect laptop
-   work-repository checkouts. Missing context or a failed runner must produce a
+   searches and dependency lookups. The allowlist must also name any permitted
+   local skill files, client, and supporting session artifacts; their enclosing
+   directories and laptop work-repository checkouts are not implicitly allowed.
+   Missing context or a failed runner must produce a
    `blocked` result naming the required repository/ref/path, not a fallback to a
    laptop checkout or an undeclared repository. The parent must obtain any
    additional authorised Codespace evidence before review resumes.
+
+   **Check the full input scope before every inspection.** Match the operation,
+   target, revision selectors, and file paths against the handoff before calling
+   a tool or launching a job. Check every pipeline component and helper input,
+   not just the files or lines eventually returned. Counts, metadata, zero-match
+   searches, and output filters do not narrow the sources a command examines.
+   If that input scope cannot be established, return `blocked` before dispatch.
+
+   A frozen-revision grant covers only the named Git objects and expressly
+   allowed ancestry, not the repository's entire object database or other refs.
+   Do not use `git cat-file --batch-all-objects`, `git rev-list --all`, or
+   equivalent whole-repository inventories under that grant, even for a count
+   or performance diagnostic. Select objects through the permitted revisions
+   and paths instead; missing object context requires parent-supplied evidence.
 
    **Supporting-artifact access is exact and non-transitive.** Before delegation,
    identify the evidence the review needs and name each allowed artifact and
@@ -1197,7 +1212,10 @@ weaker review gate.
    enclosing directory, sibling `.receipt.json` files, or paths referenced
    inside it. Directory listings, globbing, and recursive searches are separate
    reads, not harmless discovery. Do not widen a file-only grant to the whole
-   endorsement directory.
+   endorsement directory. Search a permitted supporting file by its exact path,
+   not its parent directory with a later filename filter. This also applies to
+   the skill's `references/` and session-artifact directories; neither is an
+   exception for orientation or cookbook lookup.
 
    Apply the same limit to helpers' implicit reads: a verification helper that
    loads a separate plan or signed receipt needs those exact inputs declared
@@ -1228,11 +1246,22 @@ weaker review gate.
    covering every inspected source, including directory listings, helpers'
    implicit inputs, and identity or preflight reads not cited in findings.
    For each source, include its repository/ref/path, Codespace, and checkout
-   where applicable, and the runner job or supplied-artifact reference. Require
-   an explicit declaration of scope deviations. The parent checks the complete
-   result and reconciles that inventory against the actual tool calls and runner
-   commands, including preflight commands; a bare assurance that scope was
-   respected is not sufficient.
+   where applicable, the inspection operation and full input selectors, and the
+   runner job or supplied-artifact reference. Require an explicit declaration
+   of scope deviations. The parent reconciles that inventory against the actual
+   tool calls and runner commands, including their input scope and preflight
+   commands; a bare assurance that scope was respected is not sufficient.
+
+   **Account for every review-launched job before returning a pass.** Record
+   exact IDs as jobs are launched, including every job in a zero-wait batch.
+   Return a job ledger with each command, source scope, terminal state, command
+   exit status, and output reference or explained failure. Poll those exact IDs
+   and inspect their output; do not lose earlier jobs by relying on the runner's
+   most-recent-job default. A live, unpolled, or unconfirmed job blocks the gate,
+   even if its output seems irrelevant. The parent checks this ledger against
+   all launches in the invocation, not just jobs cited in findings. A review
+   that omits a job cannot pass; later completion alone does not repair its
+   missing scope and output audit.
 
    **Out-of-scope reads or unverifiable evidence invalidate the review,
    regardless of its verdict.** Read-only laptop, dependency, or undeclared
@@ -1260,8 +1289,8 @@ weaker review gate.
    available tool explicitly supports them.
 5. Proceed only after a completed `pass` with no unresolved actionable findings.
    If the review-owning session cannot invoke the reviewer, or the invocation
-   fails, is incomplete, lacks auditable in-scope evidence, returns an ambiguous
-   result, or requests human judgement,
+   fails, is incomplete, lacks auditable in-scope evidence or a complete terminal
+   job ledger, returns an ambiguous result, or requests human judgement,
    committing remains blocked. Report the blocker and obtain an operator
    decision; a successful tool exit is not review approval.
 6. Immediately before the unsigned commit, confirm that `HEAD`, any merge parents
