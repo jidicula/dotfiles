@@ -120,9 +120,20 @@ def invocation_lock(timeout):
 
 def main():
     if len(sys.argv) > 2:
-        return fail("usage: copilot-emacs-mcp-call [ELISP]")
+        return fail("usage: copilot-emacs-mcp-call [ELISP | --endorsement-request]")
 
-    expression = sys.argv[1] if len(sys.argv) == 2 else sys.stdin.read()
+    if sys.argv[1:] == ["--endorsement-request"]:
+        try:
+            request = sys.stdin.read()
+            if not isinstance(json.loads(request), dict):
+                return fail("endorsement request must be a JSON object")
+        except (OSError, ValueError) as error:
+            return fail(f"could not read endorsement request: {error}")
+        expression = (
+            f'(copilot-cs-endorse "plan" {json.dumps(request, ensure_ascii=False)} nil 10)'
+        )
+    else:
+        expression = sys.argv[1] if len(sys.argv) == 2 else sys.stdin.read()
     if not expression.strip():
         return fail("an Elisp expression is required")
 

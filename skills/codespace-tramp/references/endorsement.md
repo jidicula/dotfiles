@@ -220,11 +220,39 @@ index, `FETCH_HEAD` and working tree are unchanged before retrying the original
 request. Do not delete Git's shallow-boundary file, fetch every branch, rebase,
 or relax the complete-history guard to make planning pass.
 
-Pass the successful request as an escaped string, not an Elisp expression or
-shell command, to the already selected Codespace:
+For a successful request saved locally, submit it through the canonical client's
+JSON-input mode. Run this in the same `COPILOT_AGENT_SESSION_ID` that selected the
+Codespace, after comparing the prepared revision with the quality-gate evidence:
+
+```bash
+/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call \
+  --endorsement-request < "$REQUEST"
+```
+
+`REQUEST` is the exact local file containing successful `prepare` output.
+The client reads standard input locally, checks that it is a JSON object, and
+encodes the request text as one literal argument to
+`(copilot-cs-endorse "plan" ... nil 10)`. Request contents cannot become Elisp,
+and the daemon does not open the local file. The remote helper still validates
+the complete request and revision; this mode grants no signing or publication
+approval. A malformed request exits before contacting the daemon.
+
+Do not submit `insert-file-contents`, `with-temp-buffer`, or another local-file
+read inside the planning expression. Emacs deliberately reports those paths as
+sensitive, including agent-authored session artifacts. Do not widen its file
+guard, restart the daemon, or repeat the denied read to make planning proceed.
+
+If the complete request text is already available, the equivalent direct call
+uses an escaped string, not a file path or an expression that reads one:
 
 ```elisp
-(copilot-cs-endorse "plan" "<JSON returned by prepare>")
+(copilot-cs-endorse "plan" "<JSON returned by prepare>" nil 10)
+```
+
+Both forms return the existing planning job handle. Poll that job and retrieve
+its result before continuing:
+
+```elisp
 (copilot-cs-poll "<planning-job-id>")
 (copilot-cs-endorsement-result "<planning-job-id>")
 ```

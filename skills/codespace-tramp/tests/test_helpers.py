@@ -4,6 +4,7 @@ Run with: python3 -m unittest discover -s skills/codespace-tramp/tests -v
 Only Python's standard library, Emacs, Git, and system shell tools are used.
 """
 
+import base64
 import fcntl
 import importlib.machinery
 import importlib.util
@@ -1603,6 +1604,105 @@ sys.stdin.read()
         result = self.invoke()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "fixture jobs")
+
+    def test_endorsement_request_is_submitted_as_literal_json_not_a_file_read(self):
+        self.executable(
+            "copilot-emacs-mcp",
+            """import json, sys
+from pathlib import Path
+def respond(identifier, result):
+    print(json.dumps({"jsonrpc": "2.0", "id": identifier, "result": result}), flush=True)
+initialization = json.loads(sys.stdin.readline())
+respond(initialization["id"], {})
+assert json.loads(sys.stdin.readline())["method"] == "notifications/initialized"
+call = json.loads(sys.stdin.readline())
+assert call["method"] == "tools/call"
+assert call["params"]["name"] == "eval-elisp"
+Path.home().joinpath("submitted.el").write_text(
+    call["params"]["arguments"]["expression"], encoding="utf-8")
+respond(call["id"], {"content": [{"type": "text", "text": "fixture planning job"}]})
+sys.stdin.read()
+""",
+        )
+        request = json.dumps({
+            "version": 2, "repository": "example/project", "pr": 12,
+            "committer": {"name": 'Quote " backslash \\ newline\n caf\u00e9 \U0001f680'},
+            "fixture": '") (error "request data must not execute") ("',
+        }, ensure_ascii=False, indent=2) + "\n"
+        request_file = self.root / "endorsement-request.json"
+        request_file.write_text(request, encoding="utf-8")
+        with request_file.open() as source:
+            result = subprocess.run(
+                [sys.executable, str(self.client), "--endorsement-request"],
+                stdin=source, cwd=self.root, env=self.env, text=True,
+                capture_output=True, timeout=20,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "fixture planning job")
+        expression = (self.root / "submitted.el").read_text(encoding="utf-8")
+        encoded = base64.b64encode(expression.encode("utf-8")).decode("ascii")
+        output = self.emacs(
+            f"""(let* ((source (decode-coding-string
+                                (base64-decode-string "{encoded}") 'utf-8))
+                       (parsed (read-from-string source))
+                       (form (car parsed)))
+                 (require 'cl-lib)
+                 (unless (and (= (cdr parsed) (length source))
+                              (= (length form) 5)
+                              (eq (car form) 'copilot-cs-endorse)
+                              (equal (nth 1 form) "plan")
+                              (stringp (nth 2 form))
+                              (null (nth 3 form))
+                              (equal (nth 4 form) 10))
+                   (error "Expected a literal, planning-only handoff: %S" form))
+                 (cl-letf (((symbol-function 'copilot-cs-endorse)
+                            (lambda (action data approval wait)
+                              (json-serialize (vector action data approval wait)
+                                              :null-object nil))))
+                   (princ (base64-encode-string (eval form t) t))))"""
+        )
+        self.assertEqual(json.loads(base64.b64decode(output)), ["plan", request, None, 10])
+
+    def test_invalid_endorsement_request_is_rejected_before_starting_bridge(self):
+        self.executable("copilot-emacs-mcp", "raise RuntimeError('bridge must not start')")
+        for request in ("", "not JSON", '{"version":', "[]", '"request.json"', "null", "1"):
+            with self.subTest(request=request):
+                result = subprocess.run(
+                    [sys.executable, str(self.client), "--endorsement-request"],
+                    input=request, cwd=self.root, env=self.env, text=True,
+                    capture_output=True, timeout=20,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("endorsement request", result.stderr)
+                self.assertNotIn("bridge must not start", result.stderr)
+
+    def test_endorsement_mode_does_not_accept_a_file_path_or_extra_expression(self):
+        result = self.run_command([
+            sys.executable, str(self.client), "--endorsement-request", "/outside/request.json",
+        ])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("usage:", result.stderr)
+
+    def test_plain_stdin_elisp_remains_supported(self):
+        self.executable(
+            "copilot-emacs-mcp",
+            """import json, sys
+initialization = json.loads(sys.stdin.readline())
+print(json.dumps({"id": initialization["id"], "result": {}}), flush=True)
+sys.stdin.readline()
+call = json.loads(sys.stdin.readline())
+assert call["params"]["arguments"]["expression"] == "(copilot-cs-status)"
+print(json.dumps({"id": call["id"], "result": {"content": [
+    {"type": "text", "text": "fixture status"}]}}), flush=True)
+sys.stdin.read()
+""",
+        )
+        result = subprocess.run(
+            [sys.executable, str(self.client)], input="(copilot-cs-status)",
+            cwd=self.root, env=self.env, text=True, capture_output=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "fixture status")
 
     def test_foreign_and_late_responses_cannot_become_another_invocations_receipt(self):
         self.executable(

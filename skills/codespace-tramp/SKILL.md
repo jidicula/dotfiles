@@ -1474,6 +1474,9 @@ complete protocol:
    preflight and submit the unchanged JSON to remote `copilot-cs-endorse "plan"`. Compare
    the prepared head and base branch with the quality-gate revision before
    submitting it, applying the clean-base-advance policy above.
+   For a saved local request, use `copilot-emacs-mcp-call --endorsement-request`
+   with the file redirected to standard input in the selected session. Never
+   submit an Emacs expression that reads the local request file.
    Save the complete planning result using the reference's persisted-record
    transfer, not manual JSON transcription. Version 2 plans preserve verified
    prior endorsements and record their unchanged IDs in `preserved_commits`.
@@ -1942,6 +1945,11 @@ Ask the user for the correct commands if none are supplied.
   `setup/copilot-ghcs cp`, or pass content already available as a literal
   string to `copilot-cs-put`. Do not read local artifacts through Emacs or
   expand its file permissions. See the cookbook's session-patch workflow.
+- **Endorsement planning rejects a local request as sensitive file access:**
+  remove the local-file read from the submitted Elisp. In the same selected
+  session, use `setup/copilot-emacs-mcp-call --endorsement-request < "$REQUEST"`
+  for the successful prepared JSON file. This encodes data locally without
+  changing Emacs permissions; see the endorsement reference before retrying.
 - **`git status` reports `git-lfs: not found`:** Git LFS may be missing even
   though the Codespace is available. Compare plain and login-shell
   `git lfs version`; if both fail, install Git LFS inside the Codespace using
