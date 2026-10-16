@@ -165,14 +165,15 @@ unsigned. Inspect each Copilot-origin thread and its human replies. Resolve it
 only after the underlying finding is addressed; outdated line positions or
 an approving overview do not prove that.
 
-The completion criterion is **`0 open findings`**, not just zero actionable
-findings in the latest review. Count every unresolved Copilot-origin thread,
-including outdated threads and those from earlier reviews, plus any unaddressed
-findings in review overviews. Re-read all review, comment, and thread pages
-after resolution and confirm the expected head before advancing. Missing,
-failed, or incomplete readback cannot establish zero. A human-review
-recommendation stops the automated loop but does not permit endorsement while
-findings remain open.
+The default completion criterion is **`0 open findings`**, not just zero
+actionable findings in the latest review. Count every unresolved Copilot-origin
+thread, including outdated threads and those from earlier reviews, plus any
+unaddressed findings in review overviews. Re-read all review, comment, and thread
+pages after resolution and confirm the expected head before advancing. Missing,
+failed, or incomplete readback cannot establish zero or eligibility for the
+[human-follow-up exception](#human-follow-up-exception). A human-review
+recommendation stops the automated loop; open findings still block endorsement
+unless every remaining finding qualifies for that exception.
 
 A concise reply can link the verified fix where useful:
 
@@ -203,6 +204,38 @@ Require no errors, the same thread ID and `isResolved: true`, then confirm its
 state on the intended PR. On an uncertain response, inspect that thread before
 retrying. After fixes change the head, rerun required CI and request/reuse the
 new head's CCR run as directed by the skill; old CI/review evidence is stale.
+
+## Human-follow-up exception
+
+Open findings may be deferred to human endorsement when all remaining work
+genuinely requires human or external action: for example, deploying and
+reconciling a prerequisite, confirming live capacity or admitted resources, or
+completing an explicitly human-only repository requirement. Code, documentation,
+and agent-editable PR metadata fixes remain actionable, including actionable
+parts of a finding that also needs human follow-up. Tool failures, missing
+access, disputed findings, or unclear actionability do not by themselves justify
+an exception; surface those blockers to the operator.
+
+After complete readback, record the actual open count and each finding's link,
+why its remaining work cannot be performed by the agent, the required human or
+external action, and any merge or rollout prerequisite. Bind this evidence to
+the reviewed head and re-evaluate it when the candidate or outstanding work
+changes. Leave deferred threads open; never report the count as zero, resolve
+them merely to pass the gate, or repeatedly request unchanged reviews to erase
+the findings.
+
+Qualifying findings may proceed to preparation and the existing exact-revision
+endorsement prompt without a separate bypass-approval request. Include the
+recorded findings and prerequisites in that prompt and explain that the
+affirmative endorsement accepts their deferral to human follow-up. No signing
+is authorised without that explicit acceptance. This exception does not waive
+CI, required GitHub approvals, or merge/deployment prerequisites, and endorsement
+does not assert that the deferred work is complete.
+
+Retain these links and outstanding prerequisites in the resulting PR's
+agent-editable description or a comment, including after signed replacement.
+Ready for review is not permission to merge or deploy before those prerequisites
+are satisfied.
 
 ## Authoritative behaviour
 

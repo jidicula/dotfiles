@@ -1415,7 +1415,8 @@ An absent automatic-review ruleset does not mean manual CCR is unavailable.
 Conversely, an old review or a configured automatic rule alone does not prove
 that the current request can run. Do not mark a draft ready merely to trigger
 CCR. Recheck applicability when resuming; unresolved prior findings remain
-blockers even if CCR has since become unavailable.
+blockers unless they qualify for the human-follow-up exception below, even if
+CCR has since become unavailable.
 
 ##### Review, fix, resolve, re-request
 
@@ -1433,8 +1434,9 @@ blockers even if CCR has since become unavailable.
    conclusion, resolved threads or the absence of comments.
 3. If CCR recommends **human review**, stop automated remediation/re-requesting.
    Preserve the recommendation, review URL and unresolved findings for the human
-   operator. Do not advance to endorsement while findings remain open. This is
-   not an approval and does not satisfy a required human review on GitHub.
+   operator. Open findings block endorsement unless every remaining finding
+   qualifies for the human-follow-up exception below. This is not an approval
+   and does not satisfy a required human review on GitHub.
 4. Otherwise address actionable findings in the existing Codespace. Keep
    changes within the task, validate the fixes, pass Gate 0, then commit them
    unsigned and push to the same draft. Resolve only Copilot-origin threads whose
@@ -1443,19 +1445,28 @@ blockers even if CCR has since become unavailable.
    disputed threads, or mark findings resolved just to obtain a clean result.
 5. After a changed head, invalidate previous CI/CCR results, rerun Gate 1 and
    re-request CCR on that exact head unless automatic review is already pending.
-   Repeat until CCR recommends approval with `0 open findings`,
+   Repeat until CCR recommends approval and the findings criterion below is met,
    or recommends human review. A reply alone does not reach Copilot; it reviews
    code, not replies to its previous comments.
 
-The gate requires **`0 open findings`**. Count every unresolved Copilot-origin
-thread, including outdated threads and findings from earlier reviews, plus any
-unaddressed findings in review overviews. Confirm the count through complete,
-fresh review/comment/thread readback after resolving findings; failed or
-incomplete reads cannot establish zero. An approval or human-review
-recommendation does not waive this criterion.
+The default gate requires **`0 open findings`**. Count every unresolved
+Copilot-origin thread, including outdated threads and findings from earlier
+reviews, plus any unaddressed findings in review overviews. Confirm the count
+through complete, fresh review/comment/thread readback after resolving findings;
+failed or incomplete reads cannot establish zero or exception eligibility.
+An approval or human-review recommendation alone does not waive this criterion.
 
-**Approval recommended** ends the automated loop only with `0 open findings`;
-it does not replace the human approval gate.
+The only exception is the documented
+[human-follow-up exception](references/copilot-code-review.md#human-follow-up-exception):
+all remaining work must genuinely require human or external action, not an
+agent-actionable code, documentation, or PR metadata fix. Keep those findings
+open and disclose their actual count, links, reasons for deferral, and required
+follow-up in Gate 3's existing endorsement prompt for explicit acceptance.
+This permits human endorsement, not a claim of zero findings or a waiver of
+CI, required GitHub approvals, or merge/deployment prerequisites.
+
+**Approval recommended** ends the automated loop only when the findings
+criterion above is met; it does not replace the human approval gate.
 Read the actual assessment even if GitHub records the review as `COMMENTED`;
 formal Copilot `APPROVED` reviews are optional. Never infer approval from
 `COMMENTED` or zero comments alone.
@@ -1470,9 +1481,10 @@ inspected before another mutation.
 #### Gate 3 - exact-revision human endorsement
 
 Proceed only after CI passes (or one of the explicit, scoped CI exceptions above)
-and there are `0 open findings` from CCR. CCR must also be either explicitly
-unavailable, approval-recommended, or human-review-recommended. Recheck the current
-head and base branch against the recorded gate evidence. A changed head or retargeted
+and the CCR findings criterion is met (`0 open findings` or only documented
+human-follow-up exceptions). CCR must also be either explicitly unavailable,
+approval-recommended, or human-review-recommended. Recheck the current head and
+base branch against the recorded gate evidence. A changed head or retargeted
 base requires new gates and endorsement. A conflict-free fast-forward of the
 same base branch does not invalidate the reviewed commits, CCR assessment or
 human approval: retain the original plan and check current mergeability and CI.
@@ -1521,7 +1533,13 @@ complete protocol:
    **"Please review this implementation. Do you believe it is correct and
    stand by every commit in this exact revision, or is further work needed?"**
    Include the CCR outcome and full review link, especially any human-review
-   recommendation; explain an unavailable CCR gate.
+   recommendation; explain an unavailable CCR gate. For the human-follow-up
+   exception, include the actual open-finding count, each finding's link, why
+   the agent cannot address the remaining work, and the required human action
+   and merge/rollout restrictions. Explain that an affirmative endorsement
+   accepts carrying these findings into human follow-up, not that their
+   prerequisites are complete or waived. Use this same prompt, not a separate
+   bypass-approval request.
    Show the exact head and recorded base OIDs, commit count/range, key fingerprint, plan ID,
    the new signing count and IDs, the preserved commit IDs,
    any separately preserved GitHub base-only merge IDs,
@@ -1570,6 +1588,9 @@ This does not clear or satisfy the pending approval check. Ordinary `finish`
 remains fail-closed until that check and every other requirement pass.
 Old CCR reviews and discussions do not migrate to a replacement PR or count as
 formal approval of its new OIDs; retain their links with the verified mapping.
+Carry accepted human-follow-up findings and their outstanding prerequisites
+into the resulting PR's agent-editable description or a comment. Readiness for
+review does not clear those findings or authorise merging or deploying early.
 
 Readiness can itself trigger new CI. Before `finish`, inspect the repository's
 workflow triggers and record the signed head's existing run IDs. Afterwards,

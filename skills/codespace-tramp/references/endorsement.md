@@ -406,10 +406,17 @@ Print the full draft URL on its own line immediately before the interactive
 prompt. Start its message with the same URL and a blank line, followed by:
 **"Please review this implementation. Do you believe it is correct and stand
 by every commit in this exact revision, or is further work needed?"**
-Require `0 open findings` from CCR before preparation or this prompt, including
-when human review is recommended or CCR has since become unavailable.
+Before preparation or this prompt, require `0 open findings` from CCR or only
+documented [human-follow-up exceptions](copilot-code-review.md#human-follow-up-exception),
+including when human review is recommended or CCR has since become unavailable.
 Include CCR's outcome and full review URL, especially any human-review
 recommendation. Explain why CCR was skipped if unavailable.
+For the exception, show the actual open-finding count, each finding's link, why
+the agent cannot address the remaining work, and the required human action and
+merge/rollout restrictions. Explain that affirmative endorsement accepts
+carrying those findings into human follow-up; it does not declare their
+prerequisites complete or waive them. Obtain this acceptance in the existing
+endorsement prompt, not a separate bypass-approval request.
 Show head/base OIDs, commit count/range, key fingerprint, plan ID, any proposed
 committer change and material validation limitations below the question.
 Distinguish the complete reviewed range from the commits requiring signatures,
@@ -426,6 +433,9 @@ Offer further work, leaving the draft unendorsed and the permitted publication
 choices from the skill. Preselect no endorsement. Explain that signing changes
 OIDs and required CI must run on the signed head; successful publication and
 passing signed-head CI will mark the result ready for review.
+Keep deferred finding links and prerequisites visible on the resulting PR,
+including a signed replacement. Readiness does not clear them or authorise
+merging or deploying before those prerequisites are satisfied.
 
 Never infer approval from CCR, creating the draft, a previous endorsement or
 a generic request to finish. Declining, cancelling, requesting further work
