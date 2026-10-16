@@ -926,7 +926,12 @@ Reports include only the tail of the output; `copilot-cs-output` always returns
 all of it.
 
 For a [Gate 0 review](../SKILL.md#gate-0---required-pre-commit-rubber-duck-review),
-retain every launched job ID, including each result in a zero-wait batch.
+check each inspection operation against the handoff's operation allowlist before
+launching it. Matching the permitted paths and revisions does not authorise a
+substitute operation; return `blocked` before dispatch if the operation is not
+permitted.
+
+Retain every launched job ID, including each result in a zero-wait batch.
 Poll and read those exact jobs, not just the most recent one. Return each
 command's input scope, terminal state, exit status, and output reference or
 explained failure to the parent. Do not return a pass while a diagnostic is

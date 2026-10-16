@@ -1182,8 +1182,9 @@ weaker review gate.
    task and intended behaviour, repository/base context, immutable Codespace name,
    exact checkout, canonical client/session details, recorded parents and tree,
    and validation results. Explicitly list the allowed repository, checkout,
-   frozen candidate/base, and any pre-approved supporting sources. Require all
-   repository inspection through that Codespace runner, including read-only
+   frozen candidate/base, permitted inspection operations, and any pre-approved
+   supporting sources. Require all repository inspection through that Codespace
+   runner, including read-only
    searches and dependency lookups. The allowlist must also name any permitted
    local skill files, client, and supporting session artifacts; their enclosing
    directories and laptop work-repository checkouts are not implicitly allowed.
@@ -1198,6 +1199,15 @@ weaker review gate.
    not just the files or lines eventually returned. Counts, metadata, zero-match
    searches, and output filters do not narrow the sources a command examines.
    If that input scope cannot be established, return `blocked` before dispatch.
+
+   **Check operation permission separately from source permission.** An allowed
+   path or revision does not authorise a substitute inspection operation. For
+   example, permission to use `git diff` and `git show` does not permit `git grep`,
+   even against the same frozen tree and paths. Tool preferences or equivalent
+   output do not expand the handoff's operation allowlist. If an operation is not
+   permitted, return `blocked` before dispatch and request an amended handoff.
+   The parent must reject a review that used an unapproved operation, even if
+   every source was allowed and the reviewer disclosed the deviation.
 
    A frozen-revision grant covers only the named Git objects and expressly
    allowed ancestry, not the repository's entire object database or other refs.
@@ -1263,8 +1273,8 @@ weaker review gate.
    that omits a job cannot pass; later completion alone does not repair its
    missing scope and output audit.
 
-   **Out-of-scope reads or unverifiable evidence invalidate the review,
-   regardless of its verdict.** Read-only laptop, dependency, or undeclared
+   **Out-of-scope sources or operations, or unverifiable evidence, invalidate the
+   review regardless of its verdict.** Read-only laptop, dependency, or undeclared
    environment inspection is still a violation, even if it only supplies an
    identity field. Reading an undeclared sibling artifact or listing an
    undeclared directory is also a violation; disclosing it does not waive the
