@@ -1414,8 +1414,8 @@ an empty REST list is not evidence that the gate is clear or unavailable.
 An absent automatic-review ruleset does not mean manual CCR is unavailable.
 Conversely, an old review or a configured automatic rule alone does not prove
 that the current request can run. Do not mark a draft ready merely to trigger
-CCR. Recheck applicability when resuming; surface any unresolved prior findings
-even if CCR has since become unavailable.
+CCR. Recheck applicability when resuming; unresolved prior findings remain
+blockers even if CCR has since become unavailable.
 
 ##### Review, fix, resolve, re-request
 
@@ -1433,8 +1433,8 @@ even if CCR has since become unavailable.
    conclusion, resolved threads or the absence of comments.
 3. If CCR recommends **human review**, stop automated remediation/re-requesting.
    Preserve the recommendation, review URL and unresolved findings for the human
-   gate below. This is not an approval and does not satisfy a required human
-   review on GitHub.
+   operator. Do not advance to endorsement while findings remain open. This is
+   not an approval and does not satisfy a required human review on GitHub.
 4. Otherwise address actionable findings in the existing Codespace. Keep
    changes within the task, validate the fixes, pass Gate 0, then commit them
    unsigned and push to the same draft. Resolve only Copilot-origin threads whose
@@ -1443,11 +1443,19 @@ even if CCR has since become unavailable.
    disputed threads, or mark findings resolved just to obtain a clean result.
 5. After a changed head, invalidate previous CI/CCR results, rerun Gate 1 and
    re-request CCR on that exact head unless automatic review is already pending.
-   Repeat until CCR recommends approval with no remaining actionable findings,
+   Repeat until CCR recommends approval with `0 open findings`,
    or recommends human review. A reply alone does not reach Copilot; it reviews
    code, not replies to its previous comments.
 
-**Approval recommended** ends the automated loop, not the human approval gate.
+The gate requires **`0 open findings`**. Count every unresolved Copilot-origin
+thread, including outdated threads and findings from earlier reviews, plus any
+unaddressed findings in review overviews. Confirm the count through complete,
+fresh review/comment/thread readback after resolving findings; failed or
+incomplete reads cannot establish zero. An approval or human-review
+recommendation does not waive this criterion.
+
+**Approval recommended** ends the automated loop only with `0 open findings`;
+it does not replace the human approval gate.
 Read the actual assessment even if GitHub records the review as `COMMENTED`;
 formal Copilot `APPROVED` reviews are optional. Never infer approval from
 `COMMENTED` or zero comments alone.
@@ -1462,9 +1470,9 @@ inspected before another mutation.
 #### Gate 3 - exact-revision human endorsement
 
 Proceed only after CI passes (or one of the explicit, scoped CI exceptions above)
-and CCR is either explicitly unavailable,
-approval-recommended or human-review-recommended. Recheck the current head and
-base branch against the recorded gate evidence. A changed head or retargeted
+and there are `0 open findings` from CCR. CCR must also be either explicitly
+unavailable, approval-recommended, or human-review-recommended. Recheck the current
+head and base branch against the recorded gate evidence. A changed head or retargeted
 base requires new gates and endorsement. A conflict-free fast-forward of the
 same base branch does not invalidate the reviewed commits, CCR assessment or
 human approval: retain the original plan and check current mergeability and CI.
@@ -1513,7 +1521,7 @@ complete protocol:
    **"Please review this implementation. Do you believe it is correct and
    stand by every commit in this exact revision, or is further work needed?"**
    Include the CCR outcome and full review link, especially any human-review
-   recommendation and unresolved findings; explain an unavailable CCR gate.
+   recommendation; explain an unavailable CCR gate.
    Show the exact head and recorded base OIDs, commit count/range, key fingerprint, plan ID,
    the new signing count and IDs, the preserved commit IDs,
    any separately preserved GitHub base-only merge IDs,

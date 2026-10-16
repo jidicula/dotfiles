@@ -406,8 +406,10 @@ Print the full draft URL on its own line immediately before the interactive
 prompt. Start its message with the same URL and a blank line, followed by:
 **"Please review this implementation. Do you believe it is correct and stand
 by every commit in this exact revision, or is further work needed?"**
-Include CCR's outcome, full review URL and any unresolved findings, especially
-when human review is recommended. Explain why CCR was skipped if unavailable.
+Require `0 open findings` from CCR before preparation or this prompt, including
+when human review is recommended or CCR has since become unavailable.
+Include CCR's outcome and full review URL, especially any human-review
+recommendation. Explain why CCR was skipped if unavailable.
 Show head/base OIDs, commit count/range, key fingerprint, plan ID, any proposed
 committer change and material validation limitations below the question.
 Distinguish the complete reviewed range from the commits requiring signatures,

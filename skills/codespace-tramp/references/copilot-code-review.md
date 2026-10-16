@@ -165,6 +165,15 @@ unsigned. Inspect each Copilot-origin thread and its human replies. Resolve it
 only after the underlying finding is addressed; outdated line positions or
 an approving overview do not prove that.
 
+The completion criterion is **`0 open findings`**, not just zero actionable
+findings in the latest review. Count every unresolved Copilot-origin thread,
+including outdated threads and those from earlier reviews, plus any unaddressed
+findings in review overviews. Re-read all review, comment, and thread pages
+after resolution and confirm the expected head before advancing. Missing,
+failed, or incomplete readback cannot establish zero. A human-review
+recommendation stops the automated loop but does not permit endorsement while
+findings remain open.
+
 A concise reply can link the verified fix where useful:
 
 ```sh
