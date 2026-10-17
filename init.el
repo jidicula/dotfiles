@@ -654,7 +654,7 @@ There are two things you can do about this warning:
 
   ;; Indentation for *-ts-mode variants (defaults vary; pin to what we want).
   (setq c-ts-mode-indent-offset 4
-        json-ts-mode-indent-offset 4
+        json-ts-mode-indent-offset 2
         python-ts-mode-indent-offset 4
         ruby-ts-indent-level 2
         css-ts-mode-indent-offset 2
