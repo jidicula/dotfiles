@@ -1,0 +1,18 @@
+{
+	"version": 1,
+	"hooks": {
+		"notification": [
+			{
+				"type": "command",
+				"matcher": "permission_prompt|elicitation_dialog",
+				"bash": "/Users/jidicula/.copilot/hooks/script/awaiting-input.sh"
+			}
+		],
+		"agentStop": [
+			{
+				"type": "command",
+				"bash": "/Users/jidicula/.copilot/hooks/script/your-turn.sh"
+			}
+		]
+	}
+}

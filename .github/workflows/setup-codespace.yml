@@ -5,12 +5,14 @@ on:
     branches: [ main ]
     paths:
       - 'script/**'
+      - 'copilot/**'
       - '*-Brewfile'
       - '.github/workflows/*.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'script/**'
+      - 'copilot/**'
       - '*-Brewfile'
       - '.github/workflows/*.yml'
   # Run every Saturday at midnight
@@ -35,7 +37,7 @@ jobs:
       - name: Validate syntax
         run: |
           FAILURE=0
-          for file in script/*;
+          for file in script/* copilot/hooks/script/*.sh;
           do
             head -1 $file | grep -q bash && echo $file && bash -O extglob -n $file
             # Grep fails out with 1 if it doesn't find the pattern.
@@ -46,6 +48,9 @@ jobs:
             fi
           done
           exit "$FAILURE"
+
+      - name: Test Copilot hooks
+        run: python3 -B -m unittest discover -s copilot/hooks/tests
 
       - name: Run setup script
         run: script/setup "TEST_HOSTNAME"

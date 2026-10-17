@@ -22,6 +22,10 @@ mkdir -p "$HOME/.local/bin"
 # Make config folder
 mkdir -p "$HOME/.config"
 
+# Link via the parent so an existing hooks directory is not silently nested.
+mkdir -p "$HOME/.copilot" || exit
+ln -sfnv "$DOTFILESDIR/copilot/hooks" "$HOME/.copilot/" || exit
+
 # copy GPG config
 ln -sfv "$DOTFILESDIR/gpg.conf" "$HOME/.gnupg/gpg.conf"
 ln -sfv "$DOTFILESDIR/gpg-agent.conf" "$HOME/.gnupg/gpg-agent.conf"
