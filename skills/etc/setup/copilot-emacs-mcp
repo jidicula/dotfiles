@@ -18,7 +18,7 @@
 #     "mcpServers": {
 #       "emacs-codespace": {
 #         "type": "stdio",
-#         "command": "/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
+#         "command": "/path/to/skills/etc/setup/copilot-emacs-mcp",
 #         "args": [],
 #         "tools": ["eval-elisp"],
 #         "deferTools": "never",
@@ -130,8 +130,8 @@ wait_for_socket() {
 }
 
 main() {
-	local tool status owner
-	for tool in socat emacs emacsclient; do
+	local tool status owner setup_path
+	for tool in socat emacs emacsclient python3; do
 		command -v "$tool" >/dev/null || die "$tool is required but not installed"
 	done
 	[[ -r $INIT_FILE ]] || die "daemon init file not found: $INIT_FILE"
@@ -150,8 +150,26 @@ main() {
 		# wrapper on a slow tool call. Reload helpers without resetting
 		# their defvar-backed target, jobs, or Eglot state.
 		log "reusing Emacs daemon $ID and refreshing its runtime helpers"
+		setup_path="$(python3 -c 'import json, os, sys; print(json.dumps(os.path.dirname(os.path.abspath(sys.argv[1])) + os.sep))' "$INIT_FILE")"
 		owner="$(emacsclient -s "$ID" -e \
 			"(progn
+			   (let* ((old-dir copilot-mcp-setup-dir)
+			          (old-program (expand-file-name \"copilot-ghcs\" old-dir))
+			          (new-dir $setup_path)
+			          (new-program (expand-file-name \"copilot-ghcs\" new-dir)))
+			     (setq copilot-mcp-setup-dir new-dir
+			           load-path (cons new-dir (delete old-dir load-path)))
+			     (dolist (symbol '(copilot-mcp-ghcs-program
+			                       copilot-cs-ghcs-program
+			                       copilot-cs-eglot-ghcs-program))
+			       (when (and (boundp symbol)
+			                  (equal (symbol-value symbol) old-program))
+			         (set symbol new-program)))
+			     (when (boundp 'tramp-methods)
+			       (dolist (key '(tramp-login-program tramp-copy-program))
+			         (let ((entry (assq key (cdr (assoc \"ghcs\" tramp-methods)))))
+			           (when (equal (cadr entry) old-program)
+			             (setcar (cdr entry) new-program))))))
 			   (load (expand-file-name \"copilot-cs-jobs.el\" copilot-mcp-setup-dir)
 			         nil t t)
 			   (load (expand-file-name \"copilot-cs-eglot.el\" copilot-mcp-setup-dir)

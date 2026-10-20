@@ -566,7 +566,7 @@ There are two things you can do about this warning:
   :init
   (add-to-list
    'load-path
-   (expand-file-name "skills/codespace-tramp/setup"
+   (expand-file-name "skills/etc/setup"
                      (or (getenv "DOTFILESDIR") "~/dotfiles")))
   :hook
   ((before-save . my-eglot-organize-imports)

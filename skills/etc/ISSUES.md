@@ -1,6 +1,6 @@
-# Codespace TRAMP issues
+# ETC issues
 
-This file records defects in the `codespace-tramp` skill's instructions,
+This file records defects in the `etc` (emacs-tramp-codespace) skill's instructions,
 bundled helpers, and Codespace/Emacs/TRAMP/MCP orchestration. It is not a log
 for repository inner-loop failures such as application bugs, tests,
 bootstrap/dependencies, backing services, or repository-owned CI. Initial
@@ -40,10 +40,6 @@ do not automatically migrate or implement their upstream fixes.
    title, this file's path, and a one-sentence symptom summary; do not defer the
    notification to the final task summary.
 
-## Open issues
-
-_No issues recorded._
-
 ## Entry template
 
 Copy this block under **Open issues**, replacing every placeholder. Keep the
@@ -79,3 +75,7 @@ and agents to scan and parse.
 
 Pending follow-up.
 ```
+
+## Open issues
+
+## Resolved issues

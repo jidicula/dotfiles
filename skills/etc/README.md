@@ -1,6 +1,6 @@
-# Codespace TRAMP
+# ETC - emacs-tramp-codespace
 
-`codespace-tramp` is a GitHub Copilot CLI skill that keeps work-repository changes, dependency installation, language-server indexing, builds, and tests inside GitHub Codespaces. It drives each Codespace through a dedicated local Emacs daemon, the Model Context Protocol (MCP), Eglot, and the `/ghcs:` TRAMP method.
+`etc` (emacs-tramp-codespace) is a GitHub Copilot CLI skill that keeps work-repository changes, dependency installation, language-server indexing, builds, and tests inside GitHub Codespaces. It drives each Codespace through a dedicated local Emacs daemon, the Model Context Protocol (MCP), Eglot, and the `/ghcs:` TRAMP method.
 
 The result is a stateful remote development session: Emacs preserves the selected Codespace, open buffers, running processes, and job metadata across Copilot turns, while commands continue running inside the Codespace even if SSH, MCP, or the Copilot session disconnects.
 
@@ -114,11 +114,15 @@ Register the endorsement public key with GitHub as a **signing** key. The transp
 
 ## Installation
 
-1. Put this directory beneath a Copilot skill search root. This repository exports its skill root with:
+1. Put the `etc/` directory beneath a Copilot skill search root. This repository exports its skill root with:
 
    ```sh
    export COPILOT_SKILLS_DIRS="$HOME/dotfiles/skills"
    ```
+
+   The `skillDirectories` setting can point to the same parent directory. Both discover `etc/SKILL.md`; neither should point to the skill directory itself.
+
+   In an existing CLI session, run `/skills reload`, then `/skills info etc` to confirm discovery.
 
 2. The direct client starts or reuses the per-session daemon without requiring a Copilot MCP registration. If you also want the native MCP tool available, optionally register the bridge in `~/.copilot/mcp-config.json`:
 
@@ -127,7 +131,7 @@ Register the endorsement public key with GitHub as a **signing** key. The transp
      "mcpServers": {
        "emacs-codespace": {
          "type": "stdio",
-         "command": "/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
+         "command": "/absolute/path/to/skills/etc/setup/copilot-emacs-mcp",
          "args": [],
          "tools": ["eval-elisp"],
          "deferTools": "never",
@@ -163,7 +167,7 @@ Both `go-mode`/`go-ts-mode` and `ruby-mode`/`ruby-ts-mode` call `eglot-ensure`. 
 
 ## Usage
 
-Ask Copilot CLI to perform repository work in a Codespace, for example:
+Invoke `/etc`, or ask Copilot CLI to perform repository work in a Codespace, for example:
 
 ```text
 Use a Codespace to fix OWNER/REPOSITORY issue URL.
@@ -300,7 +304,7 @@ Calls to one daemon queue behind a per-daemon invocation lock before starting a 
 Run the local regression cases with the existing Python, Emacs, Git, and shell tools; no additional packages or live GitHub credentials are needed:
 
 ```sh
-python3 -m unittest discover -s skills/codespace-tramp/tests -v
+python3 -m unittest discover -s skills/etc/tests -v
 ```
 
 The cases cover local-only Git config and tag signing, unsigned agent jobs, key-role separation, approval gates, signature verification, preserved merge/empty-commit history, lease races, safe PR replacement/recovery, Codespace LFS installation, pre-dispatch retry boundaries, exact job ids, deadlines, MCP framing, re-entrant output isolation, remote PTYs, daemon refresh, and process-tree cancellation. Signing uses disposable test keys and a dedicated temporary SSH agent, never Secretive. Git remotes and GitHub API responses are isolated fixtures; no real PR, branch, or account is mutated.

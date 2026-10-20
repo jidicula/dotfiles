@@ -1,6 +1,6 @@
 """Regression tests for Git configuration and Codespace runner helpers.
 
-Run with: python3 -m unittest discover -s skills/codespace-tramp/tests -v
+Run with: python3 -m unittest discover -s skills/etc/tests -v
 Only Python's standard library, Emacs, Git, and system shell tools are used.
 """
 
@@ -98,6 +98,46 @@ class HelperTestCase(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
+
+
+class IssueLockTests(HelperTestCase):
+    def setUp(self):
+        super().setUp()
+        self.skill = self.root / "skills" / "renamed-skill"
+        (self.skill / "setup").mkdir(parents=True)
+        shutil.copy2(SETUP / "copilot-issues-lock", self.skill / "setup")
+        self.issue = self.skill / "ISSUES.md"
+        self.issue.write_text("Local report\n")
+        result = self.run_command(["git", "init", "--quiet", "--template="])
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def invoke(self, action, owner="session-one"):
+        return self.run_command(
+            ["bash", str(self.skill / "setup" / "copilot-issues-lock"), action, owner]
+        )
+
+    def test_stage_uses_the_skill_location_and_excludes_other_files(self):
+        (self.skill / "SKILL.md").write_text("Unstaged documentation\n")
+        self.assertEqual(self.invoke("acquire").returncode, 0)
+        staged = self.invoke("stage")
+        self.assertEqual(staged.returncode, 0, staged.stderr)
+        result = self.run_command(["git", "diff", "--cached", "--name-only"])
+        self.assertEqual(result.stdout.strip(), "skills/renamed-skill/ISSUES.md")
+        self.assertEqual(self.invoke("status").stdout.strip(), "unlocked")
+
+    def test_directory_move_keeps_the_existing_lock(self):
+        self.assertEqual(self.invoke("acquire").returncode, 0)
+        renamed = self.skill.with_name("etc")
+        self.skill.rename(renamed)
+        self.skill = renamed
+        blocked = self.invoke("acquire", owner="session-two")
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn("locked by session-one", blocked.stderr)
+        staged = self.invoke("stage")
+        self.assertEqual(staged.returncode, 0, staged.stderr)
+        result = self.run_command(["git", "diff", "--cached", "--name-only"])
+        self.assertEqual(result.stdout.strip(), "skills/etc/ISSUES.md")
+        self.assertEqual(self.invoke("status").stdout.strip(), "unlocked")
 
 
 class GitConfigurationTests(HelperTestCase):
@@ -4285,12 +4325,79 @@ Path(os.environ["FAKE_SERVED"]).touch()
                 (error "Runner refresh lost state or retained stale code")))"""
         )
 
+    def test_reconnect_uses_relocated_helpers_without_losing_state(self):
+        relocated = self.root / 'renamed "skill"' / "setup"
+        shutil.copytree(SETUP, relocated)
+        result = self.run_command(["bash", str(relocated / "copilot-emacs-mcp")])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        refresh = next(call[-1] for call in calls if "copilot-cs-jobs.el" in call[-1])
+        self.env["PATH"] = os.environ["PATH"]
+        self.emacs(
+            f"""(progn
+              (require 'copilot-cs-eglot)
+              (setq copilot-mcp-setup-dir "/removed/skill/setup/"
+                    copilot-mcp-ghcs-program "/removed/skill/setup/copilot-ghcs"
+                    copilot-cs-ghcs-program copilot-mcp-ghcs-program
+                    copilot-cs-eglot-ghcs-program copilot-mcp-ghcs-program
+                    copilot-cs-id "original-codespace"
+                    copilot-cs-dir "/workspaces/original"
+                    copilot-cs-configured t
+                    tramp-methods
+                    '(("ghcs"
+                       (tramp-login-program "/removed/skill/setup/copilot-ghcs")
+                       (tramp-copy-program "/removed/skill/setup/copilot-ghcs"))))
+              (puthash "original-job" '(:id "original-job") copilot-cs--jobs)
+              (puthash "original-server" '(:state ready) copilot-cs-eglot--states)
+              (cl-letf (((symbol-function 'process-attributes)
+                         (lambda (_pid) '((ppid . 1) (comm . "copilot") (start . 1)))))
+                {refresh})
+              (let ((expected {json.dumps(str(relocated / "copilot-ghcs"))}))
+                (unless (and
+                         (equal copilot-mcp-setup-dir {json.dumps(str(relocated) + "/")})
+                         (equal copilot-cs-setup-dir copilot-mcp-setup-dir)
+                         (equal copilot-cs-eglot-setup-dir copilot-mcp-setup-dir)
+                         (equal copilot-mcp-ghcs-program expected)
+                         (equal copilot-cs-ghcs-program expected)
+                         (equal copilot-cs-eglot-ghcs-program expected)
+                         (equal (cadr (assq 'tramp-login-program
+                                            (cdr (assoc "ghcs" tramp-methods)))) expected)
+                         (equal (cadr (assq 'tramp-copy-program
+                                            (cdr (assoc "ghcs" tramp-methods)))) expected)
+                         (equal copilot-cs-id "original-codespace")
+                         (equal copilot-cs-dir "/workspaces/original")
+                         copilot-cs-configured
+                         (gethash "original-job" copilot-cs--jobs)
+                         (gethash "original-server" copilot-cs-eglot--states))
+                  (error "Relocation lost state or retained old helper paths"))))"""
+        )
+
     def test_failed_refresh_does_not_serve_stale_runner(self):
         self.env["FAKE_FAIL_REFRESH"] = "1"
         result = self.invoke()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("could not refresh runner", result.stderr)
         self.assertFalse(self.served.exists())
+
+    def test_reconnect_preserves_custom_transport_programs(self):
+        result = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        refresh = next(call[-1] for call in calls if "copilot-cs-jobs.el" in call[-1])
+        self.env["PATH"] = os.environ["PATH"]
+        self.emacs(
+            f"""(progn
+              (require 'cl-lib)
+              (setq copilot-mcp-setup-dir "/removed/skill/setup/"
+                    copilot-cs-ghcs-program "/custom/transport"
+                    copilot-cs-eglot-ghcs-program "/custom/eglot")
+              (cl-letf (((symbol-function 'process-attributes)
+                         (lambda (_pid) '((ppid . 1) (comm . "copilot") (start . 1)))))
+                {refresh})
+              (unless (and (equal copilot-cs-ghcs-program "/custom/transport")
+                           (equal copilot-cs-eglot-ghcs-program "/custom/eglot"))
+                (error "Refresh overwrote custom transport paths")))"""
+        )
 
     def test_busy_daemon_survives_a_probe_timeout_and_is_reused_when_responsive(self):
         for probes_before_delay in (0, 1):

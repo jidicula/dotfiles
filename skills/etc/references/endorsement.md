@@ -1,7 +1,7 @@
 # Exact-revision endorsement
 
 The quality gates and publication policy are defined in
-[`codespace-tramp`](../SKILL.md#quality-and-endorsement-gates). Complete required CI and the optional CCR
+[`etc`](../SKILL.md#quality-and-endorsement-gates). Complete required CI and the optional CCR
 loop before using `prepare`; `check-ci` is the standalone read-only CI gate.
 The helper implements CI, revision and signing guards. CCR interpretation and
 remediation are agent-driven policy in the skill, not a text classifier inside
@@ -50,7 +50,7 @@ After the quality gates, use local preparation with the operator's
 authenticated `gh`:
 
 ```sh
-/absolute/path/to/skills/codespace-tramp/setup/copilot-cs-endorse \
+/absolute/path/to/skills/etc/setup/copilot-cs-endorse \
   prepare --repo "$NWO" --pr "$PR_NUMBER"
 ```
 
@@ -238,7 +238,7 @@ JSON-input mode. Run this in the same `COPILOT_AGENT_SESSION_ID` that selected t
 Codespace, after comparing the prepared revision with the quality-gate evidence:
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call \
+/absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call \
   --endorsement-request < "$REQUEST"
 ```
 
@@ -381,7 +381,7 @@ envelope's `plan_id`, so add only that field programmatically after the copy
 succeeds:
 
 ```sh
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+/absolute/path/to/skills/etc/setup/copilot-ghcs cp "$CS_ID" \
   "remote:$COMMON_DIR/copilot-endorsements/$PLAN_ID.plan.json" \
   "$SESSION_FILES/endorsement-plan-record.json" &&
 python3 -c '
@@ -394,7 +394,7 @@ print(json.dumps(dict(plan_id=sys.argv[1], **json.load(sys.stdin))))
 Only after both commands succeed, submit that generated file:
 
 ```sh
-/absolute/path/to/skills/codespace-tramp/setup/copilot-cs-endorse \
+/absolute/path/to/skills/etc/setup/copilot-cs-endorse \
   await-attestation --plan "$SESSION_FILES/endorsement-plan.json"
 ```
 
@@ -523,7 +523,7 @@ Only after the exact signing or recovery-verification job succeeds, save its
 complete receipt and clear the attestation wait before publication:
 
 ```sh
-/absolute/path/to/skills/codespace-tramp/setup/copilot-cs-endorse \
+/absolute/path/to/skills/etc/setup/copilot-cs-endorse \
   complete-attestation --receipt "<session-files>/signed-receipt.json" \
   --approve-plan "<APPROVAL>"
 ```
@@ -584,10 +584,10 @@ or discover the absolute common directory and copy the exact persisted receipt:
 ```
 
 ```sh
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+/absolute/path/to/skills/etc/setup/copilot-ghcs cp "$CS_ID" \
   "remote:<absolute-common-dir>/copilot-endorsements/<PLAN-ID>.<publication>.published.json" \
   "<session-files>/endorsement-receipt.json"
-/absolute/path/to/skills/codespace-tramp/setup/copilot-cs-endorse finish \
+/absolute/path/to/skills/etc/setup/copilot-cs-endorse finish \
   --receipt "<session-files>/endorsement-receipt.json" \
   --approve-plan "<APPROVAL>"
 ```

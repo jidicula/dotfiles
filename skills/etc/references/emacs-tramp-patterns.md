@@ -2,7 +2,7 @@
 
 How to run commands and edit files inside a GitHub Codespace from the local
 Emacs daemon behind the `emacs-codespace` MCP server. Referenced by the
-`codespace-tramp` skill. Substitute:
+`etc` (emacs-tramp-codespace) skill. Substitute:
 
 - `<CS_ID>` — the immutable Codespace `name` (id) from
   `gh codespace list --json name`.
@@ -16,7 +16,7 @@ jobs; it is not raw `emacsclient` evaluation or interactive Emacs. GitHub
 control-plane operations still use the operator's local authenticated `gh`.
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call \
+/absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call \
   '(copilot-cs-status)'
 ```
 
@@ -430,7 +430,7 @@ Use the canonical direct client instead:
 
 ```bash
 printf '%s' '(copilot-cs-status)' | \
-  /absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call
+  /absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call
 ```
 
 It performs the initialization handshake, keeps the bridge open until the
@@ -827,7 +827,7 @@ source branch or tag is not, by itself, a reason to rerun successful CI.
 For flaky **read-only discovery**, use the bounded GET wrapper:
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-gh-retry \
+/absolute/path/to/skills/etc/setup/copilot-gh-retry \
   get "repos/$NWO/codespaces/machines" --jq '.machines[].name'
 ```
 
@@ -869,7 +869,7 @@ Codespace-only file guard or retry that local read through Emacs.
 Transfer an existing patch with the explicit local copy tool instead:
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+/absolute/path/to/skills/etc/setup/copilot-ghcs cp "$CS_ID" \
   "$HOME/.copilot/session-state/$COPILOT_AGENT_SESSION_ID/files/change.patch" \
   "remote:/tmp/copilot-$COPILOT_AGENT_SESSION_ID-change.patch"
 ```
@@ -1001,7 +1001,7 @@ outside Emacs:
 
 ```bash
 set -o pipefail
-/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call \
+/absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call \
   '(base64-encode-string
      (encode-coding-string (copilot-cs-output "job-124114-003") (quote utf-8))
      t)' |

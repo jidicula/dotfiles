@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Serialize edits to the shared Codespace TRAMP issue log.
+# Serialize edits to the shared etc issue log.
 
 set -euo pipefail
 
@@ -21,7 +21,8 @@ setup_dir=$(cd "$(dirname "$0")" && pwd -P)
 repo_root=$(git -C "$setup_dir" rev-parse --show-toplevel)
 git_common_dir=$(git -C "$setup_dir" rev-parse \
 	--path-format=absolute --git-common-dir)
-issue_path="skills/codespace-tramp/ISSUES.md"
+issue_path="$(git -C "$setup_dir/.." rev-parse --show-prefix)ISSUES.md"
+# Keep the lock identity stable across the skill rename for existing sessions.
 lock_dir="$git_common_dir/copilot-codespace-tramp-issues.lock"
 owner_file="$lock_dir/owner"
 created_file="$lock_dir/created"

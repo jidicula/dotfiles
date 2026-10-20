@@ -1,5 +1,5 @@
 ---
-name: codespace-tramp
+name: etc
 description: >-
   Use when the user wants Copilot to make code changes, run tests or builds, or
   install dependencies for a repository INSIDE a GitHub Codespace instead of on
@@ -17,7 +17,7 @@ description: >-
   if the working directory is outside that tree, do not use this skill.
 ---
 
-# Work in a Codespace via Emacs
+# ETC - emacs-tramp-codespace
 
 Make changes, run tests/builds, and install dependencies for a repository
 **inside a GitHub Codespace** rather than locally, driving the Codespace from a
@@ -30,7 +30,7 @@ Copilot CLI's sometimes-unstable registry of MCP tool methods. The Elisp
 examples below are submitted through that client:
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call \
+/absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call \
   '(copilot-cs-status)'
 ```
 
@@ -112,8 +112,9 @@ each of these must be set up on the operator's machine:
     timeout or an unreachable live process instead reports an error and
     preserves the daemon; obtain operator approval before discarding its state.
     Reattaching
-    to a healthy daemon reloads the runner and Eglot helpers from disk while
-    retaining the target, job registry, and tracked Eglot state.
+    to a healthy daemon reloads the runner and Eglot helpers from the current
+    installation path, including after a skill-directory move, while retaining
+    the target, job registry, tracked Eglot state, and custom transport overrides.
   - `setup/copilot-emacs-mcp-call` — the canonical protocol-aware client for
     `eval-elisp`. It keeps the stdio transport open until the matching JSON-RPC
     response arrives, so Codespace work can continue if Copilot's in-memory
@@ -154,7 +155,7 @@ each of these must be set up on the operator's machine:
     "mcpServers": {
       "emacs-codespace": {
         "type": "stdio",
-        "command": "/absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp",
+        "command": "/absolute/path/to/skills/etc/setup/copilot-emacs-mcp",
         "args": [],
         "tools": ["eval-elisp"],
         "deferTools": "never",
@@ -260,12 +261,12 @@ first read until the updated file has been staged:
 
 ```bash
 OWNER="${COPILOT_AGENT_SESSION_ID:?session id required}"
-/absolute/path/to/skills/codespace-tramp/setup/copilot-issues-lock \
+/absolute/path/to/skills/etc/setup/copilot-issues-lock \
   acquire "$OWNER"
-git -C "/absolute/path/to/skills/codespace-tramp" diff -- ISSUES.md
-git -C "/absolute/path/to/skills/codespace-tramp" diff --cached -- ISSUES.md
+git -C "/absolute/path/to/skills/etc" diff -- ISSUES.md
+git -C "/absolute/path/to/skills/etc" diff --cached -- ISSUES.md
 # Re-read and edit only after acquiring the lock.
-/absolute/path/to/skills/codespace-tramp/setup/copilot-issues-lock \
+/absolute/path/to/skills/etc/setup/copilot-issues-lock \
   stage "$OWNER"
 ```
 
@@ -284,9 +285,9 @@ When committing other changes in the local dotfiles repository:
 1. Acquire the same issue-log lock and hold it through the commit and staging
    restoration, so another session cannot restage the log during the commit.
 2. Record whether the log has staged changes. Temporarily exclude it with
-   `git restore --staged -- skills/codespace-tramp/ISSUES.md` from the repository
+   `git restore --staged -- skills/etc/ISSUES.md` from the repository
    root. Never restore or discard its working-copy contents.
-3. Require `git diff --cached --quiet -- skills/codespace-tramp/ISSUES.md` to
+3. Require `git diff --cached --quiet -- skills/etc/ISSUES.md` to
    succeed before committing only the intended remaining changes. Do not use
    `git commit -a` / `--all` or broadly restage files after excluding the log.
    If nothing else is staged, do not create an empty commit.
@@ -294,6 +295,10 @@ When committing other changes in the local dotfiles repository:
    fails or no commit is made: use `copilot-issues-lock stage "$OWNER"` if the log
    was staged, otherwise use `release "$OWNER"`. Both release the lock. Surface
    any cleanup failure without discarding the reports or bypassing a lock.
+
+If the log has a pending rename, apply the exclusion to both paths and restore
+both saved index entries before releasing the lock. A staged rename must not
+smuggle the reports or their deletion into another commit.
 
 Use the entry format and next sequential `CT-NNNN` identifier from
 `ISSUES.md`. Each report must include:
@@ -320,7 +325,7 @@ summary. Name the issue id and title, link or name `ISSUES.md`, and give a
 one-sentence symptom summary, for example:
 
 > I encountered `CT-0001 — MCP calls time out after reopening a file` and
-> documented it in `skills/codespace-tramp/ISSUES.md`. The observed symptom was
+> documented it in `skills/etc/ISSUES.md`. The observed symptom was
 > that subsequent MCP calls stopped returning after the file changed on disk.
 
 ## Inputs
@@ -417,7 +422,7 @@ nonsense repo and number rather than failing.
 
 Copilot's auto-generated name for a session started from this skill is derived
 from the skill itself, so **every** such session ends up called something like
-*"Implement Codespace Tramp"* — identical, and useless for telling one from
+*"Implement ETC"* — identical, and useless for telling one from
 another later. Always replace it.
 
 Renaming is **user-driven**: the agent cannot run `/rename`, and `--name` only
@@ -538,7 +543,7 @@ failures; stop for the operator instead:
 
 ```bash
 # Append ?ref=<branch> for a non-default branch.
-MACHINES=$(/absolute/path/to/skills/codespace-tramp/setup/copilot-gh-retry \
+MACHINES=$(/absolute/path/to/skills/etc/setup/copilot-gh-retry \
   get "/repos/$NWO/codespaces/machines" \
   --jq '
     .machines
@@ -580,7 +585,7 @@ permission prompt: that opts out of the extra repository access the
 devcontainer needs and can break dependency bootstrap. List the configs first:
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-gh-retry \
+/absolute/path/to/skills/etc/setup/copilot-gh-retry \
   get "/repos/$NWO/codespaces/devcontainers?ref=$BRANCH" \
   --jq '.devcontainers[] | "\(.path)\t\(.display_name)"'
 ```
@@ -682,7 +687,7 @@ confirmation. Check its current state first. To start it from `Shutdown`,
 initiate one connection through the pinned transport:
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
+/absolute/path/to/skills/etc/setup/copilot-ghcs ssh "$CS_ID" true
 ```
 
 Do this before waiting for availability; polling alone does not start a
@@ -920,7 +925,7 @@ pre-warming and booting a `Shutdown` Codespace — but never invoke it directly.
 Use the Secretive-only helper so `gh` cannot select or fall back to a disk key:
 
 ```bash
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs ssh "$CS_ID" true
+/absolute/path/to/skills/etc/setup/copilot-ghcs ssh "$CS_ID" true
 ```
 
 For an explicit transfer between the operator's machine and the Codespace, use
@@ -930,11 +935,11 @@ avoid literal quote characters in absolute destinations.
 
 ```bash
 # Absolute remote destination.
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+/absolute/path/to/skills/etc/setup/copilot-ghcs cp "$CS_ID" \
   /local/path/baseline.txt remote:/tmp/baseline.txt
 
 # Relative remote destinations resolve below the remote user's home directory.
-/absolute/path/to/skills/codespace-tramp/setup/copilot-ghcs cp "$CS_ID" \
+/absolute/path/to/skills/etc/setup/copilot-ghcs cp "$CS_ID" \
   /local/path/baseline.txt remote:baseline.txt
 ```
 
@@ -1327,7 +1332,7 @@ Confirm the open draft and exact source/base refs. Check CI without preparing
 an endorsement:
 
 ```sh
-/absolute/path/to/skills/codespace-tramp/setup/copilot-cs-endorse \
+/absolute/path/to/skills/etc/setup/copilot-cs-endorse \
   check-ci --repo "$NWO" --pr "$PR_NUMBER"
 ```
 
@@ -1693,7 +1698,7 @@ Ask the user for the correct commands if none are supplied.
 
   ```bash
   printf '%s' '(copilot-cs-status)' | \
-    /absolute/path/to/skills/codespace-tramp/setup/copilot-emacs-mcp-call
+    /absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call
   ```
 
   The helper performs the MCP initialization handshake, keeps stdin open until
