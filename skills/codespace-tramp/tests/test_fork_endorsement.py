@@ -22,13 +22,18 @@ APPROVAL_CHECK = {
 
 
 class ForkRepositoryTestCase(EndorsementTestCase):
+    hostname = "github.com"
+
     def setUp(self):
         super().setUp()
         self.request.update(version=5, source_repository="contributor/project")
+        if self.hostname != "github.com":
+            self.request.update(hostname=self.hostname,
+                                url=f"https://{self.hostname}/example/project/pull/12")
         self.upstream = self.root / "upstream.git"
         self.git("init", "--quiet", "--bare", "--template=", str(self.upstream))
         self.git("push", "--quiet", str(self.upstream), "main")
-        self.git("remote", "set-url", "origin", "https://github.com/contributor/project.git")
+        self.git("remote", "set-url", "origin", f"https://{self.hostname}/contributor/project.git")
         self.origin_patch.stop()
         real_git = shutil.which("git")
         self.executable("git", f"""
@@ -38,14 +43,14 @@ if arguments and arguments[0] in ("fetch", "push", "ls-remote") and "--get-url" 
     source = {str(self.remote)!r}
     upstream = {str(self.upstream)!r}
     remotes = {{
-        "https://github.com/example/project.git": upstream,
-        "https://github.com/contributor/project.git": source,
+        "https://{self.hostname}/example/project.git": upstream,
+        "https://{self.hostname}/contributor/project.git": source,
     }}
     for item in arguments:
-        if "github.com" in item and item not in remotes:
+        if "://" in item and item not in remotes:
             raise SystemExit("unexpected fixture transport destination")
-    arguments = ["-c", "url." + source + ".insteadOf=https://github.com/contributor/project.git",
-                 "-c", "url." + upstream + ".insteadOf=https://github.com/example/project.git",
+    arguments = ["-c", "url." + source + ".insteadOf=https://{self.hostname}/contributor/project.git",
+                 "-c", "url." + upstream + ".insteadOf=https://{self.hostname}/example/project.git",
                  *arguments]
 os.execv({real_git!r}, ["git", *arguments])
 """)
@@ -65,6 +70,63 @@ os.execv({real_git!r}, ["git", *arguments])
 
     def upstream_refs(self):
         return self.git("--git-dir=" + str(self.upstream), "show-ref")
+
+
+class TenantForkPublicationTests(ForkRepositoryTestCase):
+    hostname = "github.ghe.com"
+
+    def test_tenant_fork_fetch_sign_and_publication_keep_the_planned_host(self):
+        self.request["base"] = self.advance_base()
+        upstream = self.upstream_refs()
+        with mock.patch.object(self.repository, "git", wraps=self.repository.git) as commands:
+            receipt = self.sign()
+            self.repository.push(self.plan_id, self.approve())
+        fetches = [call.args for call in commands.call_args_list if call.args[0] == "fetch"]
+        self.assertEqual(fetches[0][-2:], (
+            "https://github.ghe.com/example/project.git", self.request["base"]))
+        self.assertEqual(self.upstream_refs(), upstream)
+        self.assertEqual(self.remote_head("feature"), self.head)
+        self.assertEqual(self.remote_head("feature-signed"), receipt["head"])
+        self.assertEqual(receipt["plan"]["request"]["hostname"], self.hostname)
+        restored = self.helper.Repository()
+        self.assertEqual(restored.verify(self.plan_id), receipt)
+
+    def test_same_named_repository_on_another_host_cannot_be_an_origin(self):
+        for option in ("url", "pushurl"):
+            with self.subTest(option=option):
+                self.git("config", "remote.origin." + option,
+                         "https://github.com/contributor/project.git")
+                with self.assertRaisesRegex(ValueError, "origin fetch/push URL"):
+                    self.freeze()
+                self.git("config", "remote.origin." + option,
+                         "https://github.ghe.com/contributor/project.git")
+        self.assertFalse(list(self.repository.state.glob("*.plan.json")))
+
+    def test_cross_host_url_rewrites_cannot_change_upstream_fetch_destination(self):
+        self.git("config", "url.https://github.com/example/project.git.insteadOf",
+                 "https://github.ghe.com/example/project.git")
+        with self.assertRaisesRegex(ValueError, "upstream fetch URL"):
+            self.freeze()
+        self.assertFalse(list(self.repository.state.glob("*.plan.json")))
+
+    def test_wrong_request_host_or_url_is_rejected_before_remote_access(self):
+        for field, value in (("hostname", "github.com"),
+                             ("url", "https://github.com/example/project/pull/12")):
+            request = dict(self.request, **{field: value})
+            with self.subTest(field=field), mock.patch.object(self.repository, "remote_refs") as remote:
+                with self.assertRaisesRegex(ValueError, "pull-request URL"):
+                    self.repository.plan(request)
+                remote.assert_not_called()
+
+    def test_changed_origin_host_blocks_restored_signing_and_publication(self):
+        receipt = self.sign()
+        self.git("config", "remote.origin.pushurl", "https://github.com/contributor/project.git")
+        for action in ("sign", "push"):
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(ValueError, "origin fetch/push URL"):
+                    getattr(self.helper.Repository(), action)(self.plan_id, self.approve())
+        self.assertEqual(self.remote_head("feature"), self.head)
+        self.assertEqual(self.repository.verify(self.plan_id), receipt)
 
 
 class ForkPublicationTests(ForkRepositoryTestCase, fixtures.PublicationTests):
@@ -235,7 +297,7 @@ class ForkGitHubTests(GitHubEndorsementTestCase, ForkRepositoryTestCase):
     def test_preparation_uses_upstream_policy_and_source_rewrite_permission(self):
         with mock.patch.object(self.helper, "replacement_allowed", return_value=False) as permission:
             prepared = self.helper.prepare("example/project", 12, str(self.key_file) + ".pub")
-        permission.assert_called_once_with("contributor/project", "feature")
+        permission.assert_called_once_with("contributor/project", "feature", hostname="github.com")
         self.assertEqual(prepared["version"], 5)
         self.assertEqual(prepared["source_repository"], "contributor/project")
         self.assertEqual(prepared["publication_options"], ["replacement"])
@@ -361,7 +423,7 @@ class ForkGitHubTests(GitHubEndorsementTestCase, ForkRepositoryTestCase):
                              ("headRepository", {"nameWithOwner": "other/project"}),
                              ("headRepository", None)):
             with self.subTest(field=field, value=value):
-                def changed(endpoint, method="GET", data=None):
+                def changed(endpoint, method="GET", data=None, *, hostname="github.com"):
                     result = api(endpoint, method, data)
                     if endpoint == "graphql" and "EndorsementBaseCompatibility" in data["query"]:
                         result["data"]["node"][field] = value
@@ -479,7 +541,7 @@ class ApprovalDeferralTests(GitHubEndorsementTestCase):
             "output": {"title": "Awaiting approvals (0/3)"},
         }
 
-    def api(self, endpoint, method="GET", data=None):
+    def api(self, endpoint, method="GET", data=None, *, hostname="github.com"):
         if "/check-runs/" in endpoint:
             self.calls.append((method, endpoint, data))
             if self.failure == (method, endpoint):
@@ -640,7 +702,7 @@ class ApprovalDeferralTests(GitHubEndorsementTestCase):
         self.rules = []
         api = self.api
 
-        def incomplete(endpoint, method="GET", data=None):
+        def incomplete(endpoint, method="GET", data=None, *, hostname="github.com"):
             result = api(endpoint, method, data)
             if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                 node = result["data"]["node"]

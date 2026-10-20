@@ -7,6 +7,19 @@ The helper implements CI, revision and signing guards. CCR interpretation and
 remediation are agent-driven policy in the skill, not a text classifier inside
 the signing helper.
 
+`check-ci` and `prepare` default to `github.com`. For another GitHub host, pass
+the PR URL's hostname explicitly to both commands, for example
+`--hostname github.ghe.com`. Use existing `gh` authentication for that host;
+authentication failure is a blocker, not permission to change credentials or
+try another host. `GH_HOST` does not select the helper's hostname.
+
+The prepared request includes a non-default `hostname`, which is bound into
+the plan and receipt. Later commands recover it from those records, without a
+new hostname override. API reads and mutations, Git remotes, workflow provenance,
+and PR identity must all match that host. Existing records without `hostname`
+retain their original `github.com` scope and digest; never retrofit a tenant
+into an existing plan.
+
 Fork endorsements use version 5. `repository` identifies the upstream PR and
 policy repository; `source_repository` identifies the actual source fork.
 Both identities, branches, and revisions are immutable plan inputs. `origin`

@@ -22,6 +22,46 @@ from test_helpers import HelperTestCase, SETUP
 
 
 class GitHubPaginationTests(HelperTestCase):
+    def test_ci_and_preparation_cli_allow_selecting_a_hostname(self):
+        helper = self.load_script("copilot-cs-endorse")
+        for action in ("check-ci", "prepare"):
+            with self.subTest(action=action), mock.patch.object(
+                    sys, "argv", ["copilot-cs-endorse", action, "--help"]), \
+                    redirect_stdout(io.StringIO()) as output:
+                with self.assertRaises(SystemExit) as exit:
+                    helper.main()
+                self.assertEqual(exit.exception.code, 0)
+                self.assertIn("--hostname", output.getvalue())
+
+    def test_api_and_paginated_reads_pin_the_selected_hostname(self):
+        helper = self.load_script("copilot-cs-endorse")
+        for hostname in ("github.com", "github.ghe.com", "github.example.com"):
+            with self.subTest(hostname=hostname), mock.patch.object(
+                    helper, "run", side_effect=[b'{"login":"fixture"}', b'[[]]']) as command:
+                self.assertEqual(helper.authenticated_operator(hostname=hostname), "fixture")
+                self.assertEqual(helper.github_pages("fixture", hostname=hostname), [])
+                for call in command.call_args_list:
+                    self.assertEqual(call.args[0][:4], ["gh", "api", "--hostname", hostname])
+
+    def test_default_host_is_not_selected_from_the_gh_environment(self):
+        helper = self.load_script("copilot-cs-endorse")
+        with mock.patch.dict(os.environ, {"GH_HOST": "other.ghe.com"}), mock.patch.object(
+                helper, "run", side_effect=[b'{"login":"fixture"}', b'[[]]']) as command:
+            self.assertEqual(helper.authenticated_operator(), "fixture")
+            self.assertEqual(helper.github_pages("fixture"), [])
+        for call in command.call_args_list:
+            self.assertEqual(call.args[0][:4], ["gh", "api", "--hostname", "github.com"])
+
+    def test_invalid_hostnames_fail_before_dispatch(self):
+        helper = self.load_script("copilot-cs-endorse")
+        for hostname in ("", None, "https://github.ghe.com", "github.ghe.com/path",
+                         "github.ghe.com:443", "user@github.ghe.com", "github.ghe.com.",
+                         "GitHub.ghe.com", "-github.ghe.com", "github..ghe.com", "github\n"):
+            with self.subTest(hostname=hostname), mock.patch.object(helper, "run") as command:
+                with self.assertRaisesRegex(ValueError, "hostname"):
+                    helper.github("user", hostname=hostname)
+                command.assert_not_called()
+
     def test_workflow_run_pages_are_complete_and_flattened(self):
         helper = self.load_script("copilot-cs-endorse")
         pages = [{"total_count": 2, "workflow_runs": [{"id": 1}]},
@@ -1535,7 +1575,7 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
         self.addCleanup(api.stop)
         self.addCleanup(pages.stop)
 
-    def pages(self, endpoint, *, field=None):
+    def pages(self, endpoint, *, field=None, hostname="github.com"):
         self.calls.append(("GET-PAGES", endpoint, None))
         if "/rules/branches/" in endpoint:
             return copy.deepcopy(self.rules)
@@ -1553,7 +1593,7 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
             return copy.deepcopy(self.comments)
         raise AssertionError(endpoint)
 
-    def api(self, endpoint, method="GET", data=None):
+    def api(self, endpoint, method="GET", data=None, *, hostname="github.com"):
         self.calls.append((method, endpoint, data))
         if self.failure == (method, endpoint):
             raise RuntimeError("fixture API failure")
@@ -1715,7 +1755,7 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
             self.replacement = copy.deepcopy(self.original)
             self.replacement.update(
                 number=13, node_id="PR_replacement",
-                html_url="https://github.com/example/project/pull/13",
+                html_url=self.original["html_url"].rsplit("/", 1)[0] + "/13",
                 title=data["title"], body=data["body"], requested_reviewers=[], requested_teams=[],
                 labels=[], assignees=[], milestone=None,
             )
@@ -1815,7 +1855,179 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
         return run
 
 
+class HostnameEndorsementTests(GitHubEndorsementTestCase):
+    def setUp(self):
+        super().setUp()
+        self.hostname = "github.ghe.com"
+        self.original["html_url"] = "https://github.ghe.com/example/project/pull/12"
+        self.transport_calls = []
+        transport = self.load_script("copilot-cs-endorse")
+        for patch in (
+            mock.patch.object(transport, "run", side_effect=self.gh),
+            mock.patch.object(self.helper, "github", transport.github),
+            mock.patch.object(self.helper, "github_pages", transport.github_pages),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def gh(self, arguments, *, data=None):
+        self.assertEqual(arguments[:4], ["gh", "api", "--hostname", self.hostname])
+        self.transport_calls.append(arguments)
+        if "--paginate" in arguments:
+            response = [self.pages(arguments[-1])]
+        else:
+            method, endpoint = arguments[5:7]
+            payload = json.loads(data) if data is not None else None
+            if "/rules/branches/" in endpoint:
+                response = self.rules
+            elif "/branches/" in endpoint:
+                response = {"protected": False}
+            else:
+                response = self.api(endpoint, method, payload)
+        return json.dumps(response).encode()
+
+    def cli(self, *arguments):
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), mock.patch.object(
+                sys, "argv", ["copilot-cs-endorse", *arguments]), redirect_stdout(
+                io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
+            status = self.helper.main()
+        self.assertEqual(status, 0, errors.getvalue())
+        return json.loads(output.getvalue())
+
+    def test_selected_tenant_ci_cli_routes_all_rest_graphql_and_policy_reads(self):
+        self.add_required_workflow()
+        self.workflow_runs = json.loads(json.dumps(self.workflow_runs).replace(
+            "https://api.github.com/", "https://api.github.ghe.com/"))
+        self.workflow_provenance = json.loads(json.dumps(self.workflow_provenance).replace(
+            "https://github.com/", "https://github.ghe.com/"))
+        result = self.cli("check-ci", "--repo", "example/project", "--pr", "12",
+                          "--hostname", self.hostname)
+        self.assertEqual(result["hostname"], self.hostname)
+        self.assertEqual(result["url"], self.original["html_url"])
+        self.assertEqual(result["required_ci"], "passed")
+        self.assertTrue(any("graphql" in call for call in self.transport_calls))
+        self.assertTrue(any("--paginate" in call for call in self.transport_calls))
+        self.assert_read_only_preparation()
+
+    def test_enterprise_server_workflow_urls_use_its_rest_api_base(self):
+        self.hostname = "github.example.com"
+        self.original["html_url"] = "https://github.example.com/example/project/pull/12"
+        self.add_required_workflow()
+        self.workflow_runs = json.loads(json.dumps(self.workflow_runs).replace(
+            "https://api.github.com/", "https://github.example.com/api/v3/"))
+        self.workflow_provenance = json.loads(json.dumps(self.workflow_provenance).replace(
+            "https://github.com/", "https://github.example.com/"))
+        result = self.helper.check_ci("example/project", 12, hostname=self.hostname)
+        self.assertEqual(result["hostname"], self.hostname)
+        self.workflow_runs[0]["workflow_url"] = (
+            "https://api.github.com/repos/example/project/actions/required_workflows/456")
+        with self.assertRaisesRegex(ValueError, "missing required workflow"):
+            self.helper.check_ci("example/project", 12, hostname=self.hostname)
+
+    def endorse(self, publication):
+        self.request = self.cli(
+            "prepare", "--repo", "example/project", "--pr", "12", "--hostname", self.hostname,
+            "--key", str(self.key_file) + ".pub",
+            "--committer-name", "Fixture Author", "--committer-email", "fixture@example.invalid")
+        self.assertEqual(self.request["hostname"], self.hostname)
+        self.git("update-ref", "-d", "refs/heads/feature-signed")
+        self.freeze()
+        plan_file = self.repository.state / (self.plan_id + ".plan.json")
+        record = json.loads(plan_file.read_text())
+        self.assertEqual(record["request"], self.request)
+        self.assertEqual(self.helper.digest(record), self.plan_id)
+        envelope = dict(record, plan_id=self.plan_id)
+        await_file = self.root / "planning-result.json"
+        await_file.write_text(json.dumps(envelope))
+        awaiting = self.cli("await-attestation", "--plan", str(await_file))
+        self.assertTrue(awaiting["awaiting_attestation"])
+        self.receipt = self.repository.sign(self.plan_id, self.approve(publication))
+        self.assertEqual(self.receipt["plan"]["request"], self.request)
+        receipt_file = self.repository.state / (self.plan_id + ".receipt.json")
+        completed = self.cli("complete-attestation", "--receipt", str(receipt_file),
+                             "--approve-plan", self.approve(publication))
+        self.assertFalse(completed["awaiting_attestation"])
+        self.repository.push(self.plan_id, self.approve(publication))
+        self.commits.update({oid: self.commit_data(oid) for oid in self.receipt["mapping"].values()})
+        if publication == "replace":
+            self.original["head"]["sha"] = self.receipt["head"]
+        finished = self.cli("finish", "--receipt", str(receipt_file),
+                            "--approve-plan", self.approve(publication))
+        self.assertTrue(finished["ready_for_review"])
+        self.assertEqual(finished["head"], self.receipt["head"])
+        self.assertEqual(plan_file.read_text(), self.helper.canonical(record))
+        self.assertEqual(json.loads(receipt_file.read_text()), self.receipt)
+        return finished
+
+    def test_tenant_replacement_restores_host_from_plan_and_receipt(self):
+        result = self.endorse("replacement")
+        self.assertEqual(result["url"], "https://github.ghe.com/example/project/pull/13")
+        self.assertIn("https://github.ghe.com/example/other/issues/23", self.replacement["body"])
+        self.assertIn("https://github.ghe.com/example/project/pull/45", self.replacement["body"])
+        self.assertEqual(self.original["state"], "closed")
+
+    def test_tenant_in_place_finish_restores_host_without_cli_override(self):
+        result = self.endorse("replace")
+        self.assertEqual(result["url"], self.original["html_url"])
+        self.assertIsNone(self.replacement)
+
+    def test_wrong_host_repository_or_pr_response_stops_preparation(self):
+        for url in ("https://github.com/example/project/pull/12",
+                    "https://github.ghe.com/other/project/pull/12",
+                    "https://github.ghe.com/example/project/pull/13"):
+            with self.subTest(url=url):
+                self.original["html_url"] = url
+                self.calls.clear()
+                with self.assertRaisesRegex(ValueError, "identity changed"):
+                    self.prepare(hostname=self.hostname)
+                self.assertEqual(len(self.calls), 1)
+
+    def test_unknown_authentication_and_changed_operator_have_no_fallback(self):
+        self.failure = ("GET", "repos/example/project/pulls/12")
+        with self.assertRaisesRegex(RuntimeError, "fixture API failure"):
+            self.prepare(hostname=self.hostname)
+        self.assertEqual(len(self.transport_calls), 1)
+        self.failure = None
+        self.operator_login = ""
+        with self.assertRaisesRegex(ValueError, "authenticated operator"):
+            self.prepare(hostname=self.hostname)
+        self.operator_login = "fixture"
+        self.request = self.prepare(hostname=self.hostname)
+        self.git("update-ref", "-d", "refs/heads/feature-signed")
+        self.freeze()
+        self.operator_login = "different-operator"
+        with self.assertRaisesRegex(ValueError, "differs from the planned attestor"):
+            self.helper.await_attestation(self.plan)
+        self.assert_read_only_preparation()
+
+    def test_changed_receipt_host_or_legacy_host_is_rejected_before_dispatch(self):
+        for hostname in (self.hostname, "other.ghe.com", None):
+            receipt = copy.deepcopy(self.receipt)
+            if hostname is not None:
+                receipt["plan"]["request"]["hostname"] = hostname
+            else:
+                receipt["plan"]["request"]["url"] = self.original["html_url"]
+            with self.subTest(hostname=hostname):
+                with self.assertRaisesRegex(ValueError, "digest"):
+                    self.helper.complete_attestation(receipt, self.approve())
+        self.assertEqual(self.transport_calls, [])
+
+
 class GitHubEndorsementTests(GitHubEndorsementTestCase):
+    def test_default_preparation_and_legacy_records_keep_their_original_identity(self):
+        self.assertEqual(self.prepare(), self.request)
+        self.assertEqual(self.prepare(hostname="github.com"), self.request)
+        plan_file = self.repository.state / (self.plan_id + ".plan.json")
+        receipt_file = self.repository.state / (self.plan_id + ".receipt.json")
+        plan_bytes, receipt_bytes = plan_file.read_bytes(), receipt_file.read_bytes()
+        self.assertNotIn("hostname", self.request)
+        self.helper.await_attestation(copy.deepcopy(self.plan))
+        self.helper.complete_attestation(copy.deepcopy(self.receipt), self.approve())
+        self.finish()
+        self.assertEqual(plan_file.read_bytes(), plan_bytes)
+        self.assertEqual(receipt_file.read_bytes(), receipt_bytes)
+        self.assertEqual(self.helper.digest(json.loads(plan_bytes)), self.plan_id)
+
     def test_prepare_verifies_required_workflow_source_and_exact_head(self):
         self.add_required_workflow()
         self.add_required_workflow(run_id=101, path=".github/workflows/other.yml")
@@ -1864,7 +2076,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             {"path": ".github/workflows/other.yml"},
         ):
             with self.subTest(change=change):
-                def api(endpoint, method="GET", data=None):
+                def api(endpoint, method="GET", data=None, *, hostname="github.com"):
                     result = self.api(endpoint, method, data)
                     if endpoint == "repos/example/project/actions/runs/100":
                         result.update(change)
@@ -2147,7 +2359,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                 "workflowRun"].update(file=None),
         ):
             with self.subTest(change=change):
-                def api(endpoint, method="GET", data=None):
+                def api(endpoint, method="GET", data=None, *, hostname="github.com"):
                     result = self.api(endpoint, method, data)
                     if endpoint == "graphql" and "EndorsementCommitWorkflows" in data["query"]:
                         change(result)
@@ -2157,7 +2369,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                         self.prepare()
         for changed_read in (1, 2):
             reads = 0
-            def rerun(endpoint, method="GET", data=None):
+            def rerun(endpoint, method="GET", data=None, *, hostname="github.com"):
                 nonlocal reads
                 result = self.api(endpoint, method, data)
                 if endpoint == "repos/example/project/actions/runs/100":
@@ -2350,7 +2562,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                 if not awaiting:
                     self.original["assignees"].append({"login": "fixture"})
 
-                def api(endpoint, method="GET", data=None):
+                def api(endpoint, method="GET", data=None, *, hostname="github.com"):
                     response = self.api(endpoint, method, data)
                     if endpoint.endswith("/assignees"):
                         response["assignees"] = [{"login": "maintainer"}]
@@ -2425,7 +2637,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
     def test_assignment_permission_api_errors_do_not_skip_the_gate(self):
         for failure in (RuntimeError("HTTP 403"), RuntimeError("HTTP 404"),
                         subprocess.TimeoutExpired("gh", 120)):
-            def api(endpoint, method="GET", data=None):
+            def api(endpoint, method="GET", data=None, *, hostname="github.com"):
                 if endpoint == "graphql" and "EndorsementAssignmentPermission" in data["query"]:
                     raise failure
                 return self.api(endpoint, method, data)
@@ -2495,7 +2707,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         self.assignment_permission = False
         self.original["assignees"].append({"login": "fixture"})
 
-        def api(endpoint, method="GET", data=None):
+        def api(endpoint, method="GET", data=None, *, hostname="github.com"):
             response = self.api(endpoint, method, data)
             if (endpoint == "graphql" and "EndorsementAssignmentPermission" in data["query"]
                     and data["variables"]["id"] == "PR_replacement"):
@@ -2767,7 +2979,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
     def test_unreadable_or_incomplete_ci_never_causes_a_draft_rollback(self):
         self.finish()
 
-        def api(endpoint, method="GET", data=None):
+        def api(endpoint, method="GET", data=None, *, hostname="github.com"):
             if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                 raise RuntimeError("fixture API failure")
             return self.api(endpoint, method, data)
@@ -2987,7 +3199,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         merge = self.prepare_base_merge()
         original_api = self.api
 
-        def api(endpoint, method="GET", data=None):
+        def api(endpoint, method="GET", data=None, *, hostname="github.com"):
             if endpoint == "repos/example/project":
                 return {"default_branch": "other"}
             return original_api(endpoint, method, data)
@@ -3237,7 +3449,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             self.helper.prepare("example/project", 12, str(self.key_file) + ".pub")
 
     def test_unreadable_ci_or_policy_never_falls_back_to_readiness(self):
-        def api(endpoint, method="GET", data=None):
+        def api(endpoint, method="GET", data=None, *, hostname="github.com"):
             if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                 raise RuntimeError("fixture API failure")
             return self.api(endpoint, method, data)
@@ -3264,7 +3476,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                 "statusCheckRollup"]["contexts"].update(nodes=None),
         ):
             with self.subTest(invalid=invalid):
-                def api(endpoint, method="GET", data=None):
+                def api(endpoint, method="GET", data=None, *, hostname="github.com"):
                     response = self.api(endpoint, method, data)
                     if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                         invalid(response)
@@ -3294,7 +3506,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             "type": "required_status_checks",
             "parameters": {"required_status_checks": [{"context": "ci", "integration_id": 123}]},
         }]
-        def api(endpoint, method="GET", data=None):
+        def api(endpoint, method="GET", data=None, *, hostname="github.com"):
             response = self.api(endpoint, method, data)
             if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                 response["data"]["node"]["baseRef"]["branchProtectionRule"] = None
@@ -3407,7 +3619,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             dict(comparison, merge_base_commit={"sha": "invalid"}),
         ):
             with self.subTest(response=response):
-                def incomplete(endpoint, method="GET", data=None):
+                def incomplete(endpoint, method="GET", data=None, *, hostname="github.com"):
                     result = self.api(endpoint, method, data)
                     return response if "/compare/" in endpoint else result
 
@@ -3434,7 +3646,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             lambda response: response["data"]["node"].update(state="CLOSED"),
         ):
             with self.subTest(change=change):
-                def corrupt(endpoint, method="GET", data=None):
+                def corrupt(endpoint, method="GET", data=None, *, hostname="github.com"):
                     response = self.api(endpoint, method, data)
                     if endpoint == "graphql" and "EndorsementBaseCompatibility" in data["query"]:
                         change(response)
@@ -3450,7 +3662,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         frozen = copy.deepcopy(self.plan)
         advanced = False
 
-        def advance_after_comparison(endpoint, method="GET", data=None):
+        def advance_after_comparison(endpoint, method="GET", data=None, *, hostname="github.com"):
             nonlocal advanced
             response = self.api(endpoint, method, data)
             if "/compare/" in endpoint and not advanced:
@@ -3782,7 +3994,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         self.required_contexts = []
         api = self.api
 
-        def null_rollup(endpoint, method="GET", data=None):
+        def null_rollup(endpoint, method="GET", data=None, *, hostname="github.com"):
             result = api(endpoint, method, data)
             if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                 result["data"]["node"]["commits"]["nodes"][0]["commit"]["statusCheckRollup"] = None
@@ -3802,7 +4014,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         api = self.api
         for null_rollup in (False, True):
             with self.subTest(null_rollup=null_rollup):
-                def empty_classic_policy(endpoint, method="GET", data=None):
+                def empty_classic_policy(endpoint, method="GET", data=None, *, hostname="github.com"):
                     result = api(endpoint, method, data)
                     if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
                         node = result["data"]["node"]
@@ -3823,7 +4035,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         self.check_pages = [[], []]
         api = self.api
 
-        def disappearing_rollup(endpoint, method="GET", data=None):
+        def disappearing_rollup(endpoint, method="GET", data=None, *, hostname="github.com"):
             result = api(endpoint, method, data)
             if (endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]
                     and data["variables"]["cursor"] is not None):
@@ -4135,7 +4347,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         ]
         for response in responses:
             with self.subTest(response=response):
-                def api(path, method="GET", data=None):
+                def api(path, method="GET", data=None, *, hostname="github.com"):
                     return response if path == endpoint else self.api(path, method, data)
 
                 with mock.patch.object(self.helper, "github", side_effect=api), mock.patch.object(
@@ -4173,8 +4385,8 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                 self.assertIn("rewrite permission is uncertain", errors.getvalue())
                 self.assertIn("invalid branch-protection response", errors.getvalue())
                 self.assertEqual(api.call_args_list, [
-                    mock.call("repos/example/project/rules/branches/feature"),
-                    mock.call("repos/example/project/branches/feature"),
+                    mock.call("repos/example/project/rules/branches/feature", hostname="github.com"),
+                    mock.call("repos/example/project/branches/feature", hostname="github.com"),
                 ])
 
     def test_explicitly_unprotected_branch_offers_in_place_publication(self):
@@ -4183,8 +4395,8 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         ]) as api:
             self.assertTrue(self.helper.replacement_allowed("example/project", "feature"))
         self.assertEqual(api.call_args_list, [
-            mock.call("repos/example/project/rules/branches/feature"),
-            mock.call("repos/example/project/branches/feature"),
+            mock.call("repos/example/project/rules/branches/feature", hostname="github.com"),
+            mock.call("repos/example/project/branches/feature", hostname="github.com"),
         ])
 
     def test_rule_and_branch_protection_checks_are_both_required(self):
@@ -4201,8 +4413,8 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         ]) as api:
             self.assertTrue(self.helper.replacement_allowed("example/project", "owner/feature"))
         self.assertEqual(api.call_args_list, [
-            mock.call("repos/example/project/rules/branches/owner%2Ffeature"),
-            mock.call("repos/example/project/branches/owner%2Ffeature"),
+            mock.call("repos/example/project/rules/branches/owner%2Ffeature", hostname="github.com"),
+            mock.call("repos/example/project/branches/owner%2Ffeature", hostname="github.com"),
         ])
 
     def test_rewrite_rule_blocks_publication_even_without_classic_protection(self):
@@ -4211,7 +4423,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
             {"protected": True, "protection": {"enabled": False}},
         ]) as api:
             self.assertFalse(self.helper.replacement_allowed("example/project", "feature"))
-        api.assert_called_once_with("repos/example/project/rules/branches/feature")
+        api.assert_called_once_with("repos/example/project/rules/branches/feature", hostname="github.com")
 
     def test_missing_classic_summary_does_not_treat_every_404_as_unprotected(self):
         for summary in ({}, {"protection": None}, {"protection": {"enabled": None}}):

@@ -97,7 +97,7 @@ For delegated implementation, the parent owns [pre-commit review](SKILL.md#gate-
 
 The target GitHub repository must permit Codespaces and expose at least one machine type and development-container configuration. Semantic Ruby support requires Sorbet or Ruby LSP in the Codespace; semantic Go support requires gopls.
 
-Endorsement additionally requires Git, Python 3 with its full standard library, and OpenSSH's `ssh-keygen -Y sign`/`verify` locally and in the Codespace. A minimal Python package can report a version while lacking modules such as `json`; repair the runtime inside the Codespace if imports fail. Its initial implementation supports same-repository github.com draft PRs with complete history. Fork PRs, signed merge tags, and Git grafts/replacement objects stop with explicit errors. If repository rules prohibit unsigned draft branches, obtain a policy decision rather than signing agent work prematurely.
+Endorsement additionally requires Git, Python 3 with its full standard library, and OpenSSH's `ssh-keygen -Y sign`/`verify` locally and in the Codespace. A minimal Python package can report a version while lacking modules such as `json`; repair the runtime inside the Codespace if imports fail. Same-repository and fork draft PRs require complete history. For a GitHub Enterprise PR, pass its host explicitly with `--hostname` to `check-ci` and `prepare`; subsequent commands use the hostname frozen in the plan. The default remains `github.com`, using the operator's existing `gh` authentication. Signed merge tags and Git grafts/replacement objects stop with explicit errors. If repository rules prohibit unsigned draft branches, obtain a policy decision rather than signing agent work prematurely.
 
 ### Secretive key roles
 

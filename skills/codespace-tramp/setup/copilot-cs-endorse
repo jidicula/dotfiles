@@ -73,16 +73,39 @@ def run(arguments, *, data=None, env=None, timeout=120, echo=False):
     return result.stdout or b""
 
 
-def github(endpoint, method="GET", data=None):
-    arguments = ["gh", "api", "--hostname", "github.com", "--method", method, endpoint]
+def validate_hostname(hostname):
+    require(isinstance(hostname, str) and len(hostname) <= 253
+            and re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", hostname)
+            and "." in hostname
+            and all(len(label) <= 63 and re.fullmatch(
+                r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) for label in hostname.split(".")),
+            "invalid hostname; use a lowercase DNS hostname without a scheme, port, or path")
+    return hostname
+
+
+def request_hostname(request):
+    # Missing host is the original github.com scope; never mutate persisted records.
+    return validate_hostname(request.get("hostname", "github.com"))
+
+
+def api_url(hostname, endpoint):
+    validate_hostname(hostname)
+    base = (f"https://api.{hostname}" if hostname == "github.com" or hostname.endswith(".ghe.com")
+            else f"https://{hostname}/api/v3")
+    return base + "/" + endpoint
+
+
+def github(endpoint, method="GET", data=None, *, hostname="github.com"):
+    arguments = ["gh", "api", "--hostname", validate_hostname(hostname),
+                 "--method", method, endpoint]
     if data is not None:
         arguments += ["--input", "-"]
     return json.loads(run(arguments, data=canonical(data).encode() if data is not None else None))
 
 
-def github_pages(endpoint, *, field=None):
+def github_pages(endpoint, *, field=None, hostname="github.com"):
     pages = json.loads(run([
-        "gh", "api", "--hostname", "github.com", "--paginate", "--slurp", endpoint,
+        "gh", "api", "--hostname", validate_hostname(hostname), "--paginate", "--slurp", endpoint,
     ]))
     require(isinstance(pages, list) and pages, "invalid paginated GitHub response")
     if field is not None:
@@ -97,8 +120,8 @@ def github_pages(endpoint, *, field=None):
     return [item for page in pages for item in page]
 
 
-def authenticated_operator():
-    operator = github("user")
+def authenticated_operator(*, hostname="github.com"):
+    operator = github("user", hostname=hostname)
     require(isinstance(operator, dict) and isinstance(operator.get("login"), str)
             and re.fullmatch(r"[A-Za-z0-9-]+", operator["login"]),
             "cannot identify the authenticated operator")
@@ -131,6 +154,7 @@ def validate_ci_deferral(deferral, *, frozen=True):
 
 def validate_request(request):
     require(isinstance(request, dict), "expected an endorsement request object")
+    hostname = request_hostname(request)
     require(type(request.get("version")) is int and request["version"] in (1, 2, 3, 4, 5),
             "unsupported endorsement request version")
     if request["version"] == 4:
@@ -160,7 +184,7 @@ def validate_request(request):
                 and request["source_repository"].casefold() != request["repository"].casefold(),
                 "source_repository must identify the actual, distinct source fork")
     require(type(request.get("pr")) is int and request["pr"] > 0, "invalid pull request")
-    require(request.get("url") == f"https://github.com/{request['repository']}/pull/{request['pr']}",
+    require(request.get("url") == f"https://{hostname}/{request['repository']}/pull/{request['pr']}",
             "pull-request URL does not match the repository")
     for field in ("head", "base"):
         require(isinstance(request.get(field), str) and OID.fullmatch(request[field]),
@@ -199,8 +223,15 @@ def validate_request(request):
     require(request.get("fingerprint") == fingerprint(request["key"]), "signing fingerprint mismatch")
 
 
-def pull_request(repository, number, *, require_draft=True, allow_fork=False):
-    pr = github(f"repos/{repository}/pulls/{number}")
+def pull_request(repository, number, *, require_draft=True, allow_fork=False, hostname="github.com"):
+    validate_hostname(hostname)
+    require(isinstance(repository, str)
+            and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository), "invalid repository")
+    require(type(number) is int and number > 0, "invalid pull request")
+    pr = github(f"repos/{repository}/pulls/{number}", hostname=hostname)
+    require(isinstance(pr, dict) and pr.get("number") == number
+            and pr.get("html_url") == f"https://{hostname}/{repository}/pull/{number}",
+            "pull request hostname, repository, or identity changed")
     head_repository = pr["head"]["repo"]
     require(isinstance(head_repository, dict)
             and isinstance(head_repository.get("full_name"), str)
@@ -218,10 +249,9 @@ def pull_request(repository, number, *, require_draft=True, allow_fork=False):
 
 def planned_pull_request(request, number, *, require_draft=True):
     pr = pull_request(request["repository"], number, require_draft=require_draft,
-                      allow_fork=source_repository(request) != request["repository"])
-    require(pr.get("number") == number
-            and pr.get("html_url") == f"https://github.com/{request['repository']}/pull/{number}"
-            and pr["head"]["repo"]["full_name"] == source_repository(request),
+                      allow_fork=source_repository(request) != request["repository"],
+                      hostname=request_hostname(request))
+    require(pr["head"]["repo"]["full_name"] == source_repository(request),
             "pull request repository or identity changed")
     return pr
 
@@ -235,9 +265,9 @@ def confirm_graphql_repositories(request, pr):
                 "PR repository identity changed or is unavailable")
 
 
-def branch_head(repository, branch):
+def branch_head(repository, branch, *, hostname="github.com"):
     """Read the live tip; a PR's base.sha may be a historical snapshot."""
-    ref = github(f"repos/{repository}/git/ref/heads/{quote(branch, safe='')}")
+    ref = github(f"repos/{repository}/git/ref/heads/{quote(branch, safe='')}", hostname=hostname)
     require(isinstance(ref, dict) and ref.get("ref") == "refs/heads/" + branch
             and isinstance(ref.get("object"), dict), "invalid live branch reference")
     commit = ref["object"]
@@ -256,7 +286,8 @@ def require_base_compatibility(request, base, mergeable):
                     "upstream base mergeability is unconfirmed; retry the same plan")
         return
     comparison = github(
-        f"repos/{request['repository']}/compare/{request['base']}...{base}?per_page=1")
+        f"repos/{request['repository']}/compare/{request['base']}...{base}?per_page=1",
+        hostname=request_hostname(request))
     require(isinstance(comparison, dict)
             and comparison.get("status") in ("ahead", "behind", "diverged", "identical")
             and isinstance(comparison.get("base_commit"), dict)
@@ -277,6 +308,7 @@ def require_base_compatibility(request, base, mergeable):
 def confirm_base_compatibility(request, pr):
     """Check GitHub's mergeability for the exact head and current base, without mutation."""
     source_repository = request.get("source_repository", request["repository"])
+    hostname = request_hostname(request)
     query = """
         query EndorsementBaseCompatibility($id: ID!) {
           node(id: $id) {
@@ -290,12 +322,12 @@ def confirm_base_compatibility(request, pr):
         }
     """
     for _ in range(3):
-        if (branch_head(request["repository"], request["base_branch"]) == request["base"]
+        if (branch_head(request["repository"], request["base_branch"], hostname=hostname) == request["base"]
                 and source_repository == request["repository"]):
             return
         response = github("graphql", "POST", {
             "query": query, "variables": {"id": pr["node_id"]},
-        })
+        }, hostname=hostname)
         require(isinstance(response, dict) and not response.get("errors")
                 and isinstance(response.get("data"), dict),
                 "GitHub could not confirm base mergeability; retain the same plan")
@@ -311,24 +343,24 @@ def confirm_base_compatibility(request, pr):
         confirm_graphql_repositories(request, current)
         base = current["baseRef"]["target"].get("oid")
         require_base_compatibility(request, base, current.get("mergeable"))
-        if branch_head(request["repository"], request["base_branch"]) == base:
-            require(branch_head(source_repository, pr["head"]["ref"]) == pr["head"]["sha"],
+        if branch_head(request["repository"], request["base_branch"], hostname=hostname) == base:
+            require(branch_head(source_repository, pr["head"]["ref"], hostname=hostname) == pr["head"]["sha"],
                     "PR head branch changed; quality gate not confirmed")
             return
     raise ValueError("base kept advancing during mergeability checks; retry the same plan")
 
 
-def replacement_allowed(repository, branch):
+def replacement_allowed(repository, branch, *, hostname="github.com"):
     """Return false on prohibited or uncertain history replacement."""
     path = quote(branch, safe="")
     try:
-        rules = github(f"repos/{repository}/rules/branches/{path}")
+        rules = github(f"repos/{repository}/rules/branches/{path}", hostname=hostname)
         require(isinstance(rules, list) and all(
             isinstance(rule, dict) and isinstance(rule.get("type"), str) for rule in rules),
             "invalid branch-rule response")
         if any(rule.get("type") == "non_fast_forward" for rule in rules):
             return False
-        branch_info = github(f"repos/{repository}/branches/{path}")
+        branch_info = github(f"repos/{repository}/branches/{path}", hostname=hostname)
         require(isinstance(branch_info, dict)
                 and isinstance(branch_info.get("protected"), bool),
                 "invalid branch-protection response")
@@ -337,7 +369,7 @@ def replacement_allowed(repository, branch):
         classic_disabled = isinstance(summary, dict) and summary.get("enabled") is False
         if branch_info["protected"] is False or classic_disabled:
             return True
-        protection = github(f"repos/{repository}/branches/{path}/protection")
+        protection = github(f"repos/{repository}/branches/{path}/protection", hostname=hostname)
         return protection.get("allow_force_pushes", {}).get("enabled") is True
     except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         print(f"[copilot-cs-endorse] rewrite permission is uncertain; "
@@ -347,11 +379,11 @@ def replacement_allowed(repository, branch):
 
 
 def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
-             defer_collaborator_approvals=None):
+             defer_collaborator_approvals=None, hostname="github.com"):
     """Check an unsigned draft without starting endorsement preparation."""
     require(not (allow_no_required_ci and defer_collaborator_approvals is not None),
             "collaborator approvals and absent-CI exceptions are independent and cannot be combined")
-    pr = pull_request(repository, number, allow_fork=allow_fork)
+    pr = pull_request(repository, number, allow_fork=allow_fork, hostname=hostname)
     require(pr["state"] == "open", "the original draft PR is not open")
     source = pr["head"]["ref"]
     base_branch = pr["base"]["ref"]
@@ -359,8 +391,10 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
         "repository": repository, "pr": number, "url": pr["html_url"],
         "source_branch": source,
         "base_branch": base_branch, "head": pr["head"]["sha"],
-        "base": branch_head(repository, base_branch),
+        "base": branch_head(repository, base_branch, hostname=hostname),
     }
+    if hostname != "github.com":
+        request["hostname"] = hostname
     if pr["head"]["repo"]["full_name"] != repository:
         request["source_repository"] = pr["head"]["repo"]["full_name"]
     if allow_no_required_ci:
@@ -384,9 +418,9 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
 
 
 def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=(),
-            allow_no_required_ci=False, defer_collaborator_approvals=None):
+            allow_no_required_ci=False, defer_collaborator_approvals=None, hostname="github.com"):
     request = check_ci(repository, number, allow_no_required_ci=allow_no_required_ci,
-                       defer_collaborator_approvals=defer_collaborator_approvals)
+                       defer_collaborator_approvals=defer_collaborator_approvals, hostname=hostname)
     required_ci = request.pop("required_ci", None)
     require(not allow_no_required_ci or required_ci == "not_configured",
             "required CI is configured or reported; prepare without --allow-no-required-ci")
@@ -397,8 +431,8 @@ def prepare(repository, number, key_path, *, committer=None, preserve_base_merge
                  else 4 if allow_no_required_ci else 3 if preserve_base_merges else 2),
         target_branch=source + "-signed",
         publication_options=["replacement"] + (
-            ["replace"] if replacement_allowed(source_repository(request), source) else []),
-        key=key, fingerprint=fingerprint(key), attestor=authenticated_operator(),
+            ["replace"] if replacement_allowed(source_repository(request), source, hostname=hostname) else []),
+        key=key, fingerprint=fingerprint(key), attestor=authenticated_operator(hostname=hostname),
     )
     if committer is not None:
         request["committer"] = committer
@@ -406,16 +440,17 @@ def prepare(repository, number, key_path, *, committer=None, preserve_base_merge
         request["preserve_base_merges"] = list(preserve_base_merges)
     validate_request(request)
     if preserve_base_merges:
-        metadata = github(f"repos/{repository}")
+        metadata = github(f"repos/{repository}", hostname=hostname)
         require(isinstance(metadata, dict) and metadata.get("default_branch") == request["base_branch"],
                 "base-merge preservation requires the repository's default branch")
         for oid in request["preserve_base_merges"]:
             verify_github_base_merge(
-                request, oid, github(f"repos/{source_repository(request)}/git/commits/{oid}"))
+                request, oid, github(f"repos/{source_repository(request)}/git/commits/{oid}",
+                                     hostname=hostname))
         confirm_ci_revision(request, number, request["head"], source, require_draft=True)
     if committer is not None:
         keys = github_pages("users/" + quote(request["attestor"], safe="")
-                            + "/ssh_signing_keys?per_page=100")
+                            + "/ssh_signing_keys?per_page=100", hostname=hostname)
         require(any(public_key(item["key"]) == key for item in keys),
                 "the operator has not registered this SSH signing key")
     return request
@@ -445,11 +480,12 @@ class Repository:
 
     def validate_origin(self, request):
         expected = source_repository(request).lower()
+        hostname = re.escape(request_hostname(request))
         for options in (("--all",), ("--push", "--all")):
             urls = self.git("remote", "get-url", *options, "origin").decode().splitlines()
             require(len(urls) == 1, "origin must have exactly one fetch and one push URL")
             match = re.fullmatch(
-                r"(?:https://github\.com/|git@github\.com:)(.+?)(?:\.git)?/?", urls[0])
+                rf"(?:https://{hostname}/|git@{hostname}:)(.+?)(?:\.git)?/?", urls[0])
             require(match and match[1].lower() == expected,
                     "origin fetch/push URL does not match the reviewed GitHub repository")
         settings = self.git("config", "--get-regexp", r"^remote\.origin\.")
@@ -469,10 +505,11 @@ class Repository:
     def base_remote(self, request):
         if source_repository(request) == request["repository"]:
             return "origin"
-        remote = f"https://github.com/{request['repository']}.git"
+        hostname = request_hostname(request)
+        remote = f"https://{hostname}/{request['repository']}.git"
         resolved = self.git("ls-remote", "--get-url", remote).decode().strip()
         match = re.fullmatch(
-            r"(?:https://github\.com/|git@github\.com:)(.+?)(?:\.git)?/?", resolved)
+            rf"(?:https://{re.escape(hostname)}/|git@{re.escape(hostname)}:)(.+?)(?:\.git)?/?", resolved)
         require(match and match[1].lower() == request["repository"].lower(),
                 "upstream fetch URL does not match the reviewed GitHub repository")
         return remote
@@ -906,7 +943,8 @@ def verify_github_base_merge(request, oid, commit):
     parent = commit["parents"][1]["sha"]
     if parent != request["base"]:
         comparison = github(
-            f"repos/{request['repository']}/compare/{parent}...{request['base']}?per_page=1")
+            f"repos/{request['repository']}/compare/{parent}...{request['base']}?per_page=1",
+            hostname=request_hostname(request))
         require(isinstance(comparison, dict) and comparison.get("status") == "ahead"
                 and isinstance(comparison.get("base_commit"), dict)
                 and comparison["base_commit"].get("sha") == parent
@@ -987,7 +1025,7 @@ def assignee_logins(pr):
     return {user["login"].casefold() for user in pr["assignees"]}
 
 
-def attestation_assignment_scope(pr, attestor):
+def attestation_assignment_scope(pr, attestor, *, hostname="github.com"):
     response = github("graphql", "POST", {
         "query": """
             query EndorsementAssignmentPermission($id: ID!) {
@@ -998,7 +1036,7 @@ def attestation_assignment_scope(pr, attestor):
             }
         """,
         "variables": {"id": pr["node_id"]},
-    })
+    }, hostname=hostname)
     message = f"PR assignment permission is unconfirmed for {pr['html_url']}"
     require(isinstance(response, dict) and not response.get("errors")
             and isinstance(response.get("data"), dict), message)
@@ -1022,7 +1060,7 @@ def confirm_attestation_cleared(request, pr, message):
     if attestor is None:
         return {}
     assignees = assignee_logins(pr)
-    scope = attestation_assignment_scope(pr, attestor)
+    scope = attestation_assignment_scope(pr, attestor, hostname=request_hostname(request))
     require(scope == "skipped_no_permission" or attestor.casefold() not in assignees,
             message)
     return {"assignment_scope": scope}
@@ -1033,7 +1071,8 @@ def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=Fal
     """Track the planned attestor when permitted, with revision readback."""
     login = request.get("attestor")
     require(login, "plan has no attestor; prepare a new plan before tracking attestation")
-    require(authenticated_operator().casefold() == login.casefold(),
+    hostname = request_hostname(request)
+    require(authenticated_operator(hostname=hostname).casefold() == login.casefold(),
             "authenticated operator differs from the planned attestor")
     expected = head if head is not None else request["head"]
 
@@ -1044,7 +1083,7 @@ def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=Fal
         )
 
     pr = confirm()
-    scope = attestation_assignment_scope(pr, login)
+    scope = attestation_assignment_scope(pr, login, hostname=hostname)
     pr = confirm()
     before = assignee_logins(pr)
     if scope == "skipped_no_permission":
@@ -1054,6 +1093,7 @@ def set_attestation_assignment(request, awaiting, *, head=None, allow_closed=Fal
         response = github(
             f"repos/{request['repository']}/issues/{request['pr']}/assignees",
             "POST" if awaiting else "DELETE", {"assignees": [login]},
+            hostname=hostname,
         )
         require((assignee in assignee_logins(response)) == awaiting,
                 f"attestation assignment was not confirmed for {request['url']}")
@@ -1092,12 +1132,12 @@ def complete_attestation(receipt, approval):
             "assignment_scope": assigned["assignment_scope"]}
 
 
-def full_references(text, repository):
+def full_references(text, repository, *, hostname="github.com"):
     text = re.sub(r"(?<![\w/])(?:([\w.-]+/[\w.-]+))?#(\d+)\b",
-                  lambda match: f"https://github.com/{match[1] or repository}/issues/{match[2]}",
+                  lambda match: f"https://{hostname}/{match[1] or repository}/issues/{match[2]}",
                   text.replace("\r\n", "\n"))
     return re.sub(r"\b(PR|pull request|issue)\s+(\d+)\b",
-                  lambda match: f"{match[1]} https://github.com/{repository}/"
+                  lambda match: f"{match[1]} https://{hostname}/{repository}/"
                   f"{'issues' if match[1].lower() == 'issue' else 'pull'}/{match[2]}",
                   text, flags=re.I)
 
@@ -1123,12 +1163,12 @@ def confirm_ci_revision(request, number, head, branch, *, require_draft=False, a
             and current["base"]["ref"] == request["base_branch"],
             "PR changed or is no longer open; quality gate not confirmed")
     confirm_base_compatibility(request, merge_pr or current)
-    require(branch_head(source_repository, branch) == head,
+    require(branch_head(source_repository, branch, hostname=request_hostname(request)) == head,
             "PR head branch changed; quality gate not confirmed")
     return current
 
 
-def commit_workflow_suites(repository, head):
+def commit_workflow_suites(repository, head, *, hostname="github.com"):
     """Discover workflow runs through the exact commit, not repository search."""
     owner, name = repository.split("/")
     query = """
@@ -1165,7 +1205,7 @@ def commit_workflow_suites(repository, head):
         response = github("graphql", "POST", {
             "query": query,
             "variables": {"owner": owner, "name": name, "head": head, "cursor": cursor},
-        })
+        }, hostname=hostname)
         require(isinstance(response, dict) and not response.get("errors")
                 and isinstance(response.get("data"), dict)
                 and isinstance(response["data"].get("repository"), dict),
@@ -1216,6 +1256,7 @@ def commit_workflow_suites(repository, head):
 def require_passing_workflows(request, number, head, branch, workflows):
     """Verify required workflow provenance, latest attempts, and the exact PR."""
     repository = request["repository"]
+    hostname = request_hostname(request)
     expected = set()
     sources = {}
     for workflow in workflows:
@@ -1230,7 +1271,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
                 "invalid required workflow revision")
         source_id = workflow["repository_id"]
         if source_id not in sources:
-            source = github(f"repositories/{source_id}")
+            source = github(f"repositories/{source_id}", hostname=hostname)
             require(isinstance(source, dict) and source.get("id") == source_id
                     and isinstance(source.get("full_name"), str)
                     and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source["full_name"]),
@@ -1238,7 +1279,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
             sources[source_id] = source["full_name"]
         expected.add((sources[source_id], workflow["path"], sha or ""))
 
-    runs = commit_workflow_suites(repository, head)
+    runs = commit_workflow_suites(repository, head, hostname=hostname)
     latest = {}
     paths = {path for _, path, _ in expected}
     identities = {(repo, path) for repo, path, _ in expected}
@@ -1247,7 +1288,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
         provenance = suite["workflowRun"]
         if provenance["file"]["path"] not in paths:
             continue
-        candidate = github(f"repos/{repository}/actions/runs/{provenance['databaseId']}")
+        candidate = github(f"repos/{repository}/actions/runs/{provenance['databaseId']}", hostname=hostname)
         require(isinstance(candidate, dict) and isinstance(candidate.get("path"), str),
                 "invalid required workflow run")
         require(candidate.get("id") == provenance["databaseId"]
@@ -1260,8 +1301,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
         }
         observations[candidate["path"]].append(observation)
         workflow_id = candidate.get("workflow_id")
-        required_url = (f"https://api.github.com/repos/{repository}/actions/"
-                        f"required_workflows/{workflow_id}")
+        required_url = api_url(hostname, f"repos/{repository}/actions/required_workflows/{workflow_id}")
         if candidate.get("workflow_url") != required_url:
             observation["rejected_by"] = ["workflow-url"]
             continue
@@ -1284,14 +1324,14 @@ def require_passing_workflows(request, number, head, branch, workflows):
                     and isinstance(pr.get("base"), dict)
                     and pr["base"].get("ref") == request["base_branch"]
                     and ("source_repository" not in request or (
-                        pr.get("url") == f"https://api.github.com/repos/{repository}/pulls/{number}"
+                        pr.get("url") == api_url(hostname, f"repos/{repository}/pulls/{number}")
                         and pr["head"].get("ref") == branch
                         and isinstance(pr["head"].get("repo"), dict)
                         and pr["head"]["repo"].get("url")
-                        == f"https://api.github.com/repos/{request['source_repository']}"
+                        == api_url(hostname, f"repos/{request['source_repository']}")
                         and isinstance(pr["base"].get("repo"), dict)
                         and pr["base"]["repo"].get("url")
-                        == f"https://api.github.com/repos/{repository}"))
+                        == api_url(hostname, f"repos/{repository}")))
                     for pr in candidate["pull_requests"])),
             ) if not matches
         ]
@@ -1339,7 +1379,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
                 }))
         candidate, source = latest[key]
         file_url = source.get("repositoryFileUrl")
-        prefix = f"https://github.com/{source_repository}/blob/"
+        prefix = f"https://{hostname}/{source_repository}/blob/"
         suffix = f"/{quote(path, safe='/')}"
         require(isinstance(file_url, str),
                 f"invalid required workflow source revision for {label}; quality gate blocked")
@@ -1348,7 +1388,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
                 f"invalid required workflow source revision for {label}; quality gate blocked")
         require(not sha or recorded_sha == sha,
                 f"required workflow pinned source revision changed for {label}; quality gate blocked")
-        current = github(f"repos/{repository}/actions/runs/{candidate['id']}")
+        current = github(f"repos/{repository}/actions/runs/{candidate['id']}", hostname=hostname)
         require(isinstance(current, dict) and all(
             current.get(field) == candidate.get(field) for field in (
                 "id", "workflow_id", "workflow_url", "check_suite_node_id", "run_attempt",
@@ -1390,10 +1430,11 @@ def collaborator_approval_check(request, head, checks, policy_apps, *, preparing
         require(check["databaseId"] == deferral["check_run_id"],
                 "original collaborator-approval check run changed; prepare a new plan")
     endpoint = f"repos/{request['repository']}/check-runs/{check['databaseId']}"
-    current = github(endpoint)
+    hostname = request_hostname(request)
+    current = github(endpoint, hostname=hostname)
     require(isinstance(current, dict) and type(current.get("id")) is int
             and current["id"] == check["databaseId"]
-            and current.get("url") == "https://api.github.com/" + endpoint
+            and current.get("url") == api_url(hostname, endpoint)
             and current.get("name") == deferral["check_name"]
             and current.get("head_sha") == head
             and isinstance(current.get("app"), dict)
@@ -1434,13 +1475,15 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
             "invalid collaborator-approval preparation")
     policy_apps = []
     repository = request["repository"]
+    hostname = request_hostname(request)
     pr = confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
     url = pr["html_url"]
     expected = set()
     workflows = []
     status_policy = False
     rules = github_pages(
-        f"repos/{repository}/rules/branches/{quote(request['base_branch'], safe='')}?per_page=100")
+        f"repos/{repository}/rules/branches/{quote(request['base_branch'], safe='')}?per_page=100",
+        hostname=hostname)
     for rule in rules:
         require(isinstance(rule, dict) and isinstance(rule.get("type"), str),
                 "invalid required-check policy")
@@ -1519,7 +1562,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     while True:
         response = github("graphql", "POST", {
             "query": query, "variables": {"id": pr["node_id"], "cursor": cursor},
-        })
+        }, hostname=hostname)
         require(isinstance(response, dict) and not response.get("errors"),
                 "GitHub could not resolve required CI checks")
         require(isinstance(response.get("data"), dict),
@@ -1663,6 +1706,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
 
 def ready_for_review(request, number, head, branch):
     """Promote only the verified signed revision with passing required CI."""
+    hostname = request_hostname(request)
     def verify_ci():
         try:
             return require_passing_checks(request, number, head, branch)
@@ -1679,7 +1723,7 @@ def ready_for_review(request, number, head, branch):
                     }
                 """,
                 "variables": {"id": current["node_id"]},
-            })
+            }, hostname=hostname)
             require(isinstance(response, dict) and not response.get("errors"),
                     "GitHub did not confirm the draft rollback")
             require(isinstance(response.get("data"), dict)
@@ -1708,7 +1752,7 @@ def ready_for_review(request, number, head, branch):
                 }
             """,
             "variables": {"id": pr["node_id"]},
-        })
+        }, hostname=hostname)
         require(isinstance(response, dict) and not response.get("errors"),
                 "GitHub did not confirm the ready-for-review mutation")
         require(isinstance(response.get("data"), dict)
@@ -1732,6 +1776,7 @@ def finish(receipt, approval, *, draft_only=False):
     plan = receipt["plan"]
     plan_id = receipt["plan_id"]
     repository = request["repository"]
+    hostname = request_hostname(request)
     source = source_repository(request)
     pr = planned_pull_request(request, request["pr"], require_draft=publication != "replace")
     expected = receipt["head"] if publication == "replace" else request["head"]
@@ -1744,7 +1789,7 @@ def finish(receipt, approval, *, draft_only=False):
     if publication == "replacement":
         candidates = github_pages(f"repos/{repository}/pulls?state=all&head="
                                   + quote(source.split("/")[0] + ":" + target, safe="")
-                                  + "&per_page=100")
+                                  + "&per_page=100", hostname=hostname)
         require(len(candidates) <= 1, "multiple replacement PRs exist; operator decision required")
         if candidates:
             require(marker in (candidates[0]["body"] or ""),
@@ -1757,13 +1802,13 @@ def finish(receipt, approval, *, draft_only=False):
                     and marker in (replacement["body"] or ""), "replacement draft PR does not match")
     merge_pr = replacement or pr
     confirm_base_compatibility(request, merge_pr)
-    require(branch_head(source, target) == receipt["head"], "published signed branch changed")
-    require(branch_head(source, request["source_branch"]) == expected,
+    require(branch_head(source, target, hostname=hostname) == receipt["head"], "published signed branch changed")
+    require(branch_head(source, request["source_branch"], hostname=hostname) == expected,
             "original source branch changed after endorsement")
     preserved = retained_commits(plan)
     for original in plan["commits"]:
-        before = github(f"repos/{source}/git/commits/{original}")
-        after = github(f"repos/{source}/git/commits/{receipt['mapping'][original]}")
+        before = github(f"repos/{source}/git/commits/{original}", hostname=hostname)
+        after = github(f"repos/{source}/git/commits/{receipt['mapping'][original]}", hostname=hostname)
         require(isinstance(before["committer"], dict), "invalid reviewed committer metadata")
         override = {} if original in preserved else request.get("committer", {})
         expected_committer = {**before["committer"], **override}
@@ -1807,8 +1852,8 @@ def finish(receipt, approval, *, draft_only=False):
         require(pr["state"] == "open", "the original draft PR is no longer open")
         return finish_ci(request["pr"])
 
-    title = full_references(pr["title"], repository)
-    body = (full_references(pr["body"] or "", repository)
+    title = full_references(pr["title"], repository, hostname=hostname)
+    body = (full_references(pr["body"] or "", repository, hostname=hostname)
             + f"\n\nSigned replacement for {request['url']}.\n\n{marker}")
     if replacement is None:
         require(pr["state"] == "open", "original PR closed before replacement creation")
@@ -1818,14 +1863,15 @@ def finish(receipt, approval, *, draft_only=False):
             "head": target if source == repository else source.split("/")[0] + ":" + target,
             **({"head_repo": source.split("/")[1]} if source != repository else {}),
             "draft": True,
-        })
+        }, hostname=hostname)
     replacement = planned_pull_request(request, replacement["number"], require_draft=False)
     require(replacement["state"] == "open" and replacement["head"]["sha"] == receipt["head"]
             and replacement["head"]["ref"] == target
             and replacement["base"]["ref"] == request["base_branch"]
             and marker in (replacement["body"] or ""), "replacement draft PR does not match")
     confirm_base_compatibility(request, replacement)
-    github(f"repos/{repository}/issues/{replacement['number']}", "PATCH", pull_metadata(pr))
+    github(f"repos/{repository}/issues/{replacement['number']}", "PATCH", pull_metadata(pr),
+           hostname=hostname)
     current_reviewers = {user["login"] for user in replacement["requested_reviewers"]}
     current_teams = {team["slug"] for team in replacement["requested_teams"]}
     reviewers = [user["login"] for user in pr["requested_reviewers"]
@@ -1833,7 +1879,7 @@ def finish(receipt, approval, *, draft_only=False):
     teams = [team["slug"] for team in pr["requested_teams"] if team["slug"] not in current_teams]
     if reviewers or teams:
         requested = github(f"repos/{repository}/pulls/{replacement['number']}/requested_reviewers", "POST",
-                           {"reviewers": reviewers, "team_reviewers": teams})
+                           {"reviewers": reviewers, "team_reviewers": teams}, hostname=hostname)
         require(set(reviewers) <= {user["login"] for user in requested["requested_reviewers"]}
                 and set(teams) <= {team["slug"] for team in requested["requested_teams"]},
                 "requested reviewers were not preserved; leaving the original PR open")
@@ -1855,8 +1901,8 @@ def finish(receipt, approval, *, draft_only=False):
                 and pull_metadata(current) == pull_metadata(pr),
                 "replacement metadata differs; leaving the original PR open")
         confirm_base_compatibility(request, current)
-        require(branch_head(source, request["source_branch"]) == request["head"]
-                and branch_head(source, target) == receipt["head"],
+        require(branch_head(source, request["source_branch"], hostname=hostname) == request["head"]
+                and branch_head(source, target, hostname=hostname) == receipt["head"],
                 "source branches changed; leaving both drafts open")
         return latest
 
@@ -1867,14 +1913,16 @@ def finish(receipt, approval, *, draft_only=False):
     notice = (f"Superseded by {replacement['html_url']}, containing the reviewed commit range "
               f"{signing_scope} with the endorsement key `{request['fingerprint']}`.{preservation}")
     comment = f"{notice}\n\nAuthored by Copilot, guided by @jidicula.\n\n{marker}"
-    comments = github_pages(f"repos/{repository}/issues/{request['pr']}/comments?per_page=100")
+    comments = github_pages(f"repos/{repository}/issues/{request['pr']}/comments?per_page=100",
+                            hostname=hostname)
     if not any(isinstance(item["body"], str)
                and item["body"].replace("\r\n", "\n") in (comment, f"{notice} {marker}")
                for item in comments):
-        github(f"repos/{repository}/issues/{request['pr']}/comments", "POST", {"body": comment})
+        github(f"repos/{repository}/issues/{request['pr']}/comments", "POST", {"body": comment},
+               hostname=hostname)
     latest = confirm_drafts()
     if latest["state"] == "open":
-        github(f"repos/{repository}/pulls/{request['pr']}", "PATCH", {"state": "closed"})
+        github(f"repos/{repository}/pulls/{request['pr']}", "PATCH", {"state": "closed"}, hostname=hostname)
     result = finish_ci(replacement["number"])
     return dict(result, replaces=request["url"])
 
@@ -1903,6 +1951,9 @@ def main():
         "--preserve-base-merge", action="append", default=[], metavar="OID",
         help="preserve this verified GitHub default-branch merge without endorsing it again")
     for subparser in (ci_parser, prepare_parser):
+        subparser.add_argument(
+            "--hostname", default="github.com",
+            help="GitHub hostname using existing gh authentication (default: github.com)")
         subparser.add_argument(
             "--defer-collaborator-approvals", nargs=4, metavar=("CHECK", "APP_ID", "APP_SLUG", "COUNT"),
             help="operator-selected, per-PR ordering exception for a strictly pending collaborator "
@@ -1955,7 +2006,7 @@ def main():
             require(os.environ.get("CODESPACES") != "true",
                     "check GitHub CI locally with the operator's authenticated gh")
             result = check_ci(args.repo, args.pr, allow_no_required_ci=args.allow_no_required_ci,
-                              defer_collaborator_approvals=deferral)
+                              defer_collaborator_approvals=deferral, hostname=args.hostname)
             result.setdefault("required_ci", "passed")
         elif args.action == "prepare":
             require(os.environ.get("CODESPACES") != "true",
@@ -1967,7 +2018,7 @@ def main():
             result = prepare(args.repo, args.pr, args.key, committer=committer,
                              preserve_base_merges=args.preserve_base_merge,
                              allow_no_required_ci=args.allow_no_required_ci,
-                             defer_collaborator_approvals=deferral)
+                             defer_collaborator_approvals=deferral, hostname=args.hostname)
         elif args.action in ("await-attestation", "complete-attestation"):
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub attestation tracking locally with the operator's authenticated gh")

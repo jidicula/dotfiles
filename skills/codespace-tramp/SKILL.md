@@ -1331,6 +1331,14 @@ an endorsement:
   check-ci --repo "$NWO" --pr "$PR_NUMBER"
 ```
 
+For a PR on another GitHub host, pass `--hostname <host-from-PR-URL>` to both
+`check-ci` and `prepare`, using the same host for both gates. The default is
+`github.com`; `GH_HOST` does not override it. Use the operator's existing `gh`
+authentication for that host. If it is unavailable, stop rather than changing
+credentials or falling back to another host. The prepared request freezes the
+host; later plan, attestation, publication, and readiness commands recover it
+from that record.
+
 Normally, only a successful result with `required_ci: "passed"` passes this gate. It
 includes the checked revision but no signing key, publication choice, plan
 or assignment. Keep that revision with the session's gate evidence. The helper
