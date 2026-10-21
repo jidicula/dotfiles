@@ -1726,6 +1726,12 @@ Ask the user for the correct commands if none are supplied.
 
 ## Troubleshooting
 
+- **An advertised `codespace-tramp` skill fails to load after the rename:**
+  the old registry entry points to a removed file, not a broken Codespace.
+  Follow the [installation reload instructions](README.md#installation) in
+  that CLI session and use `etc`. If the session cannot reload its registry,
+  preserve its work and report the discovery blocker. Do not recreate a second
+  old-name skill or restart a healthy Emacs daemon to repair CLI discovery.
 - **GitHub MCP reports a missing `Mcp-Param-owner` or `Mcp-Param-repo` header
   despite the corresponding `owner` or `repo` argument:** rediscover the tool
   schema and retry the same read-only request once. If the valid request still

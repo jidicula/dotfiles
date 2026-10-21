@@ -438,6 +438,23 @@ matching response arrives, prints the evaluated result, and then disconnects
 cleanly. It uses the same `COPILOT_AGENT_SESSION_ID`, so repeated direct calls
 reattach to the same daemon and retain its runner state.
 
+For a delegated review of a parent's retained jobs, bind that parent's session
+on each client invocation after loading shell configuration:
+
+```bash
+source ~/.shared_shell_configs &&
+  COPILOT_AGENT_SESSION_ID="<review-owning-session-id>" \
+  /absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call \
+  '(copilot-cs-output "<known-parent-job-id>")'
+```
+
+A session ID mentioned only in the handoff text does not change the command's
+environment. Without the explicit binding, the client uses the reviewer's
+session and cannot see the parent's jobs. An `Unknown job` response requires
+checking that binding and the supplied exact ID before any replay or target
+selection; it is not evidence that the parent's job was lost. Keep the parent's
+daemon access serial and within the handoff's permitted operations.
+
 ### Commands that need the Codespace login environment
 
 `git push`, HTTPS `git fetch`, commit hooks, and repository commands that

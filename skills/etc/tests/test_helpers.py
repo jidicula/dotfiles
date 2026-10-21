@@ -1645,6 +1645,38 @@ sys.stdin.read()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "fixture jobs")
 
+    def test_explicit_session_reads_parent_job_instead_of_inherited_reviewer(self):
+        self.env["COPILOT_AGENT_SESSION_ID"] = "reviewer-session"
+        self.executable(
+            "copilot-emacs-mcp",
+            """import json, os, sys
+def respond(identifier, result):
+    print(json.dumps({"id": identifier, "result": result}), flush=True)
+initialization = json.loads(sys.stdin.readline())
+respond(initialization["id"], {})
+sys.stdin.readline()
+call = json.loads(sys.stdin.readline())
+assert call["params"]["arguments"]["expression"] == '(copilot-cs-output "retained-parent-job")'
+text = ("retained parent evidence"
+        if os.environ["COPILOT_AGENT_SESSION_ID"] == "parent-session"
+        else "Error: Unknown job 'retained-parent-job'")
+respond(call["id"], {"content": [{"type": "text", "text": text}]})
+sys.stdin.read()
+""",
+        )
+        expression = '(copilot-cs-output "retained-parent-job")'
+        inherited = self.invoke(expression)
+        self.assertEqual(inherited.returncode, 1, inherited.stderr)
+        self.assertIn("Unknown job", inherited.stdout)
+
+        command = shlex.join([sys.executable, str(self.client), expression])
+        pinned = self.run_command(
+            ["bash", "-c", f"COPILOT_AGENT_SESSION_ID=parent-session {command}"]
+        )
+        self.assertEqual(pinned.returncode, 0, pinned.stderr)
+        self.assertEqual(pinned.stdout.strip(), "retained parent evidence")
+        self.assertEqual(self.env["COPILOT_AGENT_SESSION_ID"], "reviewer-session")
+
     def test_endorsement_request_is_submitted_as_literal_json_not_a_file_read(self):
         self.executable(
             "copilot-emacs-mcp",

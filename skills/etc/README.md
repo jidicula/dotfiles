@@ -126,6 +126,8 @@ Register the endorsement public key with GitHub as a **signing** key. The transp
 
    In an existing CLI session, run `/skills reload`, then `/skills info etc` to confirm discovery.
 
+   A session started before the rename may still advertise `codespace-tramp` at its removed path. Reload the skill registry and invoke `etc`; reloading MCP or restarting Emacs does not update skill discovery. Keep the single `etc` installation rather than recreating an old-name copy.
+
 2. The direct client starts or reuses the per-session daemon without requiring a Copilot MCP registration. If you also want the native MCP tool available, optionally register the bridge in `~/.copilot/mcp-config.json`:
 
    ```json
