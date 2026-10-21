@@ -1152,6 +1152,14 @@ Use Copilot CLI's built-in **`rubber-duck` agent**, the independent reviewer
 behind `/rubber-duck`. This is an agent-driven gate against the selected
 Codespace checkout, not same-agent self-review or PR-based CCR.
 
+**The parent owns routine review recovery, without a separate retry-approval
+prompt.** Correcting a handoff, obtaining already-authorised evidence, replacing
+an invalid review, and reviewing task-scoped fixes are part of this gate. A
+review-procedure failure blocks committing, not recovery within the existing
+authority. This does not grant new tool access, override delegation constraints,
+or waive a denied permission. Escalate actual access or task decisions as
+described in step 5, not whether to make another permitted review attempt.
+
 **The parent owns review for delegated implementation.** Before delegating,
 check the actual `task` tool schema and delegation constraints: the parent must
 be permitted to launch `rubber-duck`. Slash-command help or another session's
@@ -1197,6 +1205,25 @@ weaker review gate.
    `blocked` result naming the required repository/ref/path, not a fallback to a
    laptop checkout or an undeclared repository. The parent must obtain any
    additional authorised Codespace evidence before review resumes.
+
+   **Make the handoff executable before dispatch.** Pin the review-owning
+   session on each canonical-client command after shell configuration has
+   loaded, rather than relying on the reviewer's inherited session:
+
+   ```bash
+   source ~/.shared_shell_configs &&
+     COPILOT_AGENT_SESSION_ID="<review-owning-session-id>" \
+     /absolute/path/to/skills/etc/setup/copilot-emacs-mcp-call '<permitted-form>'
+   ```
+
+   Give bounded `view_range` reads for any permitted large local reference,
+   or include the necessary excerpt in the handoff. Supply exact known receipt
+   IDs and the permitted serial poll/output calls, distinguishing supplied
+   completed receipts from jobs the reviewer launches. A truncated read, unknown
+   job, or missing command returns to the parent for correction, not improvised
+   inspection. Correct the handoff prospectively within existing authority;
+   never approve a past deviation retroactively or broaden tool permissions
+   to make a review pass.
 
    **Check the full input scope before every inspection.** Match the operation,
    target, revision selectors, and file paths against the handoff before calling
@@ -1288,8 +1315,22 @@ weaker review gate.
    Codespace before changing code. Correct the review inputs/routing and obtain
    a fresh, scope-correct review; do not reuse a reviewer that inspected forbidden
    material or carry forward its pass. Replacing an invalid review of the same
-   unchanged candidate is scope recovery, not a vote on its findings. These
-   acceptance checks do not sandbox the built-in reviewer's tools.
+   unchanged candidate is scope recovery, not a vote on its findings, and needs
+   no separate operator approval when the replacement is permitted within the
+   existing authority. Record the concrete correction before retrying; repeating
+   the same failed procedure is not recovery. These acceptance checks do not
+   sandbox the built-in reviewer's tools.
+
+   For a procedure-only failure, prefer a smaller, self-contained evidence
+   handoff over another improvised command sequence. The parent can supply the
+   full frozen diff, relevant candidate/base file contents, validation evidence,
+   and necessary supporting excerpts obtained through the authorised Codespace
+   runner or previously permitted artifact reads. Bind every excerpt to its
+   source, revision, and receipt. Ask a fresh reviewer to assess those supplied
+   contents without inspection-tool calls; this remains independent review, not
+   acceptance of the implementer's summary. Missing context returns `blocked`
+   with the exact evidence needed. Keep the original task and full candidate
+   under review; reducing tool use must not omit changes or required context.
 
    Independently evaluate valid findings. Fix actionable problems, rerun the
    relevant tests/lint in the Codespace, and repeat rubber-duck review on the
@@ -1303,11 +1344,22 @@ weaker review gate.
    forward. Background reviewers may accept same-task follow-ups when the
    available tool explicitly supports them.
 5. Proceed only after a completed `pass` with no unresolved actionable findings.
-   If the review-owning session cannot invoke the reviewer, or the invocation
-   fails, is incomplete, lacks auditable in-scope evidence or a complete terminal
-   job ledger, returns an ambiguous result, or requests human judgement,
-   committing remains blocked. Report the blocker and obtain an operator
-   decision; a successful tool exit is not review approval.
+   An invalid, failed, incomplete, or ambiguous review keeps committing blocked;
+   a successful tool exit is not review approval. First use the applicable
+   parent-owned recovery above: correct the session/routing or evidence,
+   complete permitted exact-job readback, or obtain a fresh scope-correct
+   review. Preserve the candidate and any findings, and make progress through a
+   concrete correction rather than a retry-or-stop permission prompt.
+
+   Ask the operator only when recovery actually needs their decision or access:
+   no permitted session can invoke the required reviewer, a permission is denied,
+   necessary evidence lies outside existing authority, or a substantive finding
+   requires human judgement or a task-scope change. Name that specific blocker
+   and the decision needed. If corrected attempts still cannot produce an
+   auditable review and no safe corrective step remains, report that capability
+   blocker and preserve the candidate; neither ask for blind retries nor treat
+   exhausted retries as approval. Signing, publication choices, and all other
+   explicit consent gates remain unchanged.
 6. Immediately before the unsigned commit, confirm that `HEAD`, any merge parents
    and the index tree still match the reviewed candidate. A changed candidate must repeat
    validation and review. Commit only that index, without `git commit -a` or
