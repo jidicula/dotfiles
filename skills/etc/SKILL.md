@@ -1617,12 +1617,25 @@ complete protocol:
    in this same request, not an earlier prompt. Explain that signatures change
    OIDs and signed-head CI must pass before readiness.
 4. Offer **"Further work is needed"**, **"Leave this draft unendorsed"**, and
-   **"I stand by it: create a replacement -signed draft"**. Offer **"I stand
-   by it: update this draft using an exact-head --force-with-lease"** only if
-   the plan permits `replace`. Preselect no endorsement. A CCR recommendation,
-   invoking this skill or a previous answer is never signing/rewrite consent.
-5. Only the actual affirmative choice authorises `<plan-id>:replacement` or
-   `<plan-id>:replace`. Use that token for remote `sign`; explain the temporary
+   **"I stand by it: create a replacement -signed draft"**. Always include the
+   signed force-push route. When the plan permits `replace`, label it **"I stand
+   by it: force-push signed commits to this draft using an exact-head
+   --force-with-lease"**. Otherwise show **"Force-push signed commits to this
+   draft — blocked for this plan"** and explain that rewrite permission was
+   prohibited or could not be confirmed, using the available policy evidence.
+   Do not hide the route or present it as executable when the plan excludes it.
+
+   Selecting the blocked choice records a preferred publication route only:
+   pause without signing, pushing, issuing an approval token, or substituting a
+   replacement draft. Explain the unmet prerequisite and preserve the current
+   draft and any assignment. If rewrite permission is later established,
+   prepare a new plan that permits `replace` and obtain a new exact-plan
+   affirmative answer before signing. The blocked selection is not consent for
+   that later plan. Preselect no endorsement. A CCR recommendation, invoking
+   this skill, or a previous answer is never signing/rewrite consent.
+5. Only an actual affirmative choice of a method permitted by that plan
+   authorises `<plan-id>:replacement` or `<plan-id>:replace`. Use that token for
+   remote `sign`; explain the temporary
    Secretive agent forwarding and possible Touch ID request for each newly signed commit.
    Keep the connection open and verify the complete receipt. Never replay a
    signing failure automatically or change key protection to avoid approval.

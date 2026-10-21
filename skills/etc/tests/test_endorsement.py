@@ -126,7 +126,7 @@ class CommitWorkflowDiscoveryTests(HelperTestCase):
             self.page([unrelated, dynamic], total=3, more=True, cursor="next"),
             self.page([self.suite], total=3),
         )
-        self.assertEqual(result, [self.suite])
+        self.assertEqual(result, [dynamic, self.suite])
         self.assertEqual(len(calls), 2)
         for call, cursor in zip(calls, (None, "next")):
             self.assertEqual(call.args[:2], ("graphql", "POST"))
@@ -162,6 +162,8 @@ class CommitWorkflowDiscoveryTests(HelperTestCase):
             {"id": "CS_100", "workflowRun": []},
             {"id": "CS_100", "workflowRun": {}},
             {**self.suite, "workflowRun": {**self.suite["workflowRun"], "databaseId": True}},
+            {**self.suite, "workflowRun": {**self.suite["workflowRun"], "runAttempt": None}},
+            {**self.suite, "workflowRun": {**self.suite["workflowRun"], "runAttempt": True}},
             {**self.suite, "workflowRun": {**self.suite["workflowRun"], "file": None}},
         ):
             with self.subTest(suite=suite):
@@ -1645,6 +1647,8 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
                 offset = int(variables["cursor"] or 0)
                 suites = [{
                     "id": run["check_suite_node_id"],
+                    "status": run["status"].upper(),
+                    "conclusion": run["conclusion"].upper() if run["conclusion"] else None,
                     "workflowRun": copy.deepcopy(self.workflow_provenance[run["check_suite_node_id"]]),
                 } for run in self.workflow_runs]
                 end = offset + self.workflow_suite_page_size
@@ -2055,10 +2059,6 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         self.add_required_workflow(run_id=200, path=".github/workflows/other.yml")
         self.workflow_suite_page_size = 1
         self.assertEqual(self.prepare()["head"], self.head)
-        self.assertEqual(sum(
-            endpoint == "graphql" and "EndorsementCommitWorkflows" in data["query"]
-            for _, endpoint, data in self.calls
-        ), 2)
         self.assert_read_only_preparation()
 
     def test_a_newer_failed_workflow_on_a_later_suite_page_blocks_preparation(self):
@@ -3380,9 +3380,6 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         with self.assertRaisesRegex(ValueError, "required CI.*later-page"):
             self.finish()
         self.assertFalse(self.readiness_calls())
-        queries = [call[2]["variables"]["cursor"] for call in self.calls
-                   if call[1] == "graphql"]
-        self.assertEqual(queries, [None, "1"])
         self.check_pages[1][0]["conclusion"] = "SUCCESS"
         self.assertTrue(self.finish()["ready_for_review"])
 
@@ -3746,6 +3743,126 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         policy.assert_not_called()
         operator.assert_not_called()
         self.assertEqual(self.original, original)
+        self.assert_read_only_preparation()
+
+    def test_running_workflow_with_unreported_required_job_blocks_endorsement(self):
+        run = self.add_required_workflow(path=".github/workflows/rust-macos.yml")
+        self.rules = []
+        self.required_contexts = []
+        run.update(status="in_progress", conclusion=None)
+        for action in (
+            lambda: self.helper.check_ci("example/project", 12),
+            self.prepare,
+            self.await_attestation,
+        ):
+            with self.subTest(action=action):
+                with self.assertRaisesRegex(ValueError, "workflow.*(pending|complete)"):
+                    action()
+        self.assertFalse(self.assignment_calls())
+        self.assert_read_only_preparation()
+
+    def test_completed_workflow_requires_its_late_required_job_to_succeed(self):
+        run = self.add_required_workflow(path=".github/workflows/rust-macos.yml")
+        self.rules = []
+        self.required_contexts = []
+        run["conclusion"] = "failure"
+        check = {**self.check_pages[0][0], "name": "rust-macos", "conclusion": "FAILURE"}
+        self.check_pages[0].append(check)
+        with self.assertRaisesRegex(self.helper.RequiredCIFailure, "rust-macos: FAILURE"):
+            self.helper.check_ci("example/project", 12)
+        check["conclusion"] = "SUCCESS"
+        run["conclusion"] = "success"
+        self.assertEqual(self.helper.check_ci("example/project", 12)["head"], self.head)
+        self.assert_read_only_preparation()
+
+    def test_running_workflow_keeps_signed_publication_in_draft(self):
+        run = self.add_required_workflow()
+        self.rules = []
+        run.update(head_sha=self.receipt["head"], head_branch=self.request["target_branch"],
+                   status="in_progress", conclusion=None)
+        with self.assertRaisesRegex(ValueError, "workflow runs are not complete"):
+            self.finish()
+        self.assertTrue(self.replacement["draft"])
+        self.assertFalse(self.readiness_calls())
+        run.update(status="completed", conclusion="success")
+        self.assertTrue(self.finish()["ready_for_review"])
+
+    def test_no_required_ci_exception_still_waits_for_workflow_completion(self):
+        run = self.add_required_workflow()
+        self.rules = []
+        self.required_contexts = []
+        self.check_pages = [[]]
+        run.update(status="queued", conclusion=None)
+        with self.assertRaisesRegex(ValueError, "workflow runs are not complete"):
+            self.helper.check_ci("example/project", 12, allow_no_required_ci=True)
+        run.update(status="completed", conclusion="failure")
+        self.assertEqual(self.helper.check_ci(
+            "example/project", 12, allow_no_required_ci=True)["required_ci"], "not_configured")
+        self.assert_read_only_preparation()
+
+    def test_workflow_completion_does_not_require_optional_workflows_to_succeed(self):
+        run = self.add_required_workflow(path=".github/workflows/optional.yml")
+        self.rules = []
+        run["conclusion"] = "failure"
+        self.check_pages[0].append({
+            **self.check_pages[0][0], "name": "optional", "isRequired": False,
+            "conclusion": "FAILURE",
+        })
+        self.assertEqual(self.helper.check_ci("example/project", 12)["head"], self.head)
+        self.assert_read_only_preparation()
+
+    def test_dynamic_workflows_without_source_files_must_finish_but_need_not_succeed(self):
+        run = self.add_required_workflow()
+        self.rules = []
+        run.update(event="dynamic", status="in_progress", conclusion=None)
+        self.workflow_provenance[run["check_suite_node_id"]].update(event="dynamic", file=None)
+        with self.assertRaisesRegex(ValueError, "workflow runs are not complete.*run 100"):
+            self.helper.check_ci("example/project", 12)
+        run.update(status="completed", conclusion="failure")
+        self.assertEqual(self.helper.check_ci("example/project", 12)["head"], self.head)
+        self.assert_read_only_preparation()
+
+    def test_workflow_changes_during_check_readback_block_acceptance(self):
+        for change in ("added", "removed", "rerun", "pending", "conclusion"):
+            self.workflow_runs = []
+            run = self.add_required_workflow()
+            self.rules = []
+
+            def mutate(_pr):
+                if change == "added":
+                    self.add_required_workflow(run_id=200)
+                elif change == "removed":
+                    self.workflow_runs.clear()
+                elif change == "rerun":
+                    run["run_attempt"] += 1
+                    self.workflow_provenance[run["check_suite_node_id"]]["runAttempt"] += 1
+                elif change == "pending":
+                    run.update(status="in_progress", conclusion=None)
+                else:
+                    run["conclusion"] = "failure"
+
+            self.mutate_on_checks = mutate
+            with self.subTest(change=change):
+                with self.assertRaisesRegex(ValueError, "workflow runs changed"):
+                    self.helper.check_ci("example/project", 12)
+        self.assert_read_only_preparation()
+
+    def test_required_check_discovery_must_be_complete_without_a_deferral(self):
+        self.check_pages.append([{**self.check_pages[0][0], "name": "later"}])
+        for extra in ("every-page", "first-page"):
+            def incomplete(endpoint, method="GET", data=None, *, hostname="github.com"):
+                response = self.api(endpoint, method, data, hostname=hostname)
+                if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
+                    contexts = response["data"]["node"]["commits"]["nodes"][0][
+                        "commit"]["statusCheckRollup"]["contexts"]
+                    if extra == "every-page" or data["variables"]["cursor"] is None:
+                        contexts["totalCount"] += 1
+                return response
+
+            with self.subTest(extra=extra), mock.patch.object(
+                    self.helper, "github", side_effect=incomplete):
+                with self.assertRaisesRegex(ValueError, "incomplete.*required-check discovery"):
+                    self.helper.check_ci("example/project", 12)
         self.assert_read_only_preparation()
 
     def test_check_ci_reads_fork_head_and_upstream_policy_without_endorsement(self):
@@ -4222,8 +4339,6 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
         }])
         with self.assertRaisesRegex(ValueError, "required CI.*later-page"):
             self.prepare()
-        self.assertEqual([data["variables"]["cursor"] for _, endpoint, data in self.calls
-                          if endpoint == "graphql"], [None, "1"])
         self.assert_read_only_preparation()
         self.check_pages[1][0]["conclusion"] = "SUCCESS"
         self.check_head = self.receipt["head"]

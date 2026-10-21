@@ -279,8 +279,10 @@ Use the complete result, not a status report's truncated tail. Do not manually
 transcribe its JSON; transfer the persisted record as described below. Planning requires
 the local source branch to match the draft head and tracked changes to be
 clean. It snapshots the remote head/base and records every introduced commit
-in topological order. `publication_options` lists what may be offered; it is
-not a publication selection or an approval.
+in topological order. `publication_options` lists the methods eligible for
+exact-plan approval; it neither selects nor approves one. The prompt always
+displays the signed force-push route, but marks it blocked when `replace` is
+absent rather than treating the displayed choice as permission to execute it.
 
 If the prepared base commit is missing, planning fetches that exact OID and
 its history from the verified upstream repository for forks, or from origin
@@ -442,10 +444,16 @@ also approves this change. Include any verified-email confirmation here.
 Disclose any version 5 collaborator-approval deferral and its exact check/app
 identity, count, and original run ID; readiness still requires that check.
 
-Offer further work, leaving the draft unendorsed and the permitted publication
-choices from the skill. Preselect no endorsement. Explain that signing changes
-OIDs and required CI must run on the signed head; successful publication and
-passing signed-head CI will mark the result ready for review.
+Use the [skill's endorsement choices](../SKILL.md#gate-3---exact-revision-human-endorsement),
+including the signed exact-head `--force-with-lease` route in every prompt.
+If `publication_options` excludes `replace`, display that route as blocked and
+explain the policy evidence or uncertainty. Selecting it pauses without signing,
+publication, or an approval token; it is not permission to modify the frozen
+plan or use a replacement draft instead. A later plan permitting `replace`
+requires a new exact-plan affirmative answer. Preselect no endorsement.
+Explain that signing changes OIDs and required CI must run on the signed head;
+successful publication and passing signed-head CI will mark the result ready
+for review.
 Keep deferred finding links and prerequisites visible on the resulting PR,
 including a signed replacement. Readiness does not clear them or authorise
 merging or deploying before those prerequisites are satisfied.

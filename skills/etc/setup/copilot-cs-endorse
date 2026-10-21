@@ -1182,7 +1182,7 @@ def commit_workflow_suites(repository, head, *, hostname="github.com"):
                 checkSuites(first: 100, after: $cursor) {
                   totalCount
                   nodes {
-                    id
+                    id status conclusion
                     workflowRun {
                       databaseId runAttempt event
                       file { path repositoryName repositoryFileUrl }
@@ -1229,14 +1229,15 @@ def commit_workflow_suites(repository, head, *, hostname="github.com"):
             if workflow is None:
                 continue
             require(isinstance(workflow, dict) and type(workflow.get("databaseId")) is int
-                    and workflow["databaseId"] > 0 and isinstance(workflow.get("event"), str),
+                    and workflow["databaseId"] > 0
+                    and type(workflow.get("runAttempt")) is int and workflow["runAttempt"] > 0
+                    and isinstance(workflow.get("event"), str),
                     "invalid commit workflow identity")
-            if (workflow.get("file") is None
-                    and workflow["event"] not in ("pull_request", "pull_request_target")):
-                continue
-            require(isinstance(workflow.get("file"), dict)
-                    and isinstance(workflow["file"].get("path"), str) and workflow["file"]["path"],
-                    "invalid commit workflow identity")
+            if (workflow.get("file") is not None
+                    or workflow["event"] in ("pull_request", "pull_request_target")):
+                require(isinstance(workflow.get("file"), dict)
+                        and isinstance(workflow["file"].get("path"), str) and workflow["file"]["path"],
+                        "invalid commit workflow identity")
             suites.append(suite)
         page = connection.get("pageInfo")
         require(isinstance(page, dict) and type(page.get("hasNextPage")) is bool,
@@ -1286,7 +1287,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
     observations = {path: [] for path in paths}
     for suite in runs:
         provenance = suite["workflowRun"]
-        if provenance["file"]["path"] not in paths:
+        if not provenance.get("file") or provenance["file"]["path"] not in paths:
             continue
         candidate = github(f"repos/{repository}/actions/runs/{provenance['databaseId']}", hostname=hostname)
         require(isinstance(candidate, dict) and isinstance(candidate.get("path"), str),
@@ -1551,6 +1552,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
           }
         }
     """
+    workflow_suites = commit_workflow_suites(repository, head, hostname=hostname)
     reported = set()
     failures = []
     failed = False
@@ -1623,12 +1625,11 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
         contexts = rollup["contexts"]
         require(isinstance(contexts, dict) and isinstance(contexts.get("nodes"), list),
                 "invalid required CI response")
-        if deferral is not None:
-            count = contexts.get("totalCount")
-            require(type(count) is int and count >= 0
-                    and (total_checks is None or total_checks == count),
-                    "incomplete or changing required-check discovery")
-            total_checks = count
+        count = contexts.get("totalCount")
+        require(type(count) is int and count >= 0
+                and (total_checks is None or total_checks == count),
+                "incomplete or changing required-check discovery")
+        total_checks = count
         for check in contexts["nodes"]:
             require(isinstance(check, dict) and type(check.get("isRequired")) is bool,
                     "invalid required CI result")
@@ -1664,7 +1665,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 "invalid CI pagination cursor")
         cursors.add(cursor)
 
-    require(deferral is None or len(observed_checks) == total_checks,
+    require(total_checks is None or len(observed_checks) == total_checks,
             "incomplete required-check discovery")
     message = f"required CI is not succeeding for {url}: {'; '.join(failures)}; quality gate blocked"
     if failed:
@@ -1685,6 +1686,20 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     exception_applied = allow_empty and not status_policy and not reported and not workflows
     require(reported or workflows or exception_applied,
             f"no required CI checks reported for {url}; quality gate blocked")
+    pending_workflows = []
+    for suite in workflow_suites:
+        if suite.get("status") != "COMPLETED":
+            workflow = suite["workflowRun"]
+            label = (workflow["file"]["path"] if workflow.get("file")
+                     else f"run {workflow['databaseId']}")
+            pending_workflows.append(f"{label}: {suite.get('status') or 'UNKNOWN'}")
+    require(not pending_workflows,
+            f"workflow runs are not complete for {url}: {'; '.join(pending_workflows)}; "
+            "required checks may still be unpublished; quality gate blocked")
+    require({suite["id"]: suite for suite in workflow_suites} == {
+        suite["id"]: suite
+        for suite in commit_workflow_suites(repository, head, hostname=hostname)
+    }, f"workflow runs changed while checking required CI for {url}; quality gate blocked")
     current = confirm_ci_revision(request, number, head, branch, require_draft=require_draft)
     if exception_applied:
         print(f"[copilot-cs-endorse] {url}: no required CI is configured or reported; "
