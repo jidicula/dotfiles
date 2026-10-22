@@ -1259,6 +1259,14 @@ weaker review gate.
    the skill's `references/` and session-artifact directories; neither is an
    exception for orientation or cookbook lookup.
 
+   Tool-generated spill files follow the same exact-artifact rule, even when
+   they contain only an allowed job's output. A tool response naming a temporary
+   file does not authorise reading it. When a spill or truncation leaves no
+   permitted way to read the complete output, return `blocked` with the known
+   receipt and missing evidence before any unapproved read or output filter.
+   The parent supplies complete bounded evidence through already-permitted
+   operations or uses the evidence-only recovery below.
+
    Apply the same limit to helpers' implicit reads: a verification helper that
    loads a separate plan or signed receipt needs those exact inputs declared
    too. If required evidence or an operation is missing from the allowlist,
@@ -1284,7 +1292,10 @@ weaker review gate.
    edit, stage, commit, push, provision another Codespace, or request CCR.
 4. Ask the reviewer to challenge correctness, assumptions, regressions and missing
    coverage, with concrete locations and reasoning, and return an explicit
-   `pass`, `changes-needed` or `blocked` assessment. Require a source inventory
+   `pass`, `changes-needed` or `blocked` assessment of both code and procedure.
+   An actual source or operation violation requires `blocked`, even with no
+   code findings; a clean code assessment is not a passing review gate.
+   Require a source inventory
    covering every inspected source, including directory listings, helpers'
    implicit inputs, and identity or preflight reads not cited in findings.
    For each source, include its repository/ref/path, Codespace, and checkout
