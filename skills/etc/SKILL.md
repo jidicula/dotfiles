@@ -1440,10 +1440,12 @@ count into the plan; it is never passing CI and cannot waive readiness.
 All other draft-triggerable CI and current-head CCR remain mandatory.
 It is independent of, and cannot be combined with, the absent-CI exception.
 
-Use bounded read-only polling for all other pending CI. Fix failures through the
-existing Codespace workflow, passing Gate 0 again before committing fixes, keeping commits
-unsigned and the PR in draft. Do not prepare a plan, ask for attestation, or
-request signatures.
+For all other pending CI, use the
+[history-based polling limit](references/endorsement.md#ci-polling-limit):
+the slowest of the last five successful matching job runs on other branches,
+plus 25%. Fix failures through the existing Codespace workflow, passing Gate 0
+again before committing fixes, keeping commits unsigned and the PR in draft.
+Do not prepare a plan, ask for attestation, or request signatures.
 
 If required contexts are absent after a push, inspect the exact run's trigger,
 PR association and job conditions before changing commits or retrying. Check
@@ -1690,7 +1692,8 @@ mistake an initially empty run listing, older skipped checks or
 only the required checks it observed, not a guarantee about later runs.
 
 While readiness-triggered checks are pending, keep the task in
-`readiness-ci-pending` and preserve its receipt. Use bounded read-only polling;
+`readiness-ci-pending` and preserve its receipt. Use the same
+[history-based polling limit](references/endorsement.md#ci-polling-limit);
 if the wait expires or discovery is unavailable, record the unresolved monitoring
 state rather than declaring readiness complete. Do not start another readiness
 transition or repeatedly rerun workflows to obtain a different result.
@@ -1705,8 +1708,9 @@ revision or replay publication. After the identified runs complete, repeat
 completed task if it remains blocked.
 
 For pending signed-head CI, preserve the published draft and receipt. Inspect
-the resulting PR with local `gh`, poll read-only, then repeat only the same
-`finish --receipt ... --approve-plan ...`. Do not sign/push again, create a
+the resulting PR with local `gh`, poll read-only within that history-based
+deadline, then repeat only the same `finish --receipt ... --approve-plan ...`.
+Do not sign/push again, create a
 duplicate or bypass readiness with `gh pr ready`. Outside the verified API-only
 base-update exception, a changed head, retargeted base or rewritten base history
 requires new quality-gate evidence and a new human plan/answer.

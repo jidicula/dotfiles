@@ -44,6 +44,51 @@ Secretive-managed public keys; no private key or GitHub credential is copied.
 The canonical client and remote runner are described in the
 [execution cookbook](emacs-tramp-patterns.md).
 
+## CI polling limit
+
+Use this policy for unsigned-draft CI, signed-head CI, and readiness-triggered
+CI. It sets the total observation deadline, not the interval between polls,
+an individual API timeout, or a GitHub Actions execution timeout. CCR and human
+approval waits are separate.
+
+1. Identify each pending job by GitHub host, repository, workflow identity,
+   trigger event, and job name, including its matrix/runner variant. Read the
+   last five successful executions of that same job on **other branches**,
+   newest first. Match workflow source and configuration closely enough to
+   compare the same work; a shared display name alone is insufficient. Exclude
+   skipped, cancelled, failed, and incomplete jobs. Page through history as
+   needed; record the sample run IDs, attempts, dates, and durations.
+2. Measure historical elapsed time from the workflow attempt's trigger to the
+   matching job's completion, including queue and dependency waits. A terminal
+   aggregate job's own execution time is not the pipeline duration. For reruns,
+   use the attempt's timing rather than the original run's creation time.
+   Set `job_limit_seconds = ceil(1.25 * max(sample_elapsed_seconds))`.
+   For example, a slowest comparable completion at 12 minutes gives a 15-minute
+   limit. With fewer than five usable executions, use those available and record
+   the smaller sample.
+3. Anchor each current job's deadline to its workflow attempt's trigger time:
+   `deadline = attempt_trigger_time + job_limit_seconds`. The overall CI wait
+   ends at the latest deadline among the jobs still awaited; do not add parallel
+   job durations together. Include the workflow's terminal jobs even if their
+   check runs have not appeared yet. While waiting for a readiness-triggered
+   run to appear, anchor its discovery deadline to the recorded readiness
+   transition and use comparable completed runs of that workflow/event.
+4. Persist the estimate, source timestamps, and absolute deadline with the
+   current head, run IDs, and attempts. Subtract elapsed time when resuming.
+   Polling, session resumes, and newly visible jobs in the same attempt do not
+   restart its clock. A genuinely new run/attempt gets its own anchored deadline;
+   this policy does not authorise starting or rerunning workflows.
+5. Stop polling when the gate passes, a required check fails, or the deadline
+   expires. On expiry, read status once more and retain pending jobs, exact
+   run IDs/attempts, and any endorsement receipt for resumption. Expiry is an
+   unresolved CI wait, not a failed check, passing CI, or permission to endorse.
+
+If comparable history or trustworthy attempt timing is unavailable, record that
+estimation gap and use a documented repository-specific finite CI wait limit.
+If none exists, ask for a finite fallback rather than silently inventing a
+timeout or polling indefinitely. Historical results set only the polling
+budget; they never satisfy checks on the current head.
+
 ## Prepare and plan
 
 After the quality gates, use local preparation with the operator's
@@ -662,7 +707,8 @@ Follow the skill's post-readiness monitoring gate. Record the pre-transition run
 IDs, inspect applicable `ready_for_review` triggers, and wait for those new runs
 and their required checks to finish. Older skipped checks and an empty initial
 listing do not establish that a delayed readiness-triggered run has completed.
-Retain exact run IDs/attempts and the receipt when a bounded wait expires.
+Retain exact run IDs/attempts and the receipt when the
+[history-based polling limit](#ci-polling-limit) expires.
 
 On a terminal required-check or enforced-workflow failure, rerunning `finish`
 returns the same signed PR to draft only after fresh head/base checks, confirms
@@ -680,8 +726,9 @@ may already be closed. Inspect the resulting PR, not its superseded original:
 gh pr checks "$SIGNED_PR_URL" -R "$NWO" --required
 ```
 
-Poll read-only with a bounded wait, then rerun the same local `finish` after
-checks pass or when a required check fails. Do not manually demote a PR around the
+Poll read-only within the [history-based deadline](#ci-polling-limit), then
+rerun the same local `finish` after checks pass or when a required check fails.
+Do not manually demote a PR around the
 helper's revision guards, re-sign, re-push, create a duplicate or bypass readiness
 with `gh pr ready`. The local source ref
 intentionally remains unsigned after an in-place publication; do not reset it.
