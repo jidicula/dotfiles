@@ -178,8 +178,10 @@ main() {
 			         nil t t)
 			   (load (expand-file-name \"copilot-mcp-form-safety.el\" copilot-mcp-setup-dir)
 			         nil t t)
+			   (load (expand-file-name \"copilot-mcp-transport.el\" copilot-mcp-setup-dir)
+			         nil t t)
 			   (copilot-mcp-attach-parent $$))")" ||
-			die "could not refresh runner, Eglot, form-safety helpers, and owner on daemon $ID"
+			die "could not refresh runner, Eglot, form-safety, transport helpers, and owner on daemon $ID"
 		[[ -z $owner ]] || log "$owner"
 		;;
 	2)

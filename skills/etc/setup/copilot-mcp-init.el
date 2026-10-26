@@ -221,6 +221,7 @@
 ;;; MCP server
 
 (require 'mcp-server)
+(require 'copilot-mcp-transport)
 
 (setq mcp-server-socket-name copilot-mcp-id
       mcp-server-socket-conflict-resolution 'error)

@@ -1995,6 +1995,157 @@ sys.stdin.read()
                 pass
 
 
+class McpTransportTests(HelperTestCase):
+    def check_writer(self, expression):
+        return self.emacs(
+            f"""(progn
+              (require 'copilot-mcp-transport)
+              (defun mcp-server-transport-unix--client-filter (_process _input))
+              (let ((process (make-network-process
+                              :name "mcp-fixture" :server t :family 'local
+                              :service {json.dumps(str(self.root / "writer.sock"))}
+                              :noquery t
+                              :filter #'mcp-server-transport-unix--client-filter)))
+                (unwind-protect (progn {expression})
+                  (delete-process process))))"""
+        )
+
+    def test_nested_sends_preserve_frame_order(self):
+        self.check_writer(
+            """(let ((writes nil)
+                     (nested nil)
+                     (text (concat (make-string 3000 ?x) "\\n")))
+                 (cl-labels
+                     ((send (target chunk)
+                        (unless (eq (process-filter target) t)
+                          (error "Incoming requests must wait for the complete frame"))
+                        (when (> (length chunk) 1024)
+                          (error "Unbounded write"))
+                        (push chunk writes)
+                        (unless nested
+                          (setq nested t)
+                          (copilot-mcp--send-string #'send target "notification\\n")
+                          (copilot-mcp--send-string #'send target text))))
+                   (copilot-mcp--send-string #'send process text))
+                 (unless (equal (apply #'concat (nreverse writes))
+                                (concat text "notification\\n" text))
+                   (error "Nested frames were interleaved or lost"))
+                 (unless (and (not (process-get process 'copilot-mcp--send-queue))
+                              (eq (process-filter process)
+                                  #'mcp-server-transport-unix--client-filter))
+                   (error "Send state was not restored")))"""
+        )
+
+    def test_send_error_propagates_and_restores_state(self):
+        self.check_writer(
+            """(let ((calls 0) (failure nil))
+                 (cl-labels
+                     ((send (target _chunk)
+                        (setq calls (1+ calls))
+                        (if (= calls 1)
+                            (copilot-mcp--send-string #'send target "queued\\n")
+                          (error "fixture write failed"))))
+                   (condition-case err
+                       (copilot-mcp--send-string #'send process (make-string 3000 ?x))
+                     (error (setq failure (error-message-string err)))))
+                 (unless (and (equal failure "fixture write failed")
+                              (= calls 2)
+                              (not (process-get process 'copilot-mcp--send-queue))
+                              (eq (process-filter process)
+                                  #'mcp-server-transport-unix--client-filter))
+                   (error "Write failure or cleanup was lost")))"""
+        )
+
+    def test_other_targets_and_small_messages_keep_native_semantics(self):
+        self.check_writer(
+            """(let ((calls nil)
+                     (text (make-string 3000 ?x)))
+                 (cl-labels ((send (target string)
+                               (push (list target string) calls)
+                               'native-result))
+                   (set-process-filter process #'ignore)
+                   (dolist (target (list nil "process-name" (current-buffer) process))
+                     (unless (eq (copilot-mcp--send-string #'send target text)
+                                 'native-result)
+                       (error "Non-MCP send changed")))
+                   (set-process-filter process
+                                       #'mcp-server-transport-unix--client-filter)
+                   (dolist (text (list "" "small" 123))
+                     (unless (eq (copilot-mcp--send-string #'send process text)
+                                 'native-result)
+                       (error "Native argument handling changed"))))
+                 (unless (= (length calls) 7)
+                   (error "Native sends were split or dropped")))"""
+        )
+
+    def test_large_response_and_pipelined_request_remain_complete(self):
+        path = self.root / "mcp.sock"
+        expression = f"""(progn
+          (require 'json)
+          (require 'copilot-mcp-transport)
+          (defvar requests 0)
+          (defun mcp-server-transport-unix--client-filter (process _input)
+            (setq requests (1+ requests))
+            (process-send-string
+             process
+             (concat
+              (json-serialize
+               (list :id requests
+                     :text (if (= requests 1)
+                               (concat (make-string 3000000 ?x)
+                                       "\\n" (string #xe9 #x1f642))
+                             "second response")))
+              "\\n"))
+            (unless (eq (process-filter process)
+                        #'mcp-server-transport-unix--client-filter)
+              (error "Input filter was not restored")))
+          (let ((server (make-network-process
+                         :name "mcp-fixture" :server t :family 'local
+                         :service {json.dumps(str(path))}
+                         :noquery t :coding 'utf-8
+                         :filter #'mcp-server-transport-unix--client-filter)))
+            (unwind-protect
+                (while (< requests 2) (accept-process-output nil 0.01))
+              (delete-process server))))"""
+        process = subprocess.Popen(
+            [shutil.which("emacs"), "-Q", "--batch", "-L", str(SETUP),
+             "--eval", expression],
+            cwd=self.root, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            ready_deadline = time.monotonic() + 5
+            while not path.exists() and process.poll() is None:
+                self.assertLess(time.monotonic(), ready_deadline, "Fixture did not start")
+                time.sleep(0.01)
+            with socket.socket(socket.AF_UNIX) as client:
+                client.connect(str(path))
+                deadline = time.monotonic() + 5
+                client.sendall(b"first")
+                wire = bytearray()
+                second_sent = False
+                while wire.count(b"\n") < 2:
+                    remaining = deadline - time.monotonic()
+                    self.assertGreater(remaining, 0, "Complete response exceeded deadline")
+                    client.settimeout(remaining)
+                    data = client.recv(65536)
+                    self.assertTrue(data, "Socket closed before complete responses")
+                    wire.extend(data)
+                    if not second_sent:
+                        client.sendall(b"second")
+                        second_sent = True
+            _, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, stderr.decode())
+            self.assertEqual(
+                [json.loads(line) for line in wire.splitlines()],
+                [{"id": 1, "text": "x" * 3000000 + "\n\u00e9\U0001f642"},
+                 {"id": 2, "text": "second response"}],
+            )
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.communicate(timeout=5)
+
+
 class McpFormSafetyTests(HelperTestCase):
     def check(self, expression):
         return self.emacs(
@@ -4344,6 +4495,8 @@ Path(os.environ["FAKE_SERVED"]).touch()
               (unless (advice-member-p #'copilot-mcp--check-dotted-form
                                        'mcp-server-security--check-form-safety)
                 (error "Form-safety compatibility was not refreshed"))
+              (unless (advice-member-p #'copilot-mcp--send-string 'process-send-string)
+                (error "MCP transport compatibility was not refreshed"))
               (unless (and (equal copilot-cs-id "original-codespace")
                            (equal copilot-cs-dir "/workspaces/original")
                            copilot-cs-configured

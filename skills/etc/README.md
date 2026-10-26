@@ -293,6 +293,7 @@ Calls to one daemon queue behind a per-daemon invocation lock before starting a 
 | [`setup/copilot-mcp-init.el`](setup/copilot-mcp-init.el) | Minimal `emacs -Q` configuration, MCP server, TRAMP guards, and watchdog startup |
 | [`setup/copilot-mcp-lifecycle.el`](setup/copilot-mcp-lifecycle.el) | CLI-owned daemon lifetime and orphan grace, reloadable without discarding state |
 | [`setup/copilot-mcp-form-safety.el`](setup/copilot-mcp-form-safety.el) | Dotted-list compatibility for the MCP validator without changing evaluated data or skipping checks |
+| [`setup/copilot-mcp-transport.el`](setup/copilot-mcp-transport.el) | Bounded MCP socket writes that preserve complete responses and nested notification order |
 | [`setup/copilot-cs-jobs.el`](setup/copilot-cs-jobs.el) | Non-blocking detached Codespace command runner and job registry |
 | [`setup/copilot-cs-endorse`](setup/copilot-cs-endorse) | CI checks, exact-revision signing and verified publication |
 | [`setup/copilot-cs-stop`](setup/copilot-cs-stop) | Scoped process-tree cancellation, escalation, and stale-PID protection |
