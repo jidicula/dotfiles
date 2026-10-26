@@ -85,7 +85,35 @@ unreadable lookup as an empty list.
 
 ## Request and re-request
 
-After Gate 1 passes, and only when no request/run is already pending:
+**Request the highest enabled Copilot review effort available to the target PR
+and operator, for both initial reviews and re-reviews.** Check the current
+[effort levels](https://docs.github.com/en/copilot/concepts/agent-capabilities/agent-powered-workflows-and-operations/code-review#review-effort-level)
+and the available request controls. As of 2026-10-26, GitHub documents
+**Balanced** above **Lite**, while **Max** is
+[coming soon](https://docs.github.com/en/copilot/how-tos/copilot-on-github/set-up-copilot/configure-code-review#configuring-your-copilot-review-effort).
+Choose Max or a higher level when it becomes enabled; a disabled option is not
+available. This is hosted CCR effort, not the local agent's model or reasoning
+effort.
+
+Prefer explicit per-request selection through a supported interface. The
+currently inspected `gh pr edit` command, REST reviewer-request endpoint, and
+GraphQL `RequestReviewsInput` expose no effort parameter. The command below
+therefore requests a review without selecting its effort; use it only after
+confirming that the effective selection is the highest available level. A PR's
+previous effort takes precedence over the requestor's settings, so neither a
+personal default nor GitHub's built-in default proves a re-review uses that level.
+Follow the documented precedence when relying on an inherited selection.
+
+If the available interface cannot select or confirm the required effort, pause
+before dispatch and ask the operator to select the highest enabled level under
+**Reviewers > Copilot** on the target PR. Browser automation still requires
+explicit permission. Resume with pending-request readback in case the operator
+also requested the review. Do not invent flags or API fields, silently choose a
+lower effort, or change account, repository, or organisation defaults to work
+around the missing per-request control.
+
+After confirming effort and passing Gate 1, and only when no request/run is
+already pending:
 
 ```sh
 gh pr edit "$PR_URL" -R "$NWO" --add-reviewer '@copilot'
@@ -97,8 +125,10 @@ the discovered Bot ID. `requestReviews.userIds` rejects Bot nodes; its distinct
 syntax and separates bot logins from user logins. GraphQL pending-request
 readback does not require using the same interface for the mutation.
 
-The same command re-requests CCR after fixes. Keep the PR in draft. Record its
-head, the last completed review ID and the request outcome in session state.
+Repeat effort selection before re-requesting CCR after fixes. Keep the PR in
+draft. Record its head, the highest available level, the selected level and
+selection evidence, the last completed review ID, and the request outcome in
+session state.
 Confirm a pending request through the same GraphQL connection, or a newer
 completed Copilot review on the requested head through readback; an immediate
 completion need not remain in the pending-request connection.
@@ -149,6 +179,13 @@ Match the review author's Bot node ID/type, `commit_id`, review ID and completio
 Exclude pending/dismissed reviews and stale commits. After a re-request, require
 a newer review, even when the head did not change. A later pending request
 prevents reusing an earlier completed assessment as the new result.
+
+Read the effort reported for that run in the review overview and bind it to
+the review ID and head. Require it to match the highest available level before
+accepting the review, including automatic reviews or an existing review being
+reused. A lower or unreported effort is unresolved: preserve its findings and
+correct or confirm the selection before proceeding. Wait for any pending run
+to finish before a necessary corrected request; do not cancel or duplicate it.
 
 Read the overview's explicit approval assessment, such as "Approval recommended"
 or "Human review recommended", together with its explanation and findings.

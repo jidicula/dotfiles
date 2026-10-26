@@ -1467,7 +1467,9 @@ and seek an operator-approved recovery.
 #### Gate 2 - optional Copilot Code Review
 
 Read the [CCR command reference](references/copilot-code-review.md) before
-requesting, interpreting or resolving a review.
+requesting, re-requesting, interpreting, or resolving a review. Use its
+[highest-effort procedure](references/copilot-code-review.md#request-and-re-request)
+for every request, including effort verification before reusing a review.
 
 ##### Determine applicability
 
@@ -1502,8 +1504,8 @@ CCR has since become unavailable.
    all review threads/comments. Reuse a completed review only when it belongs
    to this head and no newer request/run is pending. Otherwise request CCR for
    this draft, unless an automatic or manual request is already outstanding.
-   Use the reference's `gh pr edit --add-reviewer '@copilot'` command; never
-   pass the discovered Bot ID to GraphQL `requestReviews.userIds`.
+   Follow the reference's effort selection before its Bot-aware request command;
+   never pass the discovered Bot ID to GraphQL `requestReviews.userIds`.
    Record the request's head and previous review ID; do not accept that older
    review as the result of a re-request.
 2. Wait with bounded read-only polling. Require a new completed review on the
