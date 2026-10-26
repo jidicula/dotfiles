@@ -176,6 +176,10 @@ class ForkPublicationTests(ForkRepositoryTestCase, fixtures.PublicationTests):
         self.assertEqual(self.git("rev-parse", "feature").strip(), self.head)
 
 
+class ForkFollowUpBranchTests(ForkRepositoryTestCase, fixtures.FollowUpBranchTests):
+    """Keep local branch aliases distinct from fork publication destinations."""
+
+
 class ForkPlanningTests(ForkRepositoryTestCase):
     def test_missing_base_fetches_from_upstream_without_touching_refs_or_worktree(self):
         self.request["base"] = self.advance_base()

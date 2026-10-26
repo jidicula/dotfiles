@@ -368,6 +368,176 @@ class EndorsementTestCase(HelperTestCase):
         return result
 
 
+class FollowUpBranchTests(EndorsementTestCase):
+    def prepare_follow_up(self):
+        previous = self.sign("replace")
+        self.repository.push(self.plan_id, self.approve("replace"))
+        self.git("switch", "--quiet", "feature-signed")
+        self.git("commit", "--quiet", "--allow-empty", "-m", "unsigned follow-up")
+        self.git("push", "--quiet")
+        self.request.update(version=max(2, self.request["version"]),
+                            head=self.git("rev-parse", "HEAD").strip())
+        return previous
+
+    def test_follow_up_on_in_place_signed_branch_can_be_planned(self):
+        previous = self.prepare_follow_up()
+        follow_up = self.request["head"]
+        tracking = self.git("config", "--get-regexp", r"^branch\.feature-signed\.")
+        index = self.git("write-tree")
+        self.freeze()
+        self.assertEqual(self.plan["request"], self.request)
+        self.assertEqual(self.plan["local_source_branch"], "feature-signed")
+        self.assertEqual(self.plan["preserved_commits"], list(previous["mapping"].values()))
+        self.assertEqual(self.plan["commits"], list(previous["mapping"].values()) + [follow_up])
+        with self.assertRaisesRegex(ValueError, "explicit approval"):
+            self.repository.sign(self.plan_id, previous["plan_id"] + ":replace")
+        with mock.patch.object(self.helper, "run", wraps=self.helper.run) as commands:
+            receipt = self.repository.sign(self.plan_id, self.approve("replace"))
+        signatures = [call for call in commands.call_args_list
+                      if call.args[0][:3] == ["ssh-keygen", "-Y", "sign"]]
+        self.assertEqual(len(signatures), 1)
+        for oid in previous["mapping"].values():
+            self.assertEqual(receipt["mapping"][oid], oid)
+        self.assertNotEqual(receipt["mapping"][follow_up], follow_up)
+        self.repository.push(self.plan_id, self.approve("replace"))
+        self.assertEqual(self.git("rev-parse", "feature").strip(), self.head)
+        self.assertEqual(self.git("rev-parse", "feature-signed").strip(), follow_up)
+        self.assertEqual(self.git("rev-parse", "feature-signed-signed").strip(), receipt["head"])
+        self.assertEqual(self.git("branch", "--show-current").strip(), "feature-signed")
+        self.assertEqual(self.git("write-tree"), index)
+        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
+        self.assertEqual(self.git("config", "--get-regexp", r"^branch\.feature-signed\."), tracking)
+        self.assertEqual(self.remote_head("feature"), receipt["head"])
+        self.assertEqual(
+            self.git("rev-parse", "--abbrev-ref", "feature-signed-signed@{upstream}").strip(),
+            "origin/feature",
+        )
+        with mock.patch.object(self.helper, "signed_commit", side_effect=AssertionError("resigned")):
+            self.assertEqual(self.repository.sign(self.plan_id, self.approve("replace")), receipt)
+            self.assertEqual(self.repository.push(self.plan_id, self.approve("replace")), receipt)
+        self.git("switch", "--quiet", "feature-signed-signed")
+        self.git("commit", "--quiet", "--allow-empty", "-m", "another follow-up")
+        self.git("push", "--quiet")
+        self.request["head"] = self.git("rev-parse", "HEAD").strip()
+        self.freeze()
+        self.assertEqual(self.plan["local_source_branch"], "feature-signed-signed")
+        self.assertEqual(self.helper.local_branches(self.plan)[1], "feature-signed-signed-signed")
+
+    def test_alias_can_publish_replacement_after_clean_base_advance(self):
+        self.prepare_follow_up()
+        self.freeze()
+        self.advance_base()
+        receipt = self.repository.sign(self.plan_id, self.approve("replacement"))
+        self.repository.push(self.plan_id, self.approve("replacement"))
+        self.assertEqual(self.remote_head("feature"), self.request["head"])
+        self.assertEqual(self.remote_head("feature-signed"), receipt["head"])
+        self.assertEqual(
+            self.git("rev-parse", "--abbrev-ref", "feature-signed-signed@{upstream}").strip(),
+            "origin/feature-signed",
+        )
+        self.assertEqual(
+            self.git("rev-parse", "--abbrev-ref", "feature-signed@{upstream}").strip(),
+            "origin/feature",
+        )
+
+    def test_original_local_source_is_not_required_for_alias_signing_or_publication(self):
+        self.prepare_follow_up()
+        self.git("branch", "-m", "feature", "retained-original")
+        receipt = self.sign("replace")
+        self.repository.push(self.plan_id, self.approve("replace"))
+        self.assertEqual(self.git("rev-parse", "retained-original").strip(), self.head)
+        self.assertEqual(self.remote_head("feature"), receipt["head"])
+        self.assertEqual(self.git("for-each-ref", "--format=%(refname)", "refs/heads/feature"), "")
+
+    def test_wrong_upstream_or_head_cannot_select_an_alias(self):
+        self.prepare_follow_up()
+        for setting, value, original in (
+            ("remote", "other", "origin"),
+            ("merge", "refs/heads/main", "refs/heads/feature"),
+        ):
+            with self.subTest(setting=setting):
+                self.git("config", "branch.feature-signed." + setting, value)
+                with self.assertRaisesRegex(ValueError, "local source branch changed"):
+                    self.freeze()
+                self.git("config", "branch.feature-signed." + setting, original)
+        self.git("commit", "--quiet", "--allow-empty", "-m", "unreviewed follow-up")
+        with self.assertRaisesRegex(ValueError, "local source branch changed"):
+            self.freeze()
+
+    def test_frozen_alias_movement_blocks_signing_even_if_original_source_matches(self):
+        self.prepare_follow_up()
+        self.freeze()
+        self.git("commit", "--quiet", "--allow-empty", "-m", "unreviewed follow-up")
+        self.git("update-ref", "refs/heads/feature", self.request["head"], self.head)
+        with self.assertRaisesRegex(ValueError, "local source branch changed"):
+            self.repository.sign(self.plan_id, self.approve("replace"))
+        self.assertFalse((self.repository.state / f"{self.plan_id}.receipt.json").exists())
+
+    def test_alias_movement_during_signing_is_rechecked(self):
+        self.prepare_follow_up()
+        self.freeze()
+        original = self.helper.run
+
+        def move_alias(arguments, **options):
+            if arguments[:3] == ["ssh-keygen", "-Y", "sign"]:
+                self.git("commit", "--quiet", "--allow-empty", "-m", "unreviewed follow-up")
+            return original(arguments, **options)
+
+        with mock.patch.object(self.helper, "run", side_effect=move_alias):
+            with self.assertRaisesRegex(ValueError, "local source branch changed"):
+                self.repository.sign(self.plan_id, self.approve("replace"))
+        self.assertFalse((self.repository.state / f"{self.plan_id}.receipt.json").exists())
+
+    def test_alias_movement_after_signing_blocks_publication(self):
+        self.prepare_follow_up()
+        self.sign("replace")
+        self.git("commit", "--quiet", "--allow-empty", "-m", "unreviewed follow-up")
+        with self.assertRaisesRegex(ValueError, "local source branch changed"):
+            self.repository.push(self.plan_id, self.approve("replace"))
+        self.assertEqual(self.remote_head("feature"), self.request["head"])
+
+    def test_alias_output_collisions_are_never_overwritten(self):
+        self.prepare_follow_up()
+        self.git("branch", "feature-signed-signed", self.base)
+        with self.assertRaisesRegex(ValueError, "signed branch already exists"):
+            self.freeze()
+        self.git("update-ref", "-d", "refs/heads/feature-signed-signed", self.base)
+        self.freeze()
+        self.git("branch", "feature-signed-signed", self.base)
+        with self.assertRaisesRegex(ValueError, "signed branch collision"):
+            self.repository.sign(self.plan_id, self.approve("replace"))
+        self.assertEqual(self.git("rev-parse", "feature-signed-signed").strip(), self.base)
+        self.assertEqual(self.git("rev-parse", "feature-signed").strip(), self.request["head"])
+
+    def test_invalid_frozen_alias_bindings_are_rejected(self):
+        self.prepare_follow_up()
+        self.freeze()
+        plan = {key: value for key, value in self.plan.items() if key != "plan_id"}
+        for alias in (None, "", 123, "feature", "../unsafe"):
+            with self.subTest(alias=alias):
+                changed = dict(plan, local_source_branch=alias)
+                with self.assertRaises((ValueError, RuntimeError)):
+                    self.helper.reviewed_plan_request(changed, self.helper.digest(changed))
+        changed = dict(plan, request=dict(self.request, version=1))
+        changed["request"].pop("source_repository", None)
+        with self.assertRaisesRegex(ValueError, "local source branch binding"):
+            self.helper.reviewed_plan_request(changed, self.helper.digest(changed))
+        changed = dict(plan, local_source_branch="feature",
+                       request=dict(self.request, source_branch="feature-signed",
+                                    target_branch="feature-signed-signed"))
+        with self.assertRaisesRegex(ValueError, "replace the original source branch"):
+            self.helper.reviewed_plan_request(changed, self.helper.digest(changed))
+
+    def test_ordinary_plan_shape_and_digest_are_unchanged(self):
+        self.freeze()
+        expected = {"request": self.request, "root": self.repository.root,
+                    "commits": [self.first, self.head]}
+        if self.request["version"] >= 2:
+            expected["preserved_commits"] = []
+        self.assertEqual(self.plan, {"plan_id": self.helper.digest(expected), **expected})
+        self.assertEqual(self.repository.load_plan(self.plan_id), expected)
+
+
 class IncrementalEndorsementTests(EndorsementTestCase):
     def test_only_three_new_commits_are_signed_and_prior_two_are_byte_identical(self):
         previous = self.sign()

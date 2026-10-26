@@ -322,8 +322,20 @@ a compression or decoding failure stops the action rather than running a partial
 
 Use the complete result, not a status report's truncated tail. Do not manually
 transcribe its JSON; transfer the persisted record as described below. Planning requires
-the local source branch to match the draft head and tracked changes to be
-clean. It snapshots the remote head/base and records every introduced commit
+the bound local source branch to match the draft head and tracked changes to be
+clean. Incremental plans can use a differently named checked-out branch when its
+head matches the request and its upstream is exactly `origin/<PR-source>`.
+The plan records that name as `local_source_branch`; later operations check that
+frozen ref rather than selecting another branch. Plans without this field retain
+the prepared request's source branch.
+
+The local output branch appends `-signed` to the bound local source. Show both
+local branch names with the exact-plan endorsement prompt when they differ from
+the prepared request's names. Remote publication destinations remain unchanged:
+the PR source for `replace`, or the request's `target_branch` for `replacement`.
+Existing local output branches remain collision blockers, not overwrite targets.
+
+Planning snapshots the remote head/base and records every introduced commit
 in topological order. `publication_options` lists the methods eligible for
 exact-plan approval; it neither selects nor approves one. The prompt always
 displays the signed force-push route, but marks it blocked when `replace` is
@@ -605,7 +617,7 @@ uses unconditional force. Changed source/destination refs or collisions require
 an operator decision; do not refresh the lease expectation automatically. A
 verified clean base advance leaves that exact-head lease and approval unchanged.
 
-After publication is confirmed, the local `<source>-signed` branch tracks the
+After publication is confirmed, the plan's local output branch tracks the
 PR's remote branch: `origin/<source>-signed` for `replacement`, or
 `origin/<source>` for `replace`. Its push remote is pinned to `origin`, and
 repository-local `push.default=upstream` lets an ordinary `git push` follow that
@@ -615,8 +627,12 @@ Existing fetch mappings are retained, with a narrow mapping added only when
 the published branch is not covered.
 
 The helper does not switch branches or change the original source ref, index,
-or working tree. Switch to `<source>-signed` before making manual follow-up
-commits. In Magit, use `P u` (`magit-push-current-to-upstream`) to push those
+or working tree. Switch to the plan's local output branch before making manual
+follow-up commits. For example, after an in-place publication from `feature`,
+work on `feature-signed`, which tracks `origin/feature`. A subsequent plan binds
+that local input and creates `feature-signed-signed`, still publishing to remote
+`feature` when `replace` is approved. The earlier local branches are preserved.
+In Magit, use `P u` (`magit-push-current-to-upstream`) to push those
 commits to the PR's branch. When the branch names differ, do not substitute
 `P p` (`magit-push-current-to-pushremote`): it pushes to the same-named branch on
 the push remote, regardless of `push.default`.

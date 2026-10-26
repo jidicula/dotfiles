@@ -554,11 +554,27 @@ class Repository:
         require(result.returncode == 0,
                 "remote base changed with merge conflicts; resolve them before endorsement")
 
-    def snapshot(self, request, *, published=None, publication=None, merge_head=None):
+    def planning_source_branch(self, request):
+        source = request["source_branch"]
+        if request["version"] >= 2:
+            current = self.git("branch", "--show-current").decode().strip()
+            if current and current != source:
+                details = self.git(
+                    "for-each-ref",
+                    "--format=%(objectname)%00%(upstream:remotename)%00%(upstream:remoteref)",
+                    "refs/heads/" + current,
+                ).decode().strip().split("\0")
+                if details == [request["head"], "origin", "refs/heads/" + source]:
+                    return current
+        return source
+
+    def snapshot(self, request, *, published=None, publication=None, merge_head=None,
+                 local_source_branch=None):
         validate_request(request)
+        local_source = "refs/heads/" + (local_source_branch or request["source_branch"])
         expected = published if published and publication == "replace" else request["head"]
         for _ in range(3):
-            require(self.ref("refs/heads/" + request["source_branch"]) == request["head"],
+            require(self.ref(local_source) == request["head"],
                     "local source branch changed; obtain a new endorsement")
             refs = self.remote_refs(request)
             require(refs.get("refs/heads/" + request["source_branch"]) == expected,
@@ -569,7 +585,7 @@ class Repository:
             self.check_base_merge(request, base, merge_head or published or request["head"])
             current = self.remote_refs(request)
             require(current.get("refs/heads/" + request["source_branch"]) == expected
-                    and self.ref("refs/heads/" + request["source_branch"]) == request["head"],
+                    and self.ref(local_source) == request["head"],
                     "source branch changed during mergeability checks; obtain a new endorsement")
             if self.remote_base(request, current) == base:
                 return current
@@ -691,16 +707,20 @@ class Repository:
         return plan
 
     def plan(self, request):
-        self.snapshot(request)
+        validate_request(request)
+        local_source = self.planning_source_branch(request)
+        self.snapshot(request, local_source_branch=local_source)
         require(not self.git("status", "--porcelain", "--untracked-files=no").strip(),
                 "commit or set aside tracked worktree changes before requesting endorsement")
         self.ensure_commit(request["base"], request)
-        self.snapshot(request)
+        self.snapshot(request, local_source_branch=local_source)
         commits = self.commits(request)
         require(commits, "the draft PR introduces no commits")
         for oid in commits:
             self.commit(oid)
         plan = {"request": request, "root": self.root, "commits": commits}
+        if local_source != request["source_branch"]:
+            plan["local_source_branch"] = local_source
         if request["version"] >= 2:
             preserved = self.preserved_commits(request, commits)
             base_merges = set(request.get("preserve_base_merges", []))
@@ -711,7 +731,8 @@ class Repository:
                     "no new commits require endorsement; use the verified base-update procedure "
                     "or resume a matching receipt")
         plan_id = digest(plan)
-        target = "refs/heads/" + request["target_branch"]
+        reviewed_plan_request(plan, plan_id)
+        target = "refs/heads/" + local_branches(plan)[1]
         exists = self.git("for-each-ref", "--format=%(refname)", target).decode().splitlines()
         require(target not in exists or (self.state / f"{plan_id}.receipt.json").exists(),
                 "the signed branch already exists; do not overwrite it")
@@ -765,6 +786,7 @@ class Repository:
     def sign(self, plan_id, approval):
         plan = self.load_plan(plan_id)
         request = plan["request"]
+        local_source, local_target = local_branches(plan)
         publication = approved_publication(plan_id, request, approval)
         with self.locked_plan(plan_id):
             receipt_path = self.state / f"{plan_id}.receipt.json"
@@ -775,9 +797,9 @@ class Repository:
                 remote_head = self.remote_refs(request).get("refs/heads/" + request["source_branch"])
                 self.snapshot(request, publication=publication,
                               published=receipt["head"] if remote_head == receipt["head"] else None,
-                              merge_head=receipt["head"])
+                              merge_head=receipt["head"], local_source_branch=local_source)
             else:
-                self.snapshot(request)
+                self.snapshot(request, local_source_branch=local_source)
                 key = public_key(os.environ.get("COPILOT_CS_SIGNING_KEY", ""))
                 require(key == request["key"], "forwarded signing key does not match the reviewed plan")
                 socket = os.environ.get("COPILOT_CS_SIGNING_SOCKET", "")
@@ -802,13 +824,14 @@ class Repository:
                             "hash-object", "-t", "commit", "-w", "--stdin",
                             data=signed_commit(payload, signature),
                         ).decode().strip()
-                self.snapshot(request, merge_head=mapping[request["head"]])
+                self.snapshot(request, merge_head=mapping[request["head"]],
+                              local_source_branch=local_source)
                 receipt = {"plan_id": plan_id, "plan": plan, "mapping": mapping,
                            "publication": publication,
                            "head": mapping[request["head"]]}
                 self.write_record(f"{plan_id}.receipt.json", receipt)
                 self.verify(plan_id)
-            target = "refs/heads/" + request["target_branch"]
+            target = "refs/heads/" + local_target
             current = self.git("for-each-ref", "--format=%(objectname)", target).decode().strip()
             require(not current or current == receipt["head"], "signed branch collision; nothing overwritten")
             if not current:
@@ -819,6 +842,7 @@ class Repository:
         with self.locked_plan(plan_id):
             receipt = self.verify(plan_id)
             request = receipt["plan"]["request"]
+            local_source, signed_branch = local_branches(receipt["plan"])
             publication = approved_publication(plan_id, request, approval)
             destination = request["source_branch"] if publication == "replace" else request["target_branch"]
             target = "refs/heads/" + destination
@@ -828,7 +852,7 @@ class Repository:
                     "the other publication method already published this endorsement; inspect it before proceeding")
             receipt = dict(receipt, publication=publication)
             if refs.get(target) != receipt["head"]:
-                self.snapshot(request, merge_head=receipt["head"])
+                self.snapshot(request, merge_head=receipt["head"], local_source_branch=local_source)
                 expected = request["head"] if publication == "replace" else ""
                 require(refs.get(target, "") == expected, "remote destination changed; nothing overwritten")
                 # An empty expectation creates a new ref only; it cannot rewrite an existing branch.
@@ -837,8 +861,8 @@ class Repository:
                          "origin", f"{receipt['head']}:{target}")
             require(self.remote_refs(request).get(target) == receipt["head"],
                     "remote head was not confirmed after pushing")
-            self.snapshot(request, published=receipt["head"], publication=publication)
-            signed_branch = request["target_branch"]
+            self.snapshot(request, published=receipt["head"], publication=publication,
+                          local_source_branch=local_source)
             self.ref("refs/heads/" + signed_branch)
             for setting, value in (("remote", "origin"), ("merge", target), ("pushRemote", "origin")):
                 self.git("config", "--local", "--replace-all",
@@ -957,6 +981,11 @@ def retained_commits(plan):
     return set(plan.get("preserved_commits", [])) | set(plan.get("preserved_base_merges", []))
 
 
+def local_branches(plan):
+    source = plan.get("local_source_branch", plan["request"]["source_branch"])
+    return source, source + "-signed"
+
+
 def approved_publication(plan_id, request, approval):
     for publication in request["publication_options"]:
         if approval == f"{plan_id}:{publication}":
@@ -970,6 +999,16 @@ def reviewed_plan_request(plan, plan_id):
             "endorsement plan changed or its digest is invalid")
     request = plan.get("request")
     validate_request(request)
+    if "local_source_branch" in plan:
+        source = plan["local_source_branch"]
+        require(request["version"] >= 2 and isinstance(source, str) and source
+                and source != request["source_branch"],
+                "invalid local source branch binding")
+        run(["git", "check-ref-format", "refs/heads/" + source])
+        target = local_branches(plan)[1]
+        run(["git", "check-ref-format", "refs/heads/" + target])
+        require(target != request["source_branch"],
+                "local signed branch would replace the original source branch")
     commits = plan.get("commits")
     require(isinstance(plan.get("root"), str) and plan["root"].startswith("/")
             and isinstance(commits, list) and commits
