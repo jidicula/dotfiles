@@ -640,6 +640,34 @@ class Repository:
         merged = self.git("merge-tree", "--write-tree", *parents).decode().strip()
         require(merged == trees[0], "base-merge tree differs from the clean merge of its parents")
 
+    def verify_base_update(self, update):
+        require(isinstance(update, dict), "expected a base-update request")
+        receipt = self.verify(update.get("plan_id"))
+        request = receipt["plan"]["request"]
+        branch = base_update_branch(receipt, update)
+        refs = self.remote_refs(request)
+        base = self.remote_base(request, refs)
+        self.ensure_commit(update["base"], request)
+        blocks, _ = self.commit(update["head"])
+        parents = [block[7:].decode("ascii") for block in blocks if block.startswith(b"parent ")]
+        require(parents and parents[0] == receipt["head"],
+                "base-update must directly extend the published signed head")
+        self.check_base_merge(request, update["base"], update["head"])
+        self.verify_base_merge(dict(request, base=update["base"]), update["head"])
+        self.check_base_merge(dict(request, base=update["base"]), base, update["head"])
+        current = self.remote_refs(request)
+        require(current.get("refs/heads/" + branch) == update["head"],
+                "published base-update branch changed")
+        require(self.remote_base(request, current) == base,
+                "base branch changed during verification; retry the same base-update")
+        record = {
+            "version": 1, "receipt_digest": digest(receipt),
+            **{field: update[field] for field in ("plan_id", "pr", "head", "base")},
+            "tree": self.ref(update["head"] + "^{tree}"),
+        }
+        self.write_record(f"{receipt['plan_id']}.base-update-{update['head']}.json", record)
+        return record
+
     def commit(self, oid):
         require(isinstance(oid, str) and OID.fullmatch(oid), "invalid commit object id")
         raw = self.git("cat-file", "commit", oid)
@@ -1054,6 +1082,20 @@ def signed_receipt_request(receipt, approval):
     require(all(mapping[oid] == oid for oid in retained_commits(receipt["plan"])),
             "preserved commits and base-merges must remain unchanged")
     return request, publication
+
+
+def base_update_branch(receipt, update):
+    require(isinstance(update, dict) and update.get("plan_id") == receipt["plan_id"]
+            and type(update.get("pr")) is int and update["pr"] > 0
+            and all(isinstance(update.get(field), str) and OID.fullmatch(update[field])
+                    for field in ("head", "base")),
+            "invalid base-update scope")
+    request = receipt["plan"]["request"]
+    if receipt["publication"] == "replace":
+        require(update["pr"] == request["pr"], "base-update PR differs from the signed publication")
+        return request["source_branch"]
+    require(update["pr"] != request["pr"], "base-update requires the signed replacement PR")
+    return request["target_branch"]
 
 
 def assignee_logins(pr):
@@ -1825,7 +1867,86 @@ def ready_for_review(request, number, head, branch):
             "ci_scope": pr["ci_scope"], **assignment}
 
 
-def finish(receipt, approval, *, draft_only=False):
+def verify_published_commits(receipt):
+    plan = receipt["plan"]
+    request = plan["request"]
+    hostname = request_hostname(request)
+    source = source_repository(request)
+    preserved = retained_commits(plan)
+    for original in plan["commits"]:
+        before = github(f"repos/{source}/git/commits/{original}", hostname=hostname)
+        after = github(f"repos/{source}/git/commits/{receipt['mapping'][original]}", hostname=hostname)
+        require(isinstance(before["committer"], dict), "invalid reviewed committer metadata")
+        override = {} if original in preserved else request.get("committer", {})
+        expected_committer = {**before["committer"], **override}
+        require(before["tree"]["sha"] == after["tree"]["sha"]
+                and all(before[field] == after[field] for field in ("message", "author"))
+                and after["committer"] == expected_committer
+                and [receipt["mapping"].get(parent["sha"], parent["sha"]) for parent in before["parents"]]
+                == [parent["sha"] for parent in after["parents"]],
+                f"published commit differs from reviewed commit: {original}")
+        if original in plan.get("preserved_base_merges", []):
+            verify_github_base_merge(request, original, after)
+            require(after["parents"][0]["sha"] in preserved,
+                    "base-merge does not extend preserved first-parent history")
+        else:
+            verify_github_commit(receipt["mapping"][original], after, request["key"])
+
+
+def finish_base_update(receipt, approval, update, *, draft_only=False):
+    request, publication = signed_receipt_request(receipt, approval)
+    branch = base_update_branch(receipt, update)
+    require(type(update.get("version")) is int and update["version"] == 1
+            and update.get("receipt_digest") == digest(receipt)
+            and isinstance(update.get("tree"), str) and OID.fullmatch(update["tree"]),
+            "base-update record does not match the unchanged signed receipt")
+    hostname = request_hostname(request)
+    repository = request["repository"]
+    metadata = github(f"repos/{repository}", hostname=hostname)
+    require(isinstance(metadata, dict) and metadata.get("default_branch") == request["base_branch"],
+            "base-update requires the same default branch")
+    pr = planned_pull_request(request, update["pr"], require_draft=False)
+    current = {
+        **request, "pr": update["pr"], "url": pr["html_url"], "source_branch": branch,
+        "head": update["head"], "base": update["base"],
+    }
+    # Revision-scoped CI exceptions do not transfer to the new merge.
+    current.pop("ci_exception", None)
+    current.pop("ci_deferral", None)
+    confirm_ci_revision(current, update["pr"], update["head"], branch)
+    confirm_base_compatibility(request, pr)
+    if publication == "replacement":
+        original = planned_pull_request(request, request["pr"], require_draft=False)
+        require(original["state"] == "closed"
+                and original["head"]["sha"] == request["head"]
+                and original["head"]["ref"] == request["source_branch"]
+                and original["base"]["ref"] == request["base_branch"]
+                and f"<!-- copilot-endorsement:{receipt['plan_id']} -->" in (pr["body"] or ""),
+                "signed replacement finalisation is incomplete or changed")
+    commit = github(f"repos/{source_repository(request)}/git/commits/{update['head']}",
+                    hostname=hostname)
+    verify_github_base_merge(current, update["head"], commit)
+    require(commit["parents"][0]["sha"] == receipt["head"]
+            and commit["tree"]["sha"] == update["tree"],
+            "base-update differs from the verified clean merge of the signed head")
+    verify_published_commits(receipt)
+    if "attestor" in request:
+        set_attestation_assignment(current, False, head=update["head"], require_draft=False)
+    if draft_only:
+        checked = require_passing_checks(current, update["pr"], update["head"], branch,
+                                         require_draft=True)
+        assignment = confirm_attestation_cleared(
+            current, checked, "attestor is still assigned; clear the attestation wait")
+        result = {"url": checked["html_url"], "head": update["head"],
+                  "ready_for_review": False, "ci_scope": checked["ci_scope"], **assignment}
+    else:
+        result = ready_for_review(current, update["pr"], update["head"], branch)
+    return dict(result, base_update=update)
+
+
+def finish(receipt, approval, *, draft_only=False, base_update=None):
+    if base_update is not None:
+        return finish_base_update(receipt, approval, base_update, draft_only=draft_only)
     request, publication = signed_receipt_request(receipt, approval)
     plan = receipt["plan"]
     plan_id = receipt["plan_id"]
@@ -1859,25 +1980,7 @@ def finish(receipt, approval, *, draft_only=False):
     require(branch_head(source, target, hostname=hostname) == receipt["head"], "published signed branch changed")
     require(branch_head(source, request["source_branch"], hostname=hostname) == expected,
             "original source branch changed after endorsement")
-    preserved = retained_commits(plan)
-    for original in plan["commits"]:
-        before = github(f"repos/{source}/git/commits/{original}", hostname=hostname)
-        after = github(f"repos/{source}/git/commits/{receipt['mapping'][original]}", hostname=hostname)
-        require(isinstance(before["committer"], dict), "invalid reviewed committer metadata")
-        override = {} if original in preserved else request.get("committer", {})
-        expected_committer = {**before["committer"], **override}
-        require(before["tree"]["sha"] == after["tree"]["sha"]
-                and all(before[field] == after[field] for field in ("message", "author"))
-                and after["committer"] == expected_committer
-                and [receipt["mapping"].get(parent["sha"], parent["sha"]) for parent in before["parents"]]
-                == [parent["sha"] for parent in after["parents"]],
-                f"published commit differs from reviewed commit: {original}")
-        if original in plan.get("preserved_base_merges", []):
-            verify_github_base_merge(request, original, after)
-            require(after["parents"][0]["sha"] in preserved,
-                    "base-merge does not extend preserved first-parent history")
-        else:
-            verify_github_commit(receipt["mapping"][original], after, request["key"])
+    verify_published_commits(receipt)
     confirm_base_compatibility(request, merge_pr)
     if "attestor" in request:
         updated = set_attestation_assignment(
@@ -2014,6 +2117,10 @@ def main():
                  "approval check; never waives readiness")
     plan_parser = actions.add_parser("plan", help="CODESPACE: freeze the commit range for human review")
     plan_parser.add_argument("--request", required=True)
+    update_parser = actions.add_parser(
+        "verify-base-update", help="CODESPACE: verify a clean base-only merge above a signed receipt")
+    update_parser.add_argument("--request", required=True,
+                               help="JSON with plan_id, published PR number, updated head, and base")
     awaiting_parser = actions.add_parser(
         "await-attestation",
         help="LOCAL: assign the operator when permitted before the exact-plan review prompt")
@@ -2033,12 +2140,14 @@ def main():
         "finish", help="LOCAL: verify publication and mark the signed PR ready after required CI passes")
     finish_parser.add_argument("--receipt", required=True)
     finish_parser.add_argument("--approve-plan", required=True)
+    finish_parser.add_argument("--base-update",
+                               help="unchanged Codespace verification record for a base-only update")
     finish_parser.add_argument(
         "--draft-only", action="store_true",
         help="verify signed-head CI and finalise a draft without readiness; only the plan's "
-             "selected collaborator-approval check may remain pending")
+             "selected collaborator-approval check may remain pending, except with --base-update")
     args = parser.parse_args()
-    remote = args.action in ("plan", "sign", "verify", "push")
+    remote = args.action in ("plan", "sign", "verify", "push", "verify-base-update")
     try:
         deferred_check = getattr(args, "defer_collaborator_approvals", None)
         deferral = None
@@ -2052,6 +2161,8 @@ def main():
             repository = Repository()
             if args.action == "plan":
                 result = repository.plan(json.loads(args.request))
+            elif args.action == "verify-base-update":
+                result = repository.verify_base_update(json.loads(args.request))
             elif args.action == "verify":
                 result = repository.verify(args.plan)
             else:
@@ -2084,8 +2195,12 @@ def main():
         else:
             require(os.environ.get("CODESPACES") != "true",
                     "run GitHub finalisation locally with the operator's authenticated gh")
+            update = None
+            if args.base_update is not None:
+                update = json.loads(Path(args.base_update).read_text())
+                require(isinstance(update, dict), "expected a base-update verification record")
             result = finish(json.loads(Path(args.receipt).read_text()), args.approve_plan,
-                            draft_only=args.draft_only)
+                            draft_only=args.draft_only, base_update=update)
         print((RESULT_PREFIX if remote else "") + canonical(result))
         return 0
     except (ValueError, RuntimeError, OSError, KeyError, subprocess.TimeoutExpired) as error:

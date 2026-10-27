@@ -540,20 +540,20 @@ exit 127; }; timeout --verbose --kill-after=5s %ds %s"
 
 (defun copilot-cs-endorse (action data &optional approved-plan wait tty)
   "Run endorsement ACTION using DATA inside the selected Codespace.
-ACTION is \"plan\", \"sign\", \"verify\", or \"push\".  DATA is the local
-prepare command's JSON request after the required CI gate for \"plan\",
-otherwise the exact plan id.
+ACTION is \"plan\", \"sign\", \"verify\", \"push\", or \"verify-base-update\".
+DATA is JSON for \"plan\" (the prepared request) and \"verify-base-update\"
+with plan_id, pr, head, and base; otherwise it is the exact plan id.
 Signing and pushing require APPROVED-PLAN to be \"ID:replacement\" or
 \"ID:replace\", matching the revision and publication method explicitly chosen
 by the operator.  Only \"sign\" forwards the agent.  WAIT is a polling budget.
 For \"push\" only, TTY supplies a remote PTY for terminal-dependent hooks."
   (unless (and copilot-cs-configured copilot-cs-id)
     (error "copilot-cs: endorsement requires an explicitly selected Codespace"))
-  (unless (and (member action '("plan" "sign" "verify" "push")) (stringp data))
+  (unless (and (member action '("plan" "sign" "verify" "push" "verify-base-update")) (stringp data))
     (error "copilot-cs: invalid endorsement action or data"))
   (when (and tty (not (equal action "push")))
     (error "copilot-cs: an endorsement PTY is only available for publication hooks"))
-  (unless (or (equal action "plan")
+  (unless (or (member action '("plan" "verify-base-update"))
               (string-match-p "\\`[0-9a-f]\\{64\\}\\'" data))
     (error "copilot-cs: expected the complete endorsement plan id"))
   (when (and (member action '("sign" "push"))
@@ -580,7 +580,8 @@ For \"push\" only, TTY supplies a remote PTY for terminal-dependent hooks."
                                    "'copilot-cs-endorse', 'exec'))")
                            program
                            action
-                           (if (equal action "plan") "--request" "--plan") data)
+                           (if (member action '("plan" "verify-base-update"))
+                               "--request" "--plan") data)
                      (when (member action '("sign" "push"))
                        (list "--approve-plan" approved-plan))))
          (command (mapconcat #'shell-quote-argument arguments " ")))

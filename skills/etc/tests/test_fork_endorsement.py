@@ -180,6 +180,10 @@ class ForkFollowUpBranchTests(ForkRepositoryTestCase, fixtures.FollowUpBranchTes
     """Keep local branch aliases distinct from fork publication destinations."""
 
 
+class ForkBaseUpdateFinishTests(fixtures.BaseUpdateFinishTests, ForkRepositoryTestCase):
+    """Verify base merges against upstream and readiness against the fork head."""
+
+
 class ForkPlanningTests(ForkRepositoryTestCase):
     def test_missing_base_fetches_from_upstream_without_touching_refs_or_worktree(self):
         self.request["base"] = self.advance_base()

@@ -317,7 +317,7 @@ class EndorsementTestCase(HelperTestCase):
     def base_merge_follow_up(self, previous, *, count=1, trailing_signature_newline=False):
         self.follow_up(previous, count=0)
         base = self.advance_base()
-        self.git("fetch", "--quiet", "origin", "main")
+        self.git("fetch", "--quiet", self.repository.base_remote(self.request), "main")
         key = self.root / "platform-test-only"
         self.command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key))
         key.chmod(0o600)
@@ -2027,6 +2027,297 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
             },
         }
         return run
+
+
+class BaseUpdateFinishTests(GitHubEndorsementTestCase):
+    def sign(self, publication="replace"):
+        return super().sign(publication)
+
+    def setUp(self):
+        super().setUp()
+        self.repository.push(self.plan_id, self.approve("replace"))
+        self.updated_head = self.base_merge_follow_up(self.receipt, count=0)
+        self.live_base = self.request["base"]
+        self.request = copy.deepcopy(self.receipt["plan"]["request"])
+        self.original["head"]["sha"] = self.updated_head
+        self.commits[self.updated_head] = self.commit_data(self.updated_head)
+        self.git("--git-dir=" + str(self.remote), "update-ref",
+                 "refs/heads/feature", self.updated_head)
+        self.update = {
+            "plan_id": self.plan_id, "pr": 12,
+            "head": self.updated_head, "base": self.live_base,
+        }
+        self.calls.clear()
+
+    def verify_update(self):
+        return self.repository.verify_base_update(self.update)
+
+    def api(self, endpoint, method="GET", data=None, *, hostname="github.com"):
+        if "/compare/" in endpoint and self.base_relation == "ahead":
+            base, head = endpoint.split("/compare/", 1)[1].split("?", 1)[0].split("...")
+            ancestor = self.git("merge-base", base, head).strip()
+            status = ("identical" if base == head else "ahead" if ancestor == base
+                      else "behind" if ancestor == head else "diverged")
+            self.calls.append((method, endpoint, data))
+            return {"status": status, "base_commit": {"sha": base},
+                    "merge_base_commit": {"sha": ancestor}}
+        return super().api(endpoint, method, data, hostname=hostname)
+
+    def finish_update(self, record=None, *, draft_only=False):
+        return self.helper.finish(
+            self.receipt, self.approve(self.receipt["publication"]),
+            base_update=record if record is not None else self.verify_update(),
+            draft_only=draft_only,
+        )
+
+    def test_base_only_update_can_finish_without_resigning_or_editing_the_receipt(self):
+        receipt = copy.deepcopy(self.receipt)
+        raw = {oid: self.repository.git("cat-file", "commit", oid)
+               for oid in self.receipt["mapping"].values()}
+        refs = self.git("show-ref")
+        with mock.patch.object(self.helper, "run", wraps=self.helper.run) as commands:
+            record = self.verify_update()
+            result = self.finish_update(record)
+            self.assertEqual(self.finish_update(record), result)
+        self.assertTrue(result["ready_for_review"])
+        self.assertEqual(result["head"], self.updated_head)
+        self.assertEqual(self.receipt, receipt)
+        self.assertEqual(self.git("show-ref"), refs)
+        self.assertFalse(any(call.args[0][:3] == ["ssh-keygen", "-Y", "sign"]
+                             for call in commands.call_args_list))
+        for oid, contents in raw.items():
+            self.assertEqual(self.repository.git("cat-file", "commit", oid), contents)
+        self.assertEqual(json.loads((self.repository.state /
+                         f"{self.plan_id}.base-update-{self.updated_head}.json").read_text()), record)
+        self.assertEqual(self.original["state"], "open")
+        self.assertIsNone(self.replacement)
+
+    def test_original_receipt_alone_still_cannot_finish_the_updated_head(self):
+        with self.assertRaisesRegex(ValueError, "PR changed after endorsement"):
+            self.finish()
+        self.assert_read_only_calls()
+
+    def test_changed_record_cannot_be_used_for_readiness(self):
+        record = self.verify_update()
+        for field, value in (
+            ("version", 99), ("receipt_digest", "a" * 64), ("plan_id", "b" * 64),
+            ("pr", 13), ("pr", True), ("head", self.receipt["head"]),
+            ("base", self.base), ("tree", "c" * 40),
+        ):
+            with self.subTest(field=field, value=value):
+                with self.assertRaises((ValueError, RuntimeError)):
+                    self.finish_update(dict(record, **{field: value}))
+                self.assertTrue(self.original["draft"])
+                self.assert_read_only_calls()
+
+    def test_local_verification_rejects_non_base_changes_and_moved_remote(self):
+        self.git("commit", "--quiet", "--allow-empty", "-m", "unendorsed work")
+        child = self.git("rev-parse", "HEAD").strip()
+        for field, value in (("head", child), ("head", self.receipt["head"]),
+                             ("base", self.base), ("head", "--all")):
+            with self.subTest(field=field):
+                with self.assertRaises((ValueError, RuntimeError)):
+                    self.repository.verify_base_update(dict(self.update, **{field: value}))
+        self.git("--git-dir=" + str(self.remote), "fetch", "--quiet", str(self.root), child)
+        self.git("--git-dir=" + str(self.remote), "update-ref", "refs/heads/feature", child)
+        with self.assertRaisesRegex(ValueError, "branch changed"):
+            self.verify_update()
+        self.assertFalse(list(self.repository.state.glob("*.base-update-*.json")))
+
+    def test_origin_is_checked_before_fetching_history(self):
+        with mock.patch.object(self.repository, "validate_origin",
+                               side_effect=ValueError("unexpected origin")), \
+                mock.patch.object(self.repository, "ensure_commit") as fetch:
+            with self.assertRaisesRegex(ValueError, "unexpected origin"):
+                self.verify_update()
+            fetch.assert_not_called()
+
+    def test_locally_signed_extra_content_is_not_a_clean_base_merge(self):
+        (self.root / "injected").write_text("not from either parent\n")
+        self.git("add", "injected")
+        self.git("-c", "user.name=GitHub", "-c", "user.email=noreply@github.com",
+                 "-c", "gpg.format=ssh", "-c", f"user.signingkey={self.root / 'platform-test-only'}",
+                 "commit", "--quiet", "--amend", "--no-edit", "-S")
+        self.update["head"] = self.git("rev-parse", "HEAD").strip()
+        self.git("--git-dir=" + str(self.remote), "fetch", "--quiet", str(self.root),
+                 self.update["head"])
+        self.git("--git-dir=" + str(self.remote), "update-ref",
+                 "refs/heads/feature", self.update["head"])
+        with self.assertRaisesRegex(ValueError, "clean merge"):
+            self.verify_update()
+
+    def test_unverified_platform_signature_or_changed_endorsement_blocks_readiness(self):
+        record = self.verify_update()
+        for oid in (self.updated_head, self.receipt["head"]):
+            with self.subTest(oid=oid):
+                self.commits[oid]["verification"]["verified"] = False
+                with self.assertRaisesRegex(ValueError, "GitHub has not verified"):
+                    self.finish_update(record)
+                self.commits[oid]["verification"]["verified"] = True
+                self.assert_read_only_calls()
+
+    def test_pending_ci_stays_draft_and_success_checks_only_the_updated_head(self):
+        record = self.verify_update()
+        self.check_pages[0][0].update(status="IN_PROGRESS", conclusion=None)
+        with self.assertRaisesRegex(ValueError, "quality gate blocked"):
+            self.finish_update(record)
+        self.assertTrue(self.original["draft"])
+        self.check_pages[0][0].update(status="COMPLETED", conclusion="SUCCESS")
+        self.check_head = self.receipt["head"]
+        with self.assertRaises(ValueError):
+            self.finish_update(record)
+        self.check_head = None
+        self.assertTrue(self.finish_update(record)["ready_for_review"])
+
+    def test_failed_required_ci_rolls_back_only_the_updated_head(self):
+        record = self.verify_update()
+        self.assertTrue(self.finish_update(record)["ready_for_review"])
+        self.check_pages[0][0]["conclusion"] = "FAILURE"
+        with self.assertRaisesRegex(self.helper.RequiredCIFailure, "returned.*to draft"):
+            self.finish_update(record)
+        self.assertTrue(self.original["draft"])
+        self.assertEqual(self.original["head"]["sha"], self.updated_head)
+
+    def test_head_race_blocks_readiness_and_rollback(self):
+        record = self.verify_update()
+        for draft in (True, False):
+            with self.subTest(draft=draft):
+                self.original["draft"] = draft
+                self.original["head"]["sha"] = self.updated_head
+                self.calls.clear()
+                self.check_pages[0][0]["conclusion"] = "SUCCESS" if draft else "FAILURE"
+                self.mutate_on_checks = lambda pr: pr["head"].update(sha=self.head)
+                with self.assertRaises(ValueError):
+                    self.finish_update(record)
+                self.assertEqual(self.original["draft"], draft)
+                self.assert_read_only_calls()
+
+    def test_assignment_tracking_is_recovered_without_changing_other_assignees(self):
+        self.original["assignees"].append({"login": "fixture"})
+        self.assertTrue(self.finish_update()["ready_for_review"])
+        self.assertEqual(self.original["assignees"], [{"login": "maintainer"}])
+
+    def test_draft_only_does_not_promote_and_still_requires_ci(self):
+        record = self.verify_update()
+        self.assertFalse(self.finish_update(record, draft_only=True)["ready_for_review"])
+        self.assertTrue(self.original["draft"])
+        self.check_pages[0][0]["conclusion"] = "FAILURE"
+        with self.assertRaises(self.helper.RequiredCIFailure):
+            self.finish_update(record, draft_only=True)
+
+    def test_revision_scoped_absent_ci_exception_does_not_transfer(self):
+        record = self.verify_update()
+        receipt = copy.deepcopy(self.receipt)
+        request = receipt["plan"]["request"]
+        request.update(version=5 if "source_repository" in request else 4,
+                       ci_exception="no_required_ci")
+        receipt["plan_id"] = self.helper.digest(receipt["plan"])
+        record.update(plan_id=receipt["plan_id"], receipt_digest=self.helper.digest(receipt))
+        self.required_contexts = []
+        self.check_pages = [[]]
+        with self.assertRaisesRegex(ValueError, "no required CI"):
+            self.helper.finish(receipt, receipt["plan_id"] + ":replace", base_update=record)
+        self.assertTrue(self.original["draft"])
+        self.assert_read_only_calls()
+
+    def test_default_branch_and_base_ancestry_must_still_match(self):
+        record = self.verify_update()
+        api = self.api
+        def changed_default(endpoint, method="GET", data=None, *, hostname="github.com"):
+            if endpoint == "repos/example/project":
+                return {"default_branch": "other"}
+            return api(endpoint, method, data, hostname=hostname)
+        with mock.patch.object(self.helper, "github", side_effect=changed_default):
+            with self.assertRaisesRegex(ValueError, "default branch"):
+                self.finish_update(record)
+        self.base_relation = "diverged"
+        with self.assertRaisesRegex(ValueError, "fast-forward"):
+            self.finish_update(record)
+        self.assert_read_only_calls()
+
+    def test_clean_base_advance_reuses_the_record_but_conflicts_and_rewinds_block(self):
+        record = self.verify_update()
+        self.live_base = self.advance_base()
+        self.git("fetch", "--quiet", self.repository.base_remote(self.request), "main")
+        self.assertTrue(self.finish_update(record)["ready_for_review"])
+        self.mergeable = "CONFLICTING"
+        with self.assertRaisesRegex(ValueError, "conflict"):
+            self.finish_update(record)
+        self.mergeable = "MERGEABLE"
+        self.live_base = self.base
+        with self.assertRaisesRegex(ValueError, "fast-forward"):
+            self.finish_update(record)
+
+    def test_unknown_assignment_permission_and_changed_base_branch_block(self):
+        record = self.verify_update()
+        self.assignment_permission = None
+        with self.assertRaisesRegex(ValueError, "permission is unconfirmed"):
+            self.finish_update(record)
+        self.assignment_permission = True
+        self.original["base"]["ref"] = "other"
+        with self.assertRaises(ValueError):
+            self.finish_update(record)
+        self.assert_read_only_calls()
+
+    def test_cli_verifies_and_finishes_the_record_in_the_correct_environments(self):
+        args = ["copilot-cs-endorse", "verify-base-update",
+                "--request", json.dumps(self.update)]
+        with mock.patch.object(self.helper, "Repository", return_value=self.repository), \
+                mock.patch.object(sys, "argv", args), redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(self.helper.main(), 0)
+        record = json.loads(output.getvalue().split(self.helper.RESULT_PREFIX)[-1])
+        receipt_file, update_file = self.root / "receipt.json", self.root / "update.json"
+        receipt_file.write_text(json.dumps(self.receipt))
+        update_file.write_text(json.dumps(record))
+        args = ["copilot-cs-endorse", "finish", "--receipt", str(receipt_file),
+                "--approve-plan", self.approve("replace"), "--base-update", str(update_file)]
+        for invalid in ("null", "[]"):
+            update_file.write_text(invalid)
+            self.calls.clear()
+            with mock.patch.dict(os.environ, {"CODESPACES": ""}), \
+                    mock.patch.object(sys, "argv", args), redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(self.helper.main(), 1)
+            self.assertIn("expected a base-update verification record", error.getvalue())
+            self.assertEqual(self.calls, [])
+        update_file.write_text(json.dumps(record))
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), \
+                mock.patch.object(sys, "argv", args), redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(self.helper.main(), 0)
+        self.assertEqual(json.loads(output.getvalue())["head"], self.updated_head)
+
+
+class ReplacementBaseUpdateFinishTests(GitHubEndorsementTestCase):
+    def test_existing_replacement_finishes_without_reopening_or_replacing_prs(self):
+        self.repository.push(self.plan_id, self.approve())
+        self.finish()
+        self.replacement["draft"] = True
+        merge = self.base_merge_follow_up(self.receipt, count=0)
+        self.live_base = self.request["base"]
+        self.request = copy.deepcopy(self.receipt["plan"]["request"])
+        self.replacement["head"]["sha"] = merge
+        self.commits[merge] = self.commit_data(merge)
+        self.published_head = merge
+        self.git("--git-dir=" + str(self.remote), "update-ref", "refs/heads/feature-signed", merge)
+        record = self.repository.verify_base_update({
+            "plan_id": self.plan_id, "pr": 13, "head": merge, "base": self.live_base,
+        })
+        self.calls.clear()
+        body = self.replacement["body"]
+        self.replacement["body"] = ""
+        with self.assertRaisesRegex(ValueError, "replacement finalisation"):
+            self.helper.finish(self.receipt, self.approve(), base_update=record)
+        self.replacement["body"] = body
+        self.original["state"] = "open"
+        with self.assertRaisesRegex(ValueError, "replacement finalisation"):
+            self.helper.finish(self.receipt, self.approve(), base_update=record)
+        self.original["state"] = "closed"
+        result = self.helper.finish(self.receipt, self.approve(), base_update=record)
+        self.assertEqual(result["url"], self.replacement["html_url"])
+        self.assertEqual(result["head"], merge)
+        self.assertTrue(result["ready_for_review"])
+        self.assertEqual(self.original["state"], "closed")
+        self.assertFalse(any(method not in ("GET", "GET-PAGES") and endpoint != "graphql"
+                             for method, endpoint, _ in self.calls))
 
 
 class HostnameEndorsementTests(GitHubEndorsementTestCase):
@@ -4739,14 +5030,32 @@ class EndorsementRunnerTests(EndorsementTestCase):
                      (copilot-cs-endorse "plan" {json.dumps(json.dumps(self.request))} nil 0)
                      (copilot-cs-endorse "sign" plan-id (concat plan-id ":replacement") 0)
                      (copilot-cs-endorse "verify" plan-id nil 0)
+                     (copilot-cs-endorse "verify-base-update" "{{}}" nil 0)
                      (copilot-cs-endorse "push" plan-id (concat plan-id ":replacement") 0)
                      (copilot-cs-endorse "push" plan-id (concat plan-id ":replace") 0 t)))))))"""
         )
         lengths = json.loads(output)
-        self.assertEqual(len(lengths), 5)
+        self.assertEqual(len(lengths), 6)
         for length in lengths:
             self.assertGreater(length, 0)
             self.assertLessEqual(length, 120000)
+
+    def test_base_update_verification_never_forwards_the_signing_agent(self):
+        output = self.emacs(
+            """(progn
+              (require 'cl-lib)
+              (require 'json)
+              (copilot-cs-use "fixture-codespace" "/workspaces/project")
+              (cl-letf (((symbol-function 'copilot-cs--run)
+                         (lambda (command _label _wait forward)
+                           (princ (json-encode (list command (if forward t :json-false)))))))
+                (copilot-cs-endorse "verify-base-update" "{}" nil 0)))"""
+        )
+        command, forward = json.loads(output)
+        self.assertFalse(forward)
+        self.assertIn("verify-base-update", command)
+        self.assertIn("--request", command)
+        self.assertNotIn("--approve-plan", command)
 
     def test_helper_compression_failure_stops_before_remote_dispatch(self):
         self.executable(

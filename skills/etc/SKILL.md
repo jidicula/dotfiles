@@ -979,8 +979,9 @@ fixes. Do not create a temporary commit to obtain a review.
   base-only API merge does not require another endorsement; conflicts, unexpected
   source changes or new agent-written code do. Follow the
   [API-first base-update procedure](references/endorsement.md#updating-an-endorsed-pr-from-the-default-branch);
-  never silently fall back to a local merge/rebase or reuse an old receipt for a
-  different head.
+  finalise its updated head with the separate `verify-base-update` record and
+  `finish --base-update` command documented there. Never silently fall back to a
+  local merge/rebase or use an old receipt alone for a different head.
 - After changing the base branch or refreshing an older Codespace, recheck
   the repository's dependency/bootstrap readiness before validation or pushing.
   `Available` describes the container, not its dependencies. A successful push
@@ -1712,6 +1713,8 @@ completed task if it remains blocked.
 For pending signed-head CI, preserve the published draft and receipt. Inspect
 the resulting PR with local `gh`, poll read-only within that history-based
 deadline, then repeat only the same `finish --receipt ... --approve-plan ...`.
+For a verified API-only base update, retain its separate verification record and
+include the same `--base-update <record>` on every finalisation or rollback retry.
 Do not sign/push again, create a
 duplicate or bypass readiness with `gh pr ready`. Outside the verified API-only
 base-update exception, a changed head, retargeted base or rewritten base history

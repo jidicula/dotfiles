@@ -416,12 +416,61 @@ This verified, base-only API merge does not need another human endorsement gate.
 It preserves the endorsements of the existing commits; GitHub's new merge commit
 is not a new Secretive signature or proof that the operator endorsed its OID.
 Record the old/new heads and merged default revision separately, and require CI
-on the updated head. For a required-CI failure on this base-only update, use that
-record to recheck the exact head/base before an API draft rollback and verify the
-result afterwards; the old endorsement receipt cannot guard the new head.
-Never edit the old plan/receipt or pass it to `finish` as
-proof of the new head. Unexpected commits, conflict resolution, agent-written
-changes or history rewriting return to the normal review and endorsement gates.
+on the updated head. Never edit the old plan/receipt or use it alone as proof of
+the new head. Unexpected commits, conflict resolution, agent-written changes or
+history rewriting return to the normal review and endorsement gates.
+
+### Finalising the base-updated draft
+
+After fetching the new head into the original plan's Codespace checkout, create
+a separate verification record through the runner. `pr` is the published PR's
+number (the replacement's number when applicable), `head` is the exact update
+result, and `base` is the observed live default-branch OID containing its second
+parent. If the default branch advanced during the API request, confirm its
+fast-forward ancestry from the pre-request observation before selecting that OID.
+
+```elisp
+(copilot-cs-endorse
+ "verify-base-update"
+ "{\"plan_id\":\"<original-plan-id>\",\"pr\":123,\"head\":\"<updated-head>\",\"base\":\"<observed-default-head>\"}"
+ nil 0)
+```
+
+Poll that exact job and read its complete result. This action uses the saved
+signed receipt, verifies the existing signatures, and requires exactly one new
+two-parent GitHub-style merge whose first parent is the receipt's signed head.
+It recomputes the clean merge tree, checks base ancestry and the published
+branch, and saves an immutable, receipt-bound record without signing, forwarding
+the signing agent, or changing the checkout or refs.
+
+Copy that record unchanged using the existing `COMMON_DIR`, `CS_ID`, and
+`SESSION_FILES` values; set `UPDATED_HEAD` to the verified update result:
+
+```sh
+/absolute/path/to/skills/etc/setup/copilot-ghcs cp "$CS_ID" \
+  "remote:$COMMON_DIR/copilot-endorsements/$PLAN_ID.base-update-$UPDATED_HEAD.json" \
+  "$SESSION_FILES/$PLAN_ID.base-update-$UPDATED_HEAD.json"
+
+/absolute/path/to/skills/etc/setup/copilot-cs-endorse finish \
+  --receipt "$RECEIPT" --approve-plan "$APPROVAL" \
+  --base-update "$SESSION_FILES/$PLAN_ID.base-update-$UPDATED_HEAD.json"
+```
+
+Use the **original unchanged receipt and approval**, plus the complete new
+record. Local finalisation independently rechecks GitHub's merge-signature
+verification, all original endorsements, the PR/branch/default-branch identities,
+base ancestry, assignment permissions, and required CI on the updated head.
+An existing signed replacement must already have completed replacement
+finalisation; this path does not create, close, or relink PRs.
+
+Pending CI leaves the draft unchanged. Poll within the usual history-based
+deadline and repeat this same `finish --base-update` invocation; do not sign,
+push, or perform another base update merely to resume it. A required-CI failure
+after readiness uses the updated head for the guarded draft rollback. Monitor
+readiness-triggered runs as usual, then repeat the same command for the final
+gate. `--draft-only` verifies without promotion. Original revision-scoped CI
+exceptions do not transfer: every required check must pass on this updated head.
+Keep this record with the receipt across session resumes.
 
 ## Assign and request human attestation
 
