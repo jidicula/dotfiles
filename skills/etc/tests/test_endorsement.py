@@ -3992,6 +3992,7 @@ class GitHubEndorsementTests(GitHubEndorsementTestCase):
                 "url": self.replacement["html_url"], "head": self.receipt["head"],
                 "replaces": self.request["url"], "ready_for_review": True,
                 "ci_scope": "observed_required_checks",
+                "assignment_scope": "required",
             })
 
     def test_conflicting_base_advance_blocks_finalization_before_metadata_mutation(self):
