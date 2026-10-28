@@ -262,8 +262,10 @@ them merely to pass the gate, or repeatedly request unchanged reviews to erase
 the findings.
 
 Qualifying findings may proceed to preparation and the existing exact-revision
-endorsement prompt without a separate bypass-approval request. Include the
-recorded findings and prerequisites in that prompt and explain that the
+endorsement prompt without a separate bypass-approval request. Use the
+[compact endorsement layout](endorsement.md#compact-endorsement-prompt) for
+finding links in the preceding chat and labelled findings and prerequisites
+in the URL-free form. Explain that the
 affirmative endorsement accepts their deferral to human follow-up. No signing
 is authorised without that explicit acceptance. This exception does not waive
 CI, required GitHub approvals, or merge/deployment prerequisites, and endorsement

@@ -529,22 +529,39 @@ Before preparation or this prompt, require `0 open findings` from CCR or only
 documented [human-follow-up exceptions](copilot-code-review.md#human-follow-up-exception),
 including when human review is recommended or CCR has since become unavailable.
 
-Print the full draft URL on its own line immediately before the interactive
-prompt. Use this compact message:
+**Keep review links outside the interactive form.** Its renderer can wrap URLs
+and insert whitespace even when the supplied text has no line breaks. Put the
+links in ordinary assistant chat, in the same response immediately before
+calling the prompt tool. Use short Markdown link labels there, where Markdown
+is rendered. Keep all URLs out of the form's message, field descriptions, and
+choices; use plain-text revision and finding labels instead.
+
+First send this in ordinary chat:
 
 ```markdown
 <PR URL>
 
-Do you stand by every commit in this revision?
-
-Changes: [<short-base>..<short-head>](<PR URL>/changes/<full-base>..<full-head>) (<count> commits)
-CCR: [<outcome>](<full review URL>)
+[Review <short-base>..<short-head>](<PR URL>/changes/<full-base>..<full-head>)
+[Copilot review](<full review URL>)
 ```
 
-Build the changes link from the saved plan's `request.url`, `request.base`, and
-`request.head`, using full OIDs in the URL and abbreviated OIDs only in the label.
-For example:
-[aaaaaaa..bbbbbbb](https://github.com/foo/bar/pull/123/changes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb).
+Then use this URL-free form message:
+
+```text
+<repository>: <short-base>..<short-head> (<count> commits)
+
+Do you stand by every commit in this revision?
+
+CCR: <outcome>
+```
+
+The fences delimit examples in this reference; replace the placeholders and
+send only their contents to the corresponding chat/form surface.
+
+Build the changes URL from the saved plan's `request.url`, `request.base`, and
+`request.head`, using full OIDs in the chat link target and abbreviated OIDs in
+its label and the form. For example, in ordinary chat:
+[Review aaaaaaa..bbbbbbb](https://github.com/foo/bar/pull/123/changes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb).
 The count is the complete reviewed `commits` list. Keep the recorded endpoints
 even if the base advances; branch names and the PR's default changes view are
 not exact-revision links.
@@ -562,13 +579,15 @@ omitting zero categories. Exclude both preserved lists from the signing count;
 verified GitHub base-only updates are not operator endorsements. Retain their
 individual OIDs in the plan rather than listing them in the prompt.
 
-Include CCR's actual outcome, especially a human-review recommendation; if
-unavailable, replace the review link with the reason. Add the following details
-only when applicable:
+Include CCR's actual outcome in the form, especially a human-review
+recommendation; if unavailable, give the reason in the CCR line and omit the
+chat's Copilot review link. Add the following details only when applicable:
 
-For human-follow-up findings, show the actual open-finding count, each finding's
-link, why the agent cannot address the remaining work, and the required human action and
-merge/rollout restrictions. Explain that affirmative endorsement accepts
+For human-follow-up findings, add each finding's link to the preceding chat
+using a distinct short label. In the form, use those same labels with the
+actual open-finding count, why the agent cannot address the remaining work,
+and the required human action and merge/rollout restrictions, without repeating
+the URLs. Explain that affirmative endorsement accepts
 carrying those findings into human follow-up; it does not declare their
 prerequisites complete or waive them. Obtain this acceptance in the existing
 endorsement prompt, not a separate bypass-approval request.

@@ -1598,7 +1598,8 @@ The only exception is the documented
 all remaining work must genuinely require human or external action, not an
 agent-actionable code, documentation, or PR metadata fix. Keep those findings
 open and disclose their actual count, links, reasons for deferral, and required
-follow-up in Gate 3's existing endorsement prompt for explicit acceptance.
+follow-up for explicit acceptance using Gate 3's
+[compact endorsement layout](references/endorsement.md#compact-endorsement-prompt).
 This permits human endorsement, not a claim of zero findings or a waiver of
 CI, required GitHub approvals, or merge/deployment prerequisites.
 
@@ -1666,11 +1667,13 @@ complete protocol:
    permitted update remain blockers. Only then present the human prompt.
    Skipping assignment never skips human endorsement.
 3. Use the reference's [compact endorsement prompt](references/endorsement.md#compact-endorsement-prompt):
-   the draft URL, a short review question, a linked exact revision range, and
-   the CCR outcome. Keep signing-key details, plan hashes, full OID lists, and
-   routine signing/readiness explanations in the records and reference, not
-   the prompt. Include only applicable decision-relevant disclosures from that
-   template, including human-follow-up findings, CI exceptions or deferrals,
+   show the draft, exact-changes, and review links in ordinary chat immediately
+   before the form. Keep the form URL-free, with a short review question,
+   compact repository/revision labels, and the CCR outcome. Keep signing-key
+   details, plan hashes, full OID lists, and routine signing/readiness
+   explanations in the records and reference, not the prompt. Include only
+   applicable decision-relevant disclosures from that template, including
+   human-follow-up findings, CI exceptions or deferrals,
    proposed committer changes, and any required verified-email confirmation.
    The compact display leaves exact-plan consent and all quality gates unchanged.
 4. Offer **"Further work is needed"**, **"Leave this draft unendorsed"**, and
