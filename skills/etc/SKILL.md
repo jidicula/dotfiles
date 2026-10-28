@@ -9,7 +9,8 @@ description: >-
   (URL, owner/repo#number, or a bare number), and optional additional
   instructions describing what to do in the Codespace or how to do it.
   Provisions or reuses a Codespace and handles required CI, Copilot Code Review,
-  and human endorsement.
+  human endorsement, and signed-head readiness. Unfinished gates require an
+  explicit stop report.
   Triggers on requests like "make this change in a codespace", "work on
   <issue> in a codespace", "run the tests for <repo> in a codespace", or "set
   up a codespace for this issue and fix it". Only applies within the operator's
@@ -75,6 +76,10 @@ esac
 > **Sharing this skill?** Change `~/work/github/` to your own work-repos path,
 > or delete this section to make the skill apply everywhere. Also configure
 > your own two public-key aliases in the prerequisites below.
+
+For implementation tasks, read the [completion contract](#completion-contract-required)
+before starting. It governs ownership through every quality gate and the required
+report whenever work stops short of completion.
 
 ## When to use this skill
 
@@ -1121,12 +1126,49 @@ fixes. Do not create a temporary commit to obtain a review.
 
 ### Quality and endorsement gates
 
-This skill owns the complete flow: implementation and validation, pre-commit
-rubber-duck review, unsigned commit and draft publication, required CI, the
-optional Copilot Code Review (CCR) remediation loop, human attestation, signed
-publication and final readiness. After publishing the unsigned draft,
-retain its full URL, immutable Codespace name and checkout, source/base branches
-and OIDs, validation results and relevant session artifact/job paths.
+#### Completion contract (required)
+
+**Own the implementation through ALL quality gates. A draft PR is an intermediate
+deliverable, not completion.** Continue to the next permitted action without
+asking whether to continue. The parent retains ownership when delegating: a
+worker's completed handoff or a background job's launch does not complete the task.
+
+Before implementation, create a gate checklist in session state and retain it
+across turns, delegation, and context recovery:
+
+| Gate | Required disposition |
+|---|---|
+| 0 | Codespace validation and independent pre-commit review of the exact candidate |
+| 1 | Required CI on the unsigned draft |
+| 2 | CCR applicability established, then review and findings handled under Gate 2 |
+| 3 | Exact-revision human attestation, verified signing, and approved publication |
+| 4 | Signed-head CI, readiness, readiness-triggered CI monitoring, and the final fresh check |
+
+For **every gate**, record `not-started`, `in-progress`, `satisfied`, `excepted`,
+or `blocked`, with the applicable revision, evidence references, and next action.
+`excepted` requires that gate's documented inapplicability or exception and any
+required operator decision; unknown applicability or missing evidence is `blocked`. Recheck affected
+entries when the revision changes, using the existing gate-specific rules.
+Keep this ledger in session state, not a routine validation checklist in PR prose.
+
+**Declare completion only when every gate is `satisfied` or validly `excepted`,
+and Gate 4's final readiness check is complete.** An approved ordering exception
+does not satisfy a deferred check or finish Gate 4. Explicit user limits
+(such as no publication, declining endorsement, or stopping work) take precedence;
+report the limited outcome and remaining gates rather than claiming the full
+workflow completed.
+
+At a pending or failed gate, perform its permitted waiting, remediation, or
+recovery instead of ending at the last successful milestone. Respect polling
+deadlines, no-replay rules, access boundaries, and human consent. If progress
+requires input, request the specific decision through `ask_user`; if work must
+stop, issue the [incomplete-work report](#result-and-resumption). A first tool
+failure is not a reason to abandon available authorised recovery, and exhausting
+a wait or recovery path is not a successful gate.
+
+After publishing the unsigned draft, retain its full URL, immutable Codespace
+name and checkout, source/base branches and OIDs, validation results, and relevant
+session artifact/job paths.
 
 Reuse the existing runner session and approved Codespace for review fixes.
 Do not repeat provisioning or switch another session's checkout. Start or
@@ -1727,11 +1769,37 @@ pending, retry the same operation after it settles.
 
 #### Result and resumption
 
-Leave a concise result in the session's artifacts: full original/resulting PR
-URLs, Codespace/checkout, current revision, CCR availability evidence and latest
-review ID/URL/recommendation, unresolved findings, validation/CI state, current
-phase and any plan/receipt/job paths. Do not include credentials or treat an
-approval token as proof of consent.
+**Before ending an implementation task or handing an unfinished workflow back to
+the operator, reconcile every gate against the completion contract.** If the
+workflow is incomplete, put a conspicuous status immediately after the full PR
+URL (or identify the repository and branch if no PR exists):
+
+```text
+INCOMPLETE - <phase> - stopped at Gate <number>: <gate name>
+Reason: <specific failure, expired deadline, missing capability, or user decision>
+Remaining: <every unfinished gate, including gates not yet started>
+Resume: <next safe action and who must take it; exact decision/access needed, if any>
+```
+
+Give the relevant failing check, error, review, or job reference and the outcome
+of attempted recovery when useful. State whether the PR remains draft or was
+returned to draft; if a readiness rollback is blocked or unconfirmed, say so.
+Put this report in the user-facing response, not only in artifacts or reasoning.
+An unendorsed draft, pending review, or pending CI is an incomplete outcome,
+even when the implementation itself is finished. Present any required decision
+through `ask_user`, with this context, rather than a generic retry question.
+
+Active CI/CCR polling or yielding to an existing background task is ongoing work,
+not a stop or a new request for the user's attention. Retain the pending state
+and resume from the result; keep "your turn" notifications quiet while no input
+is needed. An expired deadline or actual inability to continue requires the
+incomplete-work report, not a silent handoff or a claim of success.
+
+Leave a concise result and the gate checklist in the session's artifacts: full
+original/resulting PR URLs, Codespace/checkout, current revision, CCR availability
+evidence and latest review ID/URL/recommendation, unresolved findings,
+validation/CI state, current phase, next action, and any plan/receipt/job paths.
+Do not include credentials or treat an approval token as proof of consent.
 
 Retain Gate 0's parents/tree, review-owning session and reviewer invocation/result
 before any commit. A worker awaiting parent review must retain its handoff;
@@ -1740,7 +1808,8 @@ an unsigned commit alone is not evidence that the pre-commit review occurred.
 Distinguish `blocked`, `awaiting-review`, `awaiting-attestation`, `unendorsed`,
 `signed-ci-pending`, `readiness-ci-pending` and `ready`. A human-review recommendation remains explicit
 in that result; it is not a success-shaped substitute for an endorsement. On resume, inspect
-the saved operation and current remote state before continuing. Do not
+the gate checklist, saved operation, and current remote state, then continue at
+the first unfinished applicable gate. Do not
 replay a review request, signature or publication because the session restarted.
 
 The agent executes the CCR fix/review loop within this skill. The factory's

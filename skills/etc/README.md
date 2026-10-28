@@ -78,6 +78,8 @@ When invoked, the skill:
 11. Checks required CI, then addresses, resolves and re-requests CCR until approval or human review is recommended, when CCR is enabled and available. Requires `0 open findings` from CCR before endorsement, except for the documented [human-follow-up exception](references/copilot-code-review.md#human-follow-up-exception), disclosed for explicit acceptance in the existing endorsement prompt. Continues through this skill's human attestation, signing, publication and signed-head CI/readiness gates; a CCR recommendation is never signing consent.
 12. Reuses the same Codespace for review fixes and retains the current phase and receipts for safe resumption. Leaves the Codespace running so its configured idle timeout can stop it.
 
+The [completion contract](SKILL.md#completion-contract-required) requires the parent to carry the draft through every applicable gate, including readiness-triggered CI, and retain a revision-specific gate checklist across handoffs. If work stops early, the [incomplete-work report](SKILL.md#result-and-resumption) names the stopping gate, concrete reason, all remaining gates, and next safe action. User consent, documented exceptions, bounded polling, and quiet passive waits remain in force.
+
 ## Requirements
 
 The local machine needs:
