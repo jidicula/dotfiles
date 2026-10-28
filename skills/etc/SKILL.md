@@ -11,11 +11,8 @@ description: >-
   Provisions or reuses a Codespace and handles required CI, Copilot Code Review,
   human endorsement, and signed-head readiness. Unfinished gates require an
   explicit stop report.
-  Triggers on requests like "make this change in a codespace", "work on
-  <issue> in a codespace", "run the tests for <repo> in a codespace", or "set
-  up a codespace for this issue and fix it". Only applies within the operator's
-  designated work-repositories directory (see the "Scope" section in the body);
-  if the working directory is outside that tree, do not use this skill.
+  Only applies within the operator's designated work-repositories directory
+  (see Scope); outside that tree, do not use this skill.
 ---
 
 # ETC - emacs-tramp-codespace
