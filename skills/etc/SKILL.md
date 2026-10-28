@@ -1653,29 +1653,14 @@ complete protocol:
    `assignment_scope: "skipped_no_permission"`; unknown permissions or a failed
    permitted update remain blockers. Only then present the human prompt.
    Skipping assignment never skips human endorsement.
-3. Print the full draft URL on its own line immediately before the interactive
-   prompt. Start the prompt with the same URL and a blank line, then ask:
-   **"Please review this implementation. Do you believe it is correct and
-   stand by every commit in this exact revision, or is further work needed?"**
-   Include the CCR outcome and full review link, especially any human-review
-   recommendation; explain an unavailable CCR gate. For the human-follow-up
-   exception, include the actual open-finding count, each finding's link, why
-   the agent cannot address the remaining work, and the required human action
-   and merge/rollout restrictions. Explain that an affirmative endorsement
-   accepts carrying these findings into human follow-up, not that their
-   prerequisites are complete or waived. Use this same prompt, not a separate
-   bypass-approval request.
-   Show the exact head and recorded base OIDs, commit count/range, key fingerprint, plan ID,
-   the new signing count and IDs, the preserved commit IDs,
-   any separately preserved GitHub base-only merge IDs,
-   any proposed committer change (existing identities and proposed name/email)
-   and material validation limitations, including any explicit
-   no-required-CI exception or version 5 collaborator-approval deferral. For the latter,
-   show the check name, app ID/slug, required count, and original run ID, and do not
-   describe it as passing CI. State that endorsement also approves
-   the shown metadata change. Include any required verified-email confirmation
-   in this same request, not an earlier prompt. Explain that signatures change
-   OIDs and signed-head CI must pass before readiness.
+3. Use the reference's [compact endorsement prompt](references/endorsement.md#compact-endorsement-prompt):
+   the draft URL, a short review question, a linked exact revision range, and
+   the CCR outcome. Keep signing-key details, plan hashes, full OID lists, and
+   routine signing/readiness explanations in the records and reference, not
+   the prompt. Include only applicable decision-relevant disclosures from that
+   template, including human-follow-up findings, CI exceptions or deferrals,
+   proposed committer changes, and any required verified-email confirmation.
+   The compact display leaves exact-plan consent and all quality gates unchanged.
 4. Offer **"Further work is needed"**, **"Leave this draft unendorsed"**, and
    **"I stand by it: create a replacement -signed draft"**. Always include the
    signed force-push route. When the plan permits `replace`, label it **"I stand
@@ -1695,10 +1680,9 @@ complete protocol:
    this skill, or a previous answer is never signing/rewrite consent.
 5. Only an actual affirmative choice of a method permitted by that plan
    authorises `<plan-id>:replacement` or `<plan-id>:replace`. Use that token for
-   remote `sign`; explain the temporary
-   Secretive agent forwarding and possible Touch ID request for each newly signed commit.
-   Keep the connection open and verify the complete receipt. Never replay a
-   signing failure automatically or change key protection to avoid approval.
+   remote `sign`. Keep the connection open and verify the complete receipt.
+   Never replay a signing failure automatically or change key protection to
+   avoid approval.
 6. After successful signing/verification, run local `complete-attestation`
    with that receipt to unassign only the operator when permitted, before
    publication/readiness. Permission is checked again; an explicit denial skips

@@ -523,32 +523,64 @@ If digest verification fails, preserve the error and recover the exact original
 record and plan identifier. Do not shorten fields, compute a replacement plan
 ID, bypass verification or replay planning merely to repair a local copy.
 
-Print the full draft URL on its own line immediately before the interactive
-prompt. Start its message with the same URL and a blank line, followed by:
-**"Please review this implementation. Do you believe it is correct and stand
-by every commit in this exact revision, or is further work needed?"**
+### Compact endorsement prompt
+
 Before preparation or this prompt, require `0 open findings` from CCR or only
 documented [human-follow-up exceptions](copilot-code-review.md#human-follow-up-exception),
 including when human review is recommended or CCR has since become unavailable.
-Include CCR's outcome and full review URL, especially any human-review
-recommendation. Explain why CCR was skipped if unavailable.
-For the exception, show the actual open-finding count, each finding's link, why
-the agent cannot address the remaining work, and the required human action and
+
+Print the full draft URL on its own line immediately before the interactive
+prompt. Use this compact message:
+
+```markdown
+<PR URL>
+
+Do you stand by every commit in this revision?
+
+Changes: [<short-base>..<short-head>](<PR URL>/changes/<full-base>..<full-head>) (<count> commits)
+CCR: [<outcome>](<full review URL>)
+```
+
+Build the changes link from the saved plan's `request.url`, `request.base`, and
+`request.head`, using full OIDs in the URL and abbreviated OIDs only in the label.
+For example:
+[aaaaaaa..bbbbbbb](https://github.com/foo/bar/pull/123/changes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb).
+The count is the complete reviewed `commits` list. Keep the recorded endpoints
+even if the base advances; branch names and the PR's default changes view are
+not exact-revision links.
+
+Keep the complete plan, key fingerprint, plan ID, and full commit lists in the
+session records, not the prompt. Omit routine explanations about Secretive
+forwarding, Touch ID, signatures changing OIDs, signed-head CI, or both
+publication methods being permitted. The choices express publication consent;
+the helper still enforces the unchanged exact-plan, signing, and readiness
+checks. Do not move the omitted boilerplate into a separate pre-prompt message.
+
+When some commits are retained, add only a compact scope summary:
+`<new> to sign; <endorsed> already endorsed; <base-updates> verified base updates`,
+omitting zero categories. Exclude both preserved lists from the signing count;
+verified GitHub base-only updates are not operator endorsements. Retain their
+individual OIDs in the plan rather than listing them in the prompt.
+
+Include CCR's actual outcome, especially a human-review recommendation; if
+unavailable, replace the review link with the reason. Add the following details
+only when applicable:
+
+For human-follow-up findings, show the actual open-finding count, each finding's
+link, why the agent cannot address the remaining work, and the required human action and
 merge/rollout restrictions. Explain that affirmative endorsement accepts
 carrying those findings into human follow-up; it does not declare their
 prerequisites complete or waive them. Obtain this acceptance in the existing
 endorsement prompt, not a separate bypass-approval request.
-Show head/base OIDs, commit count/range, key fingerprint, plan ID, any proposed
-committer change and material validation limitations below the question.
-Distinguish the complete reviewed range from the commits requiring signatures,
-and explicitly list the previously endorsed commits that retain their IDs.
-Also list any `preserved_base_merges` separately as verified GitHub base-only
-updates, not operator endorsements. Exclude both lists from the signature count.
+
 For a committer proposal, show the existing identities and proposed name/email,
 confirm that authors and timestamps stay unchanged, and state that endorsement
 also approves this change. Include any verified-email confirmation here.
-Disclose any version 5 collaborator-approval deferral and its exact check/app
-identity, count, and original run ID; readiness still requires that check.
+
+Disclose material validation limitations, including an explicit no-required-CI
+exception or version 5 collaborator-approval deferral. For the latter, show the
+check name, app ID/slug, required count, and original run ID; readiness still
+requires that check. Describe neither exception as passing CI.
 
 Use the [skill's endorsement choices](../SKILL.md#gate-3---exact-revision-human-endorsement),
 including the signed exact-head `--force-with-lease` route in every prompt.
@@ -557,9 +589,6 @@ explain the policy evidence or uncertainty. Selecting it pauses without signing,
 publication, or an approval token; it is not permission to modify the frozen
 plan or use a replacement draft instead. A later plan permitting `replace`
 requires a new exact-plan affirmative answer. Preselect no endorsement.
-Explain that signing changes OIDs and required CI must run on the signed head;
-successful publication and passing signed-head CI will mark the result ready
-for review.
 Keep deferred finding links and prerequisites visible on the resulting PR,
 including a signed replacement. Readiness does not clear them or authorise
 merging or deploying before those prerequisites are satisfied.
@@ -580,12 +609,12 @@ Only an affirmative, revision-specific publication choice authorises signing:
 (copilot-cs-endorsement-result "<signing-job-id>")
 ```
 
-Only `sign` forwards the agent. Obtain consent for that exposure and the
-possible Touch ID request per commit; `IdentitiesOnly` does not filter keys
-available to the remote forwarded agent. Retain Stormbreaker's protection
-and do not use **Leave Unlocked** when fresh approval is wanted. Login profiles
-may replace `SSH_AUTH_SOCK`; the helper restores the forwarded socket only
-for the signer.
+Only `sign` forwards the agent, under the exact-plan signing consent above;
+the operator may receive a Touch ID request per commit. `IdentitiesOnly` does
+not filter keys available to the remote forwarded agent. Retain Stormbreaker's
+protection and do not use **Leave Unlocked** when fresh approval is wanted.
+Login profiles may replace `SSH_AUTH_SOCK`; the helper restores the forwarded
+socket only for the signer.
 
 For each commit-signature request, the local `ssh-sign` transport invokes the
 operator's `notify` shell function from `~/.shared_shell_configs`, using the
