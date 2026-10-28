@@ -1062,6 +1062,12 @@ command never ran. Authentication retries still obey the three-failure limit.
 
 ### Analysing retained job output safely
 
+For a scoped Gate 0 review, use only the handoff's complete output commands.
+Permission to read a named job does not implicitly allow the pipelines or local
+artifact analysis below. If that read is incomplete, use
+[Gate 0's parent-owned evidence recovery](../SKILL.md#gate-0---required-pre-commit-rubber-duck-review)
+rather than adding a local filter or reading an unapproved spill file.
+
 Keep log parsing, grouping, and filtering outside the dedicated Emacs daemon.
 Even a read-only loop can block every later MCP call, and the client's response
 timeout does not interrupt that evaluation. Retrieve an explicit job's output

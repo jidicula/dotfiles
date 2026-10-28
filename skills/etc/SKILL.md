@@ -1258,10 +1258,22 @@ weaker review gate.
 
    Give bounded `view_range` reads for any permitted large local reference,
    or include the necessary excerpt in the handoff. Supply exact known receipt
-   IDs and the permitted serial poll/output calls, distinguishing supplied
-   completed receipts from jobs the reviewer launches. A truncated read, unknown
-   job, or missing command returns to the parent for correction, not improvised
-   inspection. Correct the handoff prospectively within existing authority;
+   IDs and complete, copy-ready shell commands for permitted serial poll/output
+   calls, distinguishing supplied completed receipts from jobs the reviewer
+   launches. For a retained-output read, the permitted form is
+   `(copilot-cs-output "<allowed-job-id>")`. The supplied shell command is the
+   whole allowed operation, not a prefix: run it unchanged, without appending
+   local filters such as `| head -c 4000`, redirects, or other processing unless
+   those operations and any artifact paths are explicitly allowed.
+
+   A truncated launch preview is not complete review evidence. Read that job
+   with its supplied output command; if the retained-output response is also
+   truncated or incomplete, return `blocked` with the exact job ID and missing
+   evidence before another inspection. The parent supplies complete bounded
+   evidence using the evidence-only recovery below. Local clipping cannot
+   establish completeness and can close the client pipe before its response
+   finishes. A missing command or unknown job also returns to the parent, not
+   improvised inspection. Correct the handoff prospectively within existing authority;
    never approve a past deviation retroactively or broaden tool permissions
    to make a review pass.
 
