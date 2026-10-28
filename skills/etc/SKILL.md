@@ -967,7 +967,7 @@ check it out here (or confirm Step 4 already created the Codespace on it).
 For every new change commit, follow this order:
 
 ```text
-make change -> run tests/lint in the Codespace -> rubber duck -> commit -> push
+make change -> run tests/lint in the Codespace -> rubber duck -> message preflight -> commit -> push
 ```
 
 The [pre-commit rubber-duck gate](#gate-0---required-pre-commit-rubber-duck-review)
@@ -1413,9 +1413,14 @@ weaker review gate.
    explicit consent gates remain unchanged.
 6. Immediately before the unsigned commit, confirm that `HEAD`, any merge parents
    and the index tree still match the reviewed candidate. A changed candidate must repeat
-   validation and review. Commit only that index, without `git commit -a` or
-   adding unreviewed files, then verify the resulting commit's tree and parents
-   before pushing. Unexpected hook or concurrent changes block publication.
+   validation and review. Run the required
+   [commit-message preflight](references/emacs-tramp-patterns.md#commit-message-preflight)
+   on the actual message file, then commit that same file and only that index,
+   without `git commit -a` or adding unreviewed files. Fix malformed messages
+   before creating the commit, rather than discovering them afterward and
+   requesting an amend. Verify the resulting commit's message, tree, and parents
+   before pushing. Unexpected hook or concurrent changes block publication;
+   this preflight does not authorise amending an existing commit.
 
 For imported changes or conflict resolutions, prepare without auto-committing
 where supported; do not use a commit-producing Git operation to bypass this gate.

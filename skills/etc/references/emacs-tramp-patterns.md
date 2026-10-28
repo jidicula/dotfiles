@@ -493,8 +493,8 @@ Git operations: `fetch`, `push`, `commit`, `pull`, `cherry-pick`, `revert`,
 Automatic routing is not approval to commit. First follow the skill's
 [pre-commit gate](../SKILL.md#gate-0---required-pre-commit-rubber-duck-review):
 make the change, run tests/lint in the Codespace, obtain independent rubber-duck
-review, then commit and push. The commit example below assumes that gate passed
-for the unchanged index.
+review, then use the required [commit-message preflight](#commit-message-preflight)
+for the unchanged index before committing and pushing.
 
 A worker that cannot launch nested agents hands its validated, frozen candidate
 to the parent for a sibling `rubber-duck` review. Wait for the complete result
@@ -503,11 +503,11 @@ finished its implementation.
 
 ```elisp
 (copilot-cs-sh "git fetch origin main")
-(copilot-cs-sh "git commit -m 'Update configuration'")
 ```
 
-Confirm that the commit's tree and parents match the reviewed candidate before
-the separate push:
+Create the commit with the preflight recipe below, then confirm that its message,
+tree, and parents match the intended message and reviewed candidate before the
+separate push:
 
 ```elisp
 (copilot-cs-sh "git push")
@@ -557,6 +557,62 @@ API signature, add `-S`, or alter signing configuration before review.
 Explicit Git flags can override the environment defaults, so this policy is
 not a security sandbox. Inspect newly produced commits before publishing the
 initial draft. Read-only commands that need no login state stay on plain `sh`.
+
+### Commit-message preflight
+
+Before **every authored commit**, prepare its UTF-8 message in a file inside the
+selected Codespace, outside the staged source files. Set `MESSAGE_FILE` to that
+file and `SESSION_ID` to the exact `Copilot-Session` value required by the current
+session's instructions; do not infer it from the remote environment or reuse an
+example ID. Honour explicit operator overrides to required trailers.
+
+Write real LF line breaks with `copilot-cs-put`, a quoted heredoc, or
+`printf '%s\n'` with each message line as a separate argument. Shell-quoted
+`'text\ntext'` contains a literal backslash and `n`, not a newline. Validate the
+file **after** it has passed through JSON, Elisp, and shell quoting.
+
+Run this preflight and commit as **one login-aware runner command**, only after
+Gate 0's validation and independent review have passed. The example checks the
+default required trailers; adjust the expected set only when the operator's
+instructions explicitly change it:
+
+```sh
+python3 - "${MESSAGE_FILE:?message file required}" \
+  "${SESSION_ID:?required Copilot session id}" <<'PY' &&
+from pathlib import Path
+import subprocess
+import sys
+
+message = Path(sys.argv[1]).read_bytes()
+required = [
+    b"Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>",
+    ("Copilot-Session: " + sys.argv[2]).encode("utf-8"),
+]
+lines = message.split(b"\n")
+trailers = subprocess.check_output(
+    ["git", "interpret-trailers", "--parse"], input=message,
+).splitlines()
+if (b"\r" in message
+        or any(lines.count(line) != 1 or trailers.count(line) != 1 for line in required)
+        or sum(line.startswith(b"Copilot-Session:") for line in trailers) != 1):
+    sys.exit("Commit message preflight failed: use real LF lines and one copy "
+             "of each exact required trailer in the final trailer block")
+PY
+git commit --file "$MESSAGE_FILE"
+```
+
+The check requires both separate physical lines and Git-recognised trailers.
+Literal `\n` or `\r\n` separators, missing or duplicated required trailers, and
+the wrong session value stop the command before `git commit`. Literal escape
+sequences in the subject or body remain untouched.
+
+On failure, correct the uncommitted message file and rerun the preflight; this
+needs no amend permission because no commit was created. Commit the checked file
+with `--file`, rather than rebuilding the message with `-m` or `echo -e`.
+Afterward, read the stored message with `git show -s --format=%B HEAD` and confirm
+the required trailers survived hooks and Git cleanup before publishing. If an
+existing commit is malformed, preserve it and follow the existing approval rules
+for amendments; never treat this preflight as permission to rewrite history.
 
 ### Tag signing and preserved authors
 
