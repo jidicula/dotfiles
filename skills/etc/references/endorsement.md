@@ -541,14 +541,15 @@ First send this in ordinary chat:
 ```markdown
 <PR URL>
 
-[Review <short-base>..<short-head>](<PR URL>/changes/<full-base>..<full-head>)
+[First commit <short-first>](<PR URL>/changes/<full-first>)
+[Remaining commits <short-first>..<short-head>](<PR URL>/changes/<full-first>..<full-head>)
 [Copilot review](<full review URL>)
 ```
 
 Then use this URL-free form message:
 
 ```text
-<repository>: <short-base>..<short-head> (<count> commits)
+<repository>: <short-first> to <short-head> (<count> commits)
 
 Do you stand by every commit in this revision?
 
@@ -558,13 +559,29 @@ CCR: <outcome>
 The fences delimit examples in this reference; replace the placeholders and
 send only their contents to the corresponding chat/form surface.
 
-Build the changes URL from the saved plan's `request.url`, `request.base`, and
-`request.head`, using full OIDs in the chat link target and abbreviated OIDs in
-its label and the form. For example, in ordinary chat:
-[Review aaaaaaa..bbbbbbb](https://github.com/foo/bar/pull/123/changes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb).
-The count is the complete reviewed `commits` list. Keep the recorded endpoints
-even if the base advances; branch names and the PR's default changes view are
-not exact-revision links.
+Build these PR links from the saved plan's `request.url`, the first entry in
+its oldest-first `commits` list, and `request.head`. Use full OIDs in link
+targets and abbreviated OIDs in labels and the form. The count includes the
+complete reviewed list, including preserved commits and base-only merges.
+
+Before presenting the links, read the PR's complete, paginated commit list
+using the plan's GitHub host and the operator's existing local `gh`
+authentication. Require that its commit set matches the plan's `commits`, and
+recheck the planned source head and base branch. A missing commit, changed
+revision, incomplete response, or API error requires diagnosis; preserve the
+frozen plan rather than changing it to make a link work.
+
+The PR range requires both SHA endpoints to belong to the PR, so use its first
+commit rather than `request.base`. Its left endpoint is **exclusive**: always
+include the separate first-commit link so the review covers that commit too.
+For a single-commit plan, show only the first-commit link and use
+`<repository>: <short-head> (1 commit)` in the form; omit the remaining-commits
+link rather than generating an invalid same-SHA range.
+
+These are commit-review links, not a replacement for the plan's frozen base,
+head, or complete signing scope. Keep those records unchanged. Use the recorded
+commit OIDs rather than mutable `BASE` or `HEAD` aliases. PR links can stop
+resolving after a history rewrite removes those commits from the PR.
 
 Keep the complete plan, key fingerprint, plan ID, and full commit lists in the
 session records, not the prompt. Omit routine explanations about Secretive
