@@ -1525,8 +1525,8 @@ and seek an operator-approved recovery.
 
 Read the [CCR command reference](references/copilot-code-review.md) before
 requesting, re-requesting, interpreting, or resolving a review. Use its
-[highest-effort procedure](references/copilot-code-review.md#request-and-re-request)
-for every request, including effort verification before reusing a review.
+[Bot-aware request procedure](references/copilot-code-review.md#request-and-re-request)
+for initial reviews and re-reviews.
 
 ##### Determine applicability
 
@@ -1561,7 +1561,7 @@ CCR has since become unavailable.
    all review threads/comments. Reuse a completed review only when it belongs
    to this head and no newer request/run is pending. Otherwise request CCR for
    this draft, unless an automatic or manual request is already outstanding.
-   Follow the reference's effort selection before its Bot-aware request command;
+   Use the reference's Bot-aware request command;
    never pass the discovered Bot ID to GraphQL `requestReviews.userIds`.
    Record the request's head and previous review ID; do not accept that older
    review as the result of a re-request.
