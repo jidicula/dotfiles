@@ -2041,6 +2041,15 @@ class RecoveryDraftFinishTests(GitHubEndorsementTestCase):
             html_url="https://github.com/example/project/pull/13",
         )
 
+    def api(self, endpoint, method="GET", data=None, **options):
+        branch = self.request["source_branch"]
+        if endpoint == f"repos/example/project/git/ref/heads/{quote(branch, safe='')}":
+            self.calls.append((method, endpoint, copy.deepcopy(data)))
+            return {"ref": "refs/heads/" + branch,
+                    "object": {"type": "commit",
+                               "sha": self.published_head or self.receipt["head"]}}
+        return super().api(endpoint, method, data, **options)
+
     def finish_recovery(self, **options):
         return self.helper.finish(self.receipt, self.approve("replace"), recovery_pr=13, **options)
 
@@ -2070,6 +2079,52 @@ class RecoveryDraftFinishTests(GitHubEndorsementTestCase):
         self.calls.clear()
         self.assertEqual(self.finish_recovery(), result)
         self.assert_read_only_calls()
+
+    def test_recovery_original_may_cache_unsigned_head(self):
+        self.original["head"]["sha"] = self.head
+        original, receipt = copy.deepcopy(self.original), copy.deepcopy(self.receipt)
+        self.assertTrue(self.finish_recovery()["ready_for_review"])
+        self.assertEqual(self.original, original)
+        self.assertEqual(self.receipt, receipt)
+
+    def test_recovery_original_changes_during_ci_block_promotion(self):
+        original = copy.deepcopy(self.original)
+        for change in ("reopened", "source_changed"):
+            with self.subTest(change=change):
+                self.original = copy.deepcopy(original)
+                self.replacement["draft"] = True
+
+                def mutate(_pr):
+                    if change == "reopened":
+                        self.original["state"] = "open"
+                    else:
+                        self.original["head"]["ref"] = "other"
+
+                self.mutate_on_checks = mutate
+                with self.assertRaises(ValueError):
+                    self.finish_recovery()
+                self.assertTrue(self.replacement["draft"])
+
+    def test_recovery_original_changes_do_not_prevent_failed_ci_rollback(self):
+        original = copy.deepcopy(self.original)
+        for change in ("reopened", "source_changed"):
+            with self.subTest(change=change):
+                self.original = copy.deepcopy(original)
+                self.mutate_on_checks = None
+                self.check_pages[0][0]["conclusion"] = "SUCCESS"
+                self.assertTrue(self.finish_recovery()["ready_for_review"])
+                self.check_pages[0][0]["conclusion"] = "FAILURE"
+
+                def mutate(_pr):
+                    if change == "reopened":
+                        self.original["state"] = "open"
+                    else:
+                        self.original["head"]["ref"] = "other"
+
+                self.mutate_on_checks = mutate
+                with self.assertRaises(self.helper.RequiredCIFailure):
+                    self.finish_recovery()
+                self.assertTrue(self.replacement["draft"])
 
     def test_recovery_rejects_mismatched_original_or_target_before_mutating(self):
         original, recovery = copy.deepcopy(self.original), copy.deepcopy(self.replacement)
