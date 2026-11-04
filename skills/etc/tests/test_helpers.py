@@ -1999,6 +1999,7 @@ class McpTransportTests(HelperTestCase):
     def check_writer(self, expression):
         return self.emacs(
             f"""(progn
+              (require 'cl-lib)
               (require 'copilot-mcp-transport)
               (defun mcp-server-transport-unix--client-filter (_process _input))
               (let ((process (make-network-process
