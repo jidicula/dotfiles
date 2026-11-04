@@ -206,7 +206,9 @@ operator's endorsement; malformed or invalid matching-key signatures block plann
 A changed parent requires reconstruction and a fresh signature on its descendants.
 The immutable `preserved_commits` list records what will not be re-signed; the
 remaining entries in `commits` are the exact signing scope. If none remain, do not
-request another endorsement: resume the prior receipt instead.
+request another endorsement: resume the prior receipt instead. If its original
+in-place PR is closed and the operator authorised a new draft on the unchanged
+signed source, follow [recovery-draft finalisation](#resuming-on-an-authorised-recovery-draft).
 
 Version 1 plans and receipts retain their original full-range signing semantics.
 Never edit an old plan, convert its version or reuse its approval for a new scope.
@@ -799,6 +801,39 @@ metadata or checking readiness. Assignment permission is checked on each PR;
 a skip on the original does not waive the signed replacement's assignment gate.
 Legacy receipts without an attestor preserve their assignees; never guess whom
 to remove. New requests need a fresh `prepare`.
+
+### Resuming on an authorised recovery draft
+
+For an existing, operator-authorised recovery draft on the **identical signed
+source** of a closed, unmerged `replace` publication, select it explicitly:
+
+```sh
+/absolute/path/to/skills/etc/setup/copilot-cs-endorse finish \
+  --receipt "<original-published-receipt.json>" \
+  --approve-plan "<original-APPROVAL>" \
+  --recovery-pr "<RECOVERY-PR-NUMBER>"
+```
+
+Retain the original receipt, plan, approval, and signatures unchanged. This
+option selects an existing PR; it does not authorise creating a recovery draft,
+signing, pushing, or changing the approved publication method. Obtain any missing
+recovery authorisation before using it, without asking again if already given.
+
+The original must be closed and unmerged, and both PRs must match the receipt's
+host, repository, source repository/branch, signed head, and base branch.
+Finalisation rechecks every published commit and signature, current base
+compatibility, assignment permission, and the recovery PR's required CI. It
+clears only that PR's attestor assignment when permitted; the original PR and
+other assignees are left unchanged. Prior per-PR CI exceptions and collaborator
+deferrals do not transfer. `--draft-only` verifies all required CI without marking
+the recovery ready; it does not revive those exceptions.
+
+Retain prior review evidence, carry outstanding human follow-up into the
+recovery draft, and complete the normal gates and readiness-triggered CI
+monitoring for that PR. Repeat the same `--recovery-pr` on finalisation and
+rollback retries. This route does not accept a changed signed head, a
+`replacement` publication, or `--base-update`; diagnose those scope differences
+rather than editing the receipt or re-signing unchanged commits.
 
 ## Signed-head CI and readiness
 

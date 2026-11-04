@@ -1944,10 +1944,16 @@ def finish_base_update(receipt, approval, update, *, draft_only=False):
     return dict(result, base_update=update)
 
 
-def finish(receipt, approval, *, draft_only=False, base_update=None):
+def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr=None):
+    require(base_update is None or recovery_pr is None,
+            "recovery PR selection cannot be combined with a base update")
     if base_update is not None:
         return finish_base_update(receipt, approval, base_update, draft_only=draft_only)
     request, publication = signed_receipt_request(receipt, approval)
+    if recovery_pr is not None:
+        require(publication == "replace", "recovery PR selection requires an in-place publication")
+        require(type(recovery_pr) is int and recovery_pr > 0 and recovery_pr != request["pr"],
+                "recovery PR must identify a different pull request")
     plan = receipt["plan"]
     plan_id = receipt["plan_id"]
     repository = request["repository"]
@@ -1958,6 +1964,14 @@ def finish(receipt, approval, *, draft_only=False, base_update=None):
     require(pr["head"]["sha"] == expected
             and pr["head"]["ref"] == request["source_branch"]
             and pr["base"]["ref"] == request["base_branch"], "PR changed after endorsement")
+    if recovery_pr is not None:
+        require(pr["state"] == "closed", "recovery requires a closed original PR")
+        request = dict(request, pr=recovery_pr,
+                       url=f"https://{hostname}/{repository}/pull/{recovery_pr}")
+        # Per-PR CI exceptions do not transfer to a recovery PR.
+        request.pop("ci_exception", None)
+        request.pop("ci_deferral", None)
+        pr = confirm_ci_revision(request, recovery_pr, expected, request["source_branch"])
     marker = f"<!-- copilot-endorsement:{plan_id} -->"
     target = request["source_branch"] if publication == "replace" else request["target_branch"]
     replacement = None
@@ -2140,12 +2154,18 @@ def main():
         "finish", help="LOCAL: verify publication and mark the signed PR ready after required CI passes")
     finish_parser.add_argument("--receipt", required=True)
     finish_parser.add_argument("--approve-plan", required=True)
-    finish_parser.add_argument("--base-update",
-                               help="unchanged Codespace verification record for a base-only update")
+    finish_scope = finish_parser.add_mutually_exclusive_group()
+    finish_scope.add_argument("--base-update",
+                              help="unchanged Codespace verification record for a base-only update")
+    finish_scope.add_argument(
+        "--recovery-pr", type=int,
+        help="operator-authorised recovery PR on the identical signed source of a closed "
+             "in-place publication; does not create a PR or transfer CI exceptions")
     finish_parser.add_argument(
         "--draft-only", action="store_true",
         help="verify signed-head CI and finalise a draft without readiness; only the plan's "
-             "selected collaborator-approval check may remain pending, except with --base-update")
+             "selected collaborator-approval check may remain pending, except with "
+             "--base-update or --recovery-pr")
     args = parser.parse_args()
     remote = args.action in ("plan", "sign", "verify", "push", "verify-base-update")
     try:
@@ -2200,7 +2220,8 @@ def main():
                 update = json.loads(Path(args.base_update).read_text())
                 require(isinstance(update, dict), "expected a base-update verification record")
             result = finish(json.loads(Path(args.receipt).read_text()), args.approve_plan,
-                            draft_only=args.draft_only, base_update=update)
+                            draft_only=args.draft_only, base_update=update,
+                            recovery_pr=args.recovery_pr)
         print((RESULT_PREFIX if remote else "") + canonical(result))
         return 0
     except (ValueError, RuntimeError, OSError, KeyError, subprocess.TimeoutExpired) as error:

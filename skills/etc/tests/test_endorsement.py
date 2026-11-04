@@ -2029,6 +2029,178 @@ class GitHubEndorsementTestCase(EndorsementTestCase):
         return run
 
 
+class RecoveryDraftFinishTests(GitHubEndorsementTestCase):
+    def setUp(self):
+        super().setUp()
+        self.receipt["publication"] = "replace"
+        self.original["head"]["sha"] = self.receipt["head"]
+        self.original["state"] = "closed"
+        self.replacement = copy.deepcopy(self.original)
+        self.replacement.update(
+            number=13, node_id="PR_recovery", state="open",
+            html_url="https://github.com/example/project/pull/13",
+        )
+
+    def finish_recovery(self, **options):
+        return self.helper.finish(self.receipt, self.approve("replace"), recovery_pr=13, **options)
+
+    def test_cli_resumes_identical_signed_source_on_an_explicit_recovery_draft(self):
+        with self.assertRaisesRegex(ValueError, "no longer open"):
+            self.finish()
+        self.assert_read_only_calls()
+        self.calls.clear()
+        original = copy.deepcopy(self.original)
+        receipt_file = self.root / "receipt.json"
+        receipt_file.write_text(json.dumps(self.receipt))
+        receipt_bytes = receipt_file.read_bytes()
+        args = ["copilot-cs-endorse", "finish", "--receipt", str(receipt_file),
+                "--approve-plan", self.approve("replace"), "--recovery-pr", "13"]
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), \
+                mock.patch.object(sys, "argv", args), redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(self.helper.main(), 0)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["url"], self.replacement["html_url"])
+        self.assertEqual(result["head"], self.receipt["head"])
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(self.replacement["draft"])
+        self.assertEqual(self.original, original)
+        self.assertEqual(receipt_file.read_bytes(), receipt_bytes)
+        self.assertTrue(all(method in ("GET", "GET-PAGES") or endpoint == "graphql"
+                            for method, endpoint, _ in self.calls))
+        self.calls.clear()
+        self.assertEqual(self.finish_recovery(), result)
+        self.assert_read_only_calls()
+
+    def test_recovery_rejects_mismatched_original_or_target_before_mutating(self):
+        original, recovery = copy.deepcopy(self.original), copy.deepcopy(self.replacement)
+        for target, path, value in (
+            ("original", ("state",), "open"),
+            ("original", ("merged",), True),
+            ("original", ("head", "sha"), "0" * 40),
+            ("replacement", ("state",), "closed"),
+            ("replacement", ("merged",), True),
+            ("replacement", ("head", "sha"), self.head),
+            ("replacement", ("head", "ref"), "other"),
+            ("replacement", ("head", "repo", "full_name"), "other/project"),
+            ("replacement", ("base", "ref"), "other"),
+            ("replacement", ("html_url",), "https://other.invalid/example/project/pull/13"),
+        ):
+            with self.subTest(target=target, path=path):
+                self.original, self.replacement = copy.deepcopy(original), copy.deepcopy(recovery)
+                item = getattr(self, target)
+                for field in path[:-1]:
+                    item = item[field]
+                item[path[-1]] = value
+                self.calls.clear()
+                with self.assertRaises(ValueError):
+                    self.finish_recovery()
+                self.assert_read_only_calls()
+
+    def test_recovery_requires_a_distinct_target_and_unchanged_in_place_publication(self):
+        for number in (0, -1, True, 12, "13"):
+            with self.subTest(number=number), self.assertRaisesRegex(ValueError, "different pull request"):
+                self.helper.finish(self.receipt, self.approve("replace"), recovery_pr=number)
+        with self.assertRaisesRegex(ValueError, "combined with a base update"):
+            self.finish_recovery(base_update={})
+        self.receipt["publication"] = "replacement"
+        with self.assertRaisesRegex(ValueError, "in-place publication"):
+            self.helper.finish(self.receipt, self.approve(), recovery_pr=13)
+        self.assertEqual(self.calls, [])
+
+    def test_recovery_verifies_approval_and_signatures_before_mutating(self):
+        with self.assertRaises(ValueError):
+            self.helper.finish(self.receipt, "wrong-plan:replace", recovery_pr=13)
+        self.assertEqual(self.calls, [])
+        self.commits[self.receipt["head"]]["verification"]["verified"] = False
+        with self.assertRaisesRegex(ValueError, "not verified"):
+            self.finish_recovery()
+        self.assert_read_only_calls()
+        self.assertTrue(self.replacement["draft"])
+
+    def test_recovery_requires_workflow_provenance_for_the_selected_pr(self):
+        run = self.add_required_workflow()
+        with self.assertRaisesRegex(ValueError, "required workflow"):
+            self.finish_recovery()
+        self.assertTrue(self.replacement["draft"])
+        self.assert_read_only_calls()
+        run["pull_requests"][0].update(
+            number=13, url="https://api.github.com/repos/example/project/pulls/13")
+        self.assertTrue(self.finish_recovery()["ready_for_review"])
+
+    def test_recovery_waits_for_ci_and_rolls_back_only_the_selected_pr(self):
+        self.check_pages[0][0].update(status="IN_PROGRESS", conclusion=None)
+        for draft_only in (False, True):
+            with self.subTest(draft_only=draft_only), self.assertRaisesRegex(ValueError, "required CI"):
+                self.finish_recovery(draft_only=draft_only)
+        self.assertTrue(self.replacement["draft"])
+        self.assert_read_only_calls()
+        self.check_pages[0][0].update(status="COMPLETED", conclusion="SUCCESS")
+        self.assertTrue(self.finish_recovery()["ready_for_review"])
+        self.check_pages[0][0]["conclusion"] = "FAILURE"
+        with self.assertRaisesRegex(self.helper.RequiredCIFailure, "returned.*to draft"):
+            self.finish_recovery()
+        self.assertTrue(self.replacement["draft"])
+        self.assertEqual(self.original["state"], "closed")
+        self.assertTrue(all(data["variables"]["id"] == "PR_recovery"
+                            for _, endpoint, data in self.calls
+                            if endpoint == "graphql" and "mutation " in data["query"]))
+
+    def test_recovery_does_not_transfer_per_pr_ci_exceptions(self):
+        original_receipt = copy.deepcopy(self.receipt)
+        for field, value in (
+            ("ci_exception", "no_required_ci"),
+            ("ci_deferral", {
+                "kind": "pending_collaborator_approvals", "check_name": "ci",
+                "app_id": 1, "app_slug": "approval", "required_approvals": 1, "check_run_id": 100,
+            }),
+        ):
+            with self.subTest(field=field):
+                self.receipt = copy.deepcopy(original_receipt)
+                request = self.receipt["plan"]["request"]
+                request.update(version=4 if field == "ci_exception" else 5)
+                request[field] = value
+                self.plan_id = self.receipt["plan_id"] = self.helper.digest(self.receipt["plan"])
+                receipt = copy.deepcopy(self.receipt)
+                self.required_contexts = [] if field == "ci_exception" else ["ci"]
+                self.check_pages = [[]] if field == "ci_exception" else [[{
+                    "__typename": "CheckRun", "name": "ci", "isRequired": True,
+                    "status": "IN_PROGRESS", "conclusion": None,
+                }]]
+                self.calls.clear()
+                with self.assertRaisesRegex(ValueError, "required CI"):
+                    self.finish_recovery(draft_only=True)
+                self.assertTrue(self.replacement["draft"])
+                self.assertEqual(self.receipt, receipt)
+                self.assert_read_only_calls()
+
+    def test_recovery_tracks_assignment_only_on_the_selected_pr(self):
+        self.original["assignees"].append({"login": "fixture"})
+        self.replacement["assignees"].append({"login": "fixture"})
+        self.assignment_permission = None
+        with self.assertRaisesRegex(ValueError, "permission is unconfirmed"):
+            self.finish_recovery()
+        self.assert_read_only_calls()
+        self.assignment_permission = False
+        self.assertEqual(self.finish_recovery(draft_only=True)["assignment_scope"],
+                         "skipped_no_permission")
+        self.assertIn({"login": "fixture"}, self.replacement["assignees"])
+        self.assert_read_only_calls()
+        self.assignment_permission = True
+        self.assertFalse(self.finish_recovery(draft_only=True)["ready_for_review"])
+        self.assertIn({"login": "fixture"}, self.original["assignees"])
+        self.assertEqual(self.replacement["assignees"], [{"login": "maintainer"}])
+        self.assertEqual([call for call in self.calls if call[0] == "DELETE"], [
+            ("DELETE", "repos/example/project/issues/13/assignees", {"assignees": ["fixture"]}),
+        ])
+
+    def test_recovery_head_race_during_ci_blocks_readiness(self):
+        self.mutate_on_checks = lambda pr: pr["head"].update(sha="0" * 40)
+        with self.assertRaisesRegex(ValueError, "changed"):
+            self.finish_recovery()
+        self.assertTrue(self.replacement["draft"])
+        self.assert_read_only_calls()
+
+
 class BaseUpdateFinishTests(GitHubEndorsementTestCase):
     def sign(self, publication="replace"):
         return super().sign(publication)

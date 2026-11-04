@@ -1758,6 +1758,10 @@ the resulting PR with local `gh`, poll read-only within that history-based
 deadline, then repeat only the same `finish --receipt ... --approve-plan ...`.
 For a verified API-only base update, retain its separate verification record and
 include the same `--base-update <record>` on every finalisation or rollback retry.
+For a closed in-place PR and an operator-authorised recovery draft on the identical
+signed source, use the reference's
+[recovery-draft finalisation](references/endorsement.md#resuming-on-an-authorised-recovery-draft)
+with the unchanged receipt and explicit `--recovery-pr` selection.
 Do not sign/push again, create a
 duplicate or bypass readiness with `gh pr ready`. Outside the verified API-only
 base-update exception, a changed head, retargeted base or rewritten base history
