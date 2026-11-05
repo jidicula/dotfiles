@@ -818,9 +818,15 @@ Retain the original receipt, plan, approval, and signatures unchanged. This
 option selects an existing PR; it does not authorise creating a recovery draft,
 signing, pushing, or changing the approved publication method. Obtain any missing
 recovery authorisation before using it, without asking again if already given.
+Record that decision against the recovery PR and exact signed head; approval of
+a helper change or the original publication is not recovery-target adoption.
 
 The original must be closed and unmerged, and both PRs must match the receipt's
-host, repository, source repository/branch, signed head, and base branch.
+host, repository, source repository/branch, and base branch. Only the closed
+original's cached head may still be the reviewed unsigned head; the live source
+branch and recovery PR must remain at the exact signed head. The original's
+closure and source identity are rechecked around CI and readiness. These checks
+do not prevent returning an unchanged recovery target to draft after CI fails.
 Finalisation rechecks every published commit and signature, current base
 compatibility, assignment permission, and the recovery PR's required CI. It
 clears only that PR's attestor assignment when permitted; the original PR and

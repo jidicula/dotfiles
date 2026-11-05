@@ -1800,12 +1800,12 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     return result
 
 
-def ready_for_review(request, number, head, branch):
+def ready_for_review(request, number, head, branch, *, confirm_publication=None):
     """Promote only the verified signed revision with passing required CI."""
     hostname = request_hostname(request)
     def verify_ci():
         try:
-            return require_passing_checks(request, number, head, branch)
+            checked = require_passing_checks(request, number, head, branch)
         except RequiredCIFailure as failure:
             current = confirm_ci_revision(request, number, head, branch)
             if current["draft"]:
@@ -1834,6 +1834,9 @@ def ready_for_review(request, number, head, branch):
             raise RequiredCIFailure(
                 f"{failure}; returned the unchanged signed PR to draft: {restored['html_url']}"
             ) from failure
+        if confirm_publication is not None:
+            confirm_publication()
+        return checked
 
     pr = verify_ci()
     confirm_attestation_cleared(
@@ -1863,6 +1866,8 @@ def ready_for_review(request, number, head, branch):
     require(current["draft"] is False, "ready-for-review transition not confirmed")
     assignment = confirm_attestation_cleared(
         request, current, "attestor was assigned during the ready-for-review transition")
+    if confirm_publication is not None:
+        confirm_publication()
     return {"url": pr["html_url"], "head": head, "ready_for_review": True,
             "ci_scope": pr["ci_scope"], **assignment}
 
@@ -1961,11 +1966,24 @@ def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr
     source = source_repository(request)
     pr = planned_pull_request(request, request["pr"], require_draft=publication != "replace")
     expected = receipt["head"] if publication == "replace" else request["head"]
-    require(pr["head"]["sha"] == expected
+    original_heads = (expected, request["head"]) if recovery_pr is not None else (expected,)
+    require(pr["head"]["sha"] in original_heads
             and pr["head"]["ref"] == request["source_branch"]
             and pr["base"]["ref"] == request["base_branch"], "PR changed after endorsement")
+    confirm_recovery = None
     if recovery_pr is not None:
         require(pr["state"] == "closed", "recovery requires a closed original PR")
+        original_request = request
+
+        def confirm_recovery():
+            current = planned_pull_request(
+                original_request, original_request["pr"], require_draft=False)
+            require(current["state"] == "closed", "recovery requires a closed original PR")
+            require(current["head"]["sha"] in original_heads
+                    and current["head"]["ref"] == original_request["source_branch"]
+                    and current["base"]["ref"] == original_request["base_branch"],
+                    "original PR changed during recovery")
+
         request = dict(request, pr=recovery_pr,
                        url=f"https://{hostname}/{repository}/pull/{recovery_pr}")
         # Per-PR CI exceptions do not transfer to a recovery PR.
@@ -1996,6 +2014,8 @@ def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr
             "original source branch changed after endorsement")
     verify_published_commits(receipt)
     confirm_base_compatibility(request, merge_pr)
+    if confirm_recovery is not None:
+        confirm_recovery()
     if "attestor" in request:
         updated = set_attestation_assignment(
             request, False, head=expected, allow_closed=publication == "replacement",
@@ -2005,11 +2025,14 @@ def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr
 
     def finish_ci(number):
         if not draft_only:
-            return ready_for_review(request, number, receipt["head"], target)
+            return ready_for_review(
+                request, number, receipt["head"], target, confirm_publication=confirm_recovery)
         checked = require_passing_checks(
             request, number, receipt["head"], target, require_draft=True,
             allow_collaborator_deferral="ci_deferral" in request,
         )
+        if confirm_recovery is not None:
+            confirm_recovery()
         assignment = confirm_attestation_cleared(
             request, checked,
             "attestor is still assigned; clear the attestation wait before draft verification")
