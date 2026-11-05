@@ -1257,14 +1257,26 @@ weaker review gate.
    ```
 
    Give bounded `view_range` reads for any permitted large local reference,
-   or include the necessary excerpt in the handoff. Supply exact known receipt
-   IDs and complete, copy-ready shell commands for permitted serial poll/output
-   calls, distinguishing supplied completed receipts from jobs the reviewer
-   launches. For a retained-output read, the permitted form is
-   `(copilot-cs-output "<allowed-job-id>")`. The supplied shell command is the
-   whole allowed operation, not a prefix: run it unchanged, without appending
-   local filters such as `| head -c 4000`, redirects, or other processing unless
-   those operations and any artifact paths are explicitly allowed.
+   or include the necessary excerpt in the handoff. For supplied receipts, give
+   complete, copy-ready poll/output commands containing their exact known IDs.
+   For permitted reviewer launches, give corresponding readback command
+   templates with a `<returned-job-id>` slot, explicitly allowing only the ID
+   returned by that launch to replace it. A retained-output template uses
+   `(copilot-cs-output "<returned-job-id>")`.
+
+   **Receipt before read.** Include this sequence in live-runner handoffs:
+   complete the launch tool call, record its exact returned ID and command in
+   the job ledger, then submit the permitted poll/output call for that ID.
+   Keep canonical-client calls serial, including a launch and its dependent
+   readback. A zero-second remote wait still requires waiting for the launch's
+   tool response. A missing receipt blocks readback; report it to the parent
+   rather than predicting an ID or replaying the launch.
+
+   The supplied command or explicitly authorised template is the whole allowed
+   operation, not a prefix. Apart from the receipt-bound ID substitution, run
+   it unchanged, without appending local filters such as `| head -c 4000`,
+   redirects, or other processing unless those operations and any artifact
+   paths are explicitly allowed.
 
    A truncated launch preview is not complete review evidence. Read that job
    with its supplied output command; if the retained-output response is also
@@ -1385,7 +1397,10 @@ weaker review gate.
    sandbox the built-in reviewer's tools.
 
    For a procedure-only failure, prefer a smaller, self-contained evidence
-   handoff over another improvised command sequence. The parent can supply the
+   handoff over another improvised command sequence. After concurrent client
+   calls or a lookup of an unreturned job ID, the parent accounts for the actual
+   launched jobs through their receipts, then uses this evidence-only handoff
+   instead of repeating live-runner delegation. The parent can supply the
    full frozen diff, relevant candidate/base file contents, validation evidence,
    and necessary supporting excerpts obtained through the authorised Codespace
    runner or previously permitted artifact reads. Bind every excerpt to its
