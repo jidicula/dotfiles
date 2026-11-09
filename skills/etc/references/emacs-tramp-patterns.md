@@ -492,12 +492,12 @@ Git operations: `fetch`, `push`, `commit`, `pull`, `cherry-pick`, `revert`,
 
 Automatic routing is not approval to commit. First follow the skill's
 [pre-commit gate](../SKILL.md#gate-0---required-pre-commit-rubber-duck-review):
-make the change, run tests/lint in the Codespace, obtain independent rubber-duck
-review, then use the required [commit-message preflight](#commit-message-preflight)
+make the change, run tests/lint in the Codespace, obtain all three independent
+reviews, then use the required [commit-message preflight](#commit-message-preflight)
 for the unchanged index before committing and pushing.
 
 A worker that cannot launch nested agents hands its validated, frozen candidate
-to the parent for a sibling `rubber-duck` review. Wait for the complete result
+to the parent for the sibling review sequence. Wait for every complete result
 bound to those parents and that tree; do not commit merely because the worker
 finished its implementation.
 
@@ -572,8 +572,8 @@ Write real LF line breaks with `copilot-cs-put`, a quoted heredoc, or
 file **after** it has passed through JSON, Elisp, and shell quoting.
 
 Run this preflight and commit as **one login-aware runner command**, only after
-Gate 0's validation and independent review have passed. The example checks the
-default required trailers; adjust the expected set only when the operator's
+Gate 0's validation and all three independent reviews have passed. The example
+checks the default required trailers; adjust the expected set only when the operator's
 instructions explicitly change it:
 
 ```sh
@@ -640,7 +640,8 @@ same human endorsement gate as every other agent commit.
 ### Exact-revision endorsement
 
 Follow this skill's [quality and endorsement gates](../SKILL.md#quality-and-endorsement-gates),
-starting with validation and rubber-duck review before the first change commit.
+starting with validation and all three pre-commit reviews before the first
+change commit.
 After publishing the unsigned draft, continue with the
 [CCR commands](copilot-code-review.md) and
 [endorsement reference](endorsement.md).

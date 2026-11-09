@@ -967,10 +967,10 @@ check it out here (or confirm Step 4 already created the Codespace on it).
 For every new change commit, follow this order:
 
 ```text
-make change -> run tests/lint in the Codespace -> rubber duck -> message preflight -> commit -> push
+make change -> run tests/lint in the Codespace -> all Gate 0 reviews -> message preflight -> commit -> push
 ```
 
-The [pre-commit rubber-duck gate](#gate-0---required-pre-commit-rubber-duck-review)
+The [pre-commit review gate](#gate-0---required-pre-commit-rubber-duck-review)
 applies to the initial implementation and every follow-up, including CI and CCR
 fixes. Do not create a temporary commit to obtain a review.
 
@@ -1089,7 +1089,7 @@ fixes. Do not create a temporary commit to obtain a review.
   expand skill maintenance or permission to file an upstream issue into
   permission to implement a repository fix. Do not stop at an uncommitted diff,
   local commit, or pushed branch:
-  pass the pre-commit rubber-duck gate, commit and push the change in the Codespace,
+  pass all pre-commit reviews, commit and push the change in the Codespace,
   then use local `gh` with
   `-R "$NWO"` to reuse the current branch's open draft PR or create one with
   `gh pr create -R "$NWO" --draft --head "$BRANCH"` plus a task-derived title
@@ -1194,7 +1194,7 @@ across turns, delegation, and context recovery:
 
 | Gate | Required disposition |
 |---|---|
-| 0 | Codespace validation and independent pre-commit review of the exact candidate |
+| 0 | Codespace validation, then rubber-duck, code-review, and security-review of the exact candidate |
 | 1 | Required CI on the unsigned draft |
 | 2 | CCR applicability established, then review and findings handled under Gate 2 |
 | 3 | Exact-revision human attestation, verified signing, and approved publication |
@@ -1246,11 +1246,24 @@ Record only skill-owned defects in [`ISSUES.md`](ISSUES.md), following the
 inner-loop failures require the operator's permission before an issue is filed
 in the owning team's repository; they do not belong in the local skill log.
 
-#### Gate 0 - required pre-commit rubber-duck review
+<a id="gate-0---required-pre-commit-rubber-duck-review"></a>
 
-Use Copilot CLI's built-in **`rubber-duck` agent**, the independent reviewer
-behind `/rubber-duck`. This is an agent-driven gate against the selected
-Codespace checkout, not same-agent self-review or PR-based CCR.
+#### Gate 0 - required pre-commit reviews
+
+Use Copilot CLI's built-in agent types in this order:
+
+1. **`rubber-duck`** (`/rubber-duck`): challenge the approach, assumptions, and
+   intended behaviour.
+2. **`code-review`** (`/review`): inspect the diff and connected code for bugs,
+   regressions, and missing coverage.
+3. **`security-review`** (`/security-review`): inspect for exploitable
+   vulnerabilities and trust-boundary failures.
+
+Invoke the agents directly; do not ask the operator to run the slash commands.
+These are separate read-only reviews of the same frozen parents and index tree
+in the selected Codespace, not self-review or PR-based CCR. Run them sequentially
+and apply steps 3 and 4 below to each role before proceeding to the next.
+An earlier pass never substitutes for a later review.
 
 **The parent owns routine review recovery, without a separate retry-approval
 prompt.** Correcting a handoff, obtaining already-authorised evidence, replacing
@@ -1262,25 +1275,25 @@ described in step 5, not whether to make another permitted review attempt.
 
 **The parent owns review for delegated implementation.** Before delegating,
 check the actual `task` tool schema and delegation constraints: the parent must
-be permitted to launch `rubber-duck`. Slash-command help or another session's
-agent list does not establish availability in the current session.
+be permitted to launch all three agent types. Slash-command help or another
+session's agent list does not establish availability in the current session.
 
-A worker that lacks that agent type or is prohibited from nesting agents must
-not attempt the invocation. Complete steps 1 and 2, then return an
+A worker that lacks any required agent type or is prohibited from nesting agents
+must not attempt those invocations. Complete steps 1 and 2, then return an
 `awaiting-review` handoff with the candidate, validation evidence and runner
 details required by step 3. Keep the candidate uncommitted and unchanged.
-The parent launches the reviewer as a sibling of the implementation worker,
+The parent launches each reviewer as a sibling of the implementation worker,
 using that worker's existing Codespace, checkout and canonical client/session.
 Keep the worker idle and serialize access to its daemon during review. Return
-the complete reviewer result and invocation id, explicitly bound to the recorded
-parents and tree, before the implementer resumes at step 4. A bare "review
-passed" message is not sufficient evidence.
+every reviewer's complete result, agent type, and invocation id, explicitly bound
+to the recorded parents and tree, before the implementer resumes at step 5.
+A bare "review passed" message is not sufficient evidence.
 
-If no permitted parent can invoke the reviewer, preserve the candidate and ask
-the operator to resume in a session that can. Do not substitute another agent
-type, self-review, CCR or a nested CLI invocation, or violate a no-nested-agents
-constraint. A worker's restricted capabilities require a parent handoff, not a
-weaker review gate.
+If no permitted parent can invoke a required reviewer, preserve the candidate and
+ask the operator to resume in a session that can. Keep each required role
+distinct: self-review, CCR, a nested CLI invocation, or a different agent type
+cannot replace it. Respect no-nested-agents constraints. A worker's restricted
+capabilities require a parent handoff, not a weaker review gate.
 
 1. Finish the change and run the repository's applicable tests/lint in the
    Codespace. Resolve failures before requesting review; passing CI from an older
@@ -1290,9 +1303,10 @@ weaker review gate.
    `HEAD`, any additional merge parents and the index tree from `git write-tree`, with the
    validation evidence. Ensure that evidence covers this candidate, not different
    unstaged contents. Do not change the candidate while review is running.
-3. Have the review-owning session delegate one read-only review to the built-in
-   `rubber-duck` agent. Supply the
-   task and intended behaviour, repository/base context, immutable Codespace name,
+3. Have the review-owning session delegate one read-only review for each required
+   role, in the order above, accepting its result under step 4 before launching
+   the next. Supply the role's focus, the task and intended behaviour,
+   repository/base context, immutable Codespace name,
    exact checkout, canonical client/session details, recorded parents and tree,
    and validation results. Explicitly list the allowed repository, checkout,
    frozen candidate/base, permitted inspection operations, and any pre-approved
@@ -1414,9 +1428,9 @@ weaker review gate.
    `git diff <HEAD> <TREE>` and `git show <TREE>:<path>` where working-copy
    contents differ. Serialize calls to the same daemon; the reviewer must not
    edit, stage, commit, push, provision another Codespace, or request CCR.
-4. Ask the reviewer to challenge correctness, assumptions, regressions and missing
-   coverage, with concrete locations and reasoning, and return an explicit
-   `pass`, `changes-needed` or `blocked` assessment of both code and procedure.
+4. Ask each reviewer to apply its role's focus, with concrete locations and
+   reasoning, and return an explicit `pass`, `changes-needed` or `blocked`
+   assessment of both code and procedure.
    An actual source or operation violation requires `blocked`, even with no
    code findings; a clean code assessment is not a passing review gate.
    Require a source inventory
@@ -1464,16 +1478,17 @@ weaker review gate.
    full frozen diff, relevant candidate/base file contents, validation evidence,
    and necessary supporting excerpts obtained through the authorised Codespace
    runner or previously permitted artifact reads. Bind every excerpt to its
-   source, revision, and receipt. Ask a fresh reviewer to assess those supplied
-   contents without inspection-tool calls; this remains independent review, not
+   source, revision, and receipt. Ask a fresh reviewer of the same agent type to
+   assess those supplied contents without inspection-tool calls; this remains independent review, not
    acceptance of the implementer's summary. Missing context returns `blocked`
    with the exact evidence needed. Keep the original task and full candidate
    under review; reducing tool use must not omit changes or required context.
+   When the candidate is unchanged, retain the other roles' scope-valid passes
+   and repeat only the affected role; an invalid result never counts as a pass.
 
    Independently evaluate valid findings. Fix actionable problems, rerun the
-   relevant tests/lint in the Codespace, and repeat rubber-duck review on the
-   revised candidate. Record
-   evidence for rejected findings; do not ignore a disputed finding or repeatedly
+   relevant tests/lint in the Codespace, and repeat the full three-agent sequence
+   on the revised candidate. Record evidence for rejected findings; do not ignore a disputed finding or repeatedly
    request review of unchanged code to obtain a different answer.
    Reuse a reviewer only when its invocation mode supports follow-up messages.
    A synchronous/one-shot reviewer may appear `idle` but reject `write_agent`;
@@ -1481,7 +1496,8 @@ weaker review gate.
    Do not retry an unsupported message or carry the previous candidate's pass
    forward. Background reviewers may accept same-task follow-ups when the
    available tool explicitly supports them.
-5. Proceed only after a completed `pass` with no unresolved actionable findings.
+5. Proceed only after all three roles return a completed `pass` for the same
+   parents/tree, with no unresolved actionable findings.
    An invalid, failed, incomplete, or ambiguous review keeps committing blocked;
    a successful tool exit is not review approval. First use the applicable
    parent-owned recovery above: correct the session/routing or evidence,
@@ -1500,7 +1516,7 @@ weaker review gate.
    explicit consent gates remain unchanged.
 6. Immediately before the unsigned commit, confirm that `HEAD`, any merge parents
    and the index tree still match the reviewed candidate. A changed candidate must repeat
-   validation and review. Run the required
+   validation and all three reviews. Run the required
    [commit-message preflight](references/emacs-tramp-patterns.md#commit-message-preflight)
    on the actual message file, then commit that same file and only that index,
    without `git commit -a` or adding unreviewed files. Fix malformed messages
@@ -1515,9 +1531,9 @@ Preserve authorship and the existing restrictions on history rewriting.
 Content-preserving endorsement reconstruction and verified API-only base updates
 continue through their separate protocols; they are not new authored changes.
 
-Retain the reviewer invocation/result, reviewed parents/tree, scope, finding
-dispositions and validation evidence in session state. On resume, recheck that
-binding before committing; do not infer a pass from a completed job or an old
+Retain each reviewer's agent type, invocation/result, reviewed parents/tree,
+scope, finding dispositions, and validation evidence in session state. On resume,
+recheck each binding before committing; do not infer a pass from a completed job or an old
 review. This procedural gate does not replace repository hooks, required CI,
 CCR or the operator's exact-revision endorsement.
 
@@ -1898,8 +1914,8 @@ Retain the conflict-maintenance schedule ID and its current PR binding; readines
 does not end that watch. Reconcile it on resume before registering another.
 Do not include credentials or treat an approval token as proof of consent.
 
-Retain Gate 0's parents/tree, review-owning session and reviewer invocation/result
-before any commit. A worker awaiting parent review must retain its handoff;
+Retain Gate 0's parents/tree, review-owning session, and all three reviewer
+invocations/results before any commit. A worker awaiting parent review must retain its handoff;
 an unsigned commit alone is not evidence that the pre-commit review occurred.
 
 Distinguish `blocked`, `awaiting-review`, `awaiting-attestation`, `unendorsed`,
