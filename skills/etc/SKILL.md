@@ -1595,6 +1595,17 @@ still block; the exception cannot be combined with the absent-CI exception.
 Use generic descriptions and synthetic examples in public skill documentation
 and fixtures, not organisation-specific approval systems or check names.
 
+A required workflow may report failure solely because its human-controlled
+action cannot run on a draft. Treat this separately from an approval-only check:
+obtain an explicit per-PR ordering decision and follow the
+[source-pinned human-workflow protocol](references/endorsement.md#human-controlled-workflow-ordering).
+It requires a skipped action, a verification-only failure, and a pending waiting
+status from the same verified run attempt. `required_ci: "deferred_human_workflow"`
+is a valid Gate 1 exception, not passing CI. Actual action failures, other
+executable failures, missing evidence, and enforced-workflow failures still block.
+The exception allows the usual review and endorsement sequence to reach readiness;
+it never authorises the human action or waives its completion before merge.
+
 For all other pending CI, use the
 [history-based polling limit](references/endorsement.md#ci-polling-limit):
 the slowest of the last five successful matching job runs on other branches,
@@ -1817,11 +1828,14 @@ confirmed attestor unassignment when permitted allow marking that PR ready for
 review, except for the plan's explicit, freshly verified no-required-CI exception.
 The assignment permission is checked on each PR, including a signed replacement;
 only an explicit denial waives assignment tracking, not the other readiness gates.
-For the plan's selected human-approval check, use `finish --allow-pending-approvals`
-under the standing ordering policy. This verifies publication and signed-head
+For the plan's selected human-action check, use `finish --allow-pending-approvals`
+under its recorded ordering policy. This verifies publication and signed-head
 executable CI and permits readiness while that exact check is still awaiting
-approvals. Those approvals remain required before merge; readiness, signing, and
-CI success do not supply them. Use `--draft-only` only when intentionally leaving
+approvals or meets its explicit human-workflow waiting exception. These human
+actions remain required before merge; readiness, signing, and CI success do not
+supply them. A human-workflow exception reports
+`ci_scope: "operator_deferred_human_workflow"`, not successful deployment.
+Use `--draft-only` only when intentionally leaving
 the PR in draft. Without the readiness option, `finish` retains its existing
 approval requirement. The option cannot introduce an unplanned deferral or
 transfer one to a base update or recovery PR.

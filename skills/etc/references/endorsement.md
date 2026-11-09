@@ -208,6 +208,85 @@ readiness. Use `--draft-only` instead when intentionally retaining the draft;
 it permits the selected pending approval but does not mark the PR ready.
 Readiness never authorises merging before required human or code-owner approvals.
 
+### Human-controlled workflow ordering
+
+Some required jobs fail a verification wrapper while the actual action is
+deliberately skipped until a human acts on a non-draft PR. This is not the
+approval-count exception above and must not become a general failed-check skip.
+After auditing the workflow's exact source and current job evidence, obtain the
+operator's per-PR decision to defer only this human-controlled action through
+readiness. The agent gathers the selector; do not ask the operator to configure
+IDs or edit JSON. Neither that decision nor endorsement authorises the action.
+
+Use the same local `--defer-human-workflow "$SELECTOR_JSON"` option for `check-ci`
+and `prepare`. The selector has this shape, with synthetic values below replaced
+by the observed identities and audited workflow blob:
+
+```json
+{
+  "kind": "human_action_workflow",
+  "check_name": "Approved action",
+  "app_id": 1001,
+  "app_slug": "workflow-runner",
+  "workflow_repository": "example/project",
+  "workflow_path": ".github/workflows/human-action.yml",
+  "workflow_blob": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "action_step": "Run approved action",
+  "waiting_step": "Verify approved action",
+  "waiting_description": "Waiting for approved action",
+  "status_creator_id": 77
+}
+```
+
+Confirm from source that the action genuinely requires human authorisation,
+that the selected verifier reports non-execution rather than an executable
+failure, and that readiness alone cannot perform the action. A name or failure
+message alone is insufficient. Preserve repository policy and genuine human
+approval; do not submit an approval, dispatch a workflow, or invoke the action
+to manufacture a passing result.
+
+The helper verifies the check app, exact PR/head/source, complete commit workflow
+discovery, ordinary review-triggered workflow, immutable source blob, run/attempt,
+and fully paginated jobs and statuses. The selected action must be skipped,
+the later verifier must be the only failed step, and the latest status must be
+pending with the exact selected issuer, waiting description, and run-attempt URL.
+Every other job in that workflow must succeed. All other reported checks and
+enforced workflows retain their requirements. Missing, ambiguous, changing, or
+unreadable evidence blocks; an executed action failure cannot use this exception.
+
+Repeated reviews can leave several same-named check runs in the rollup. Verify
+each run's source and attempt instead of choosing by name alone. The latest
+verified run must own the latest status. A later waiting wrapper cannot clear an
+earlier executable/action failure; a later successful run can supersede it.
+Unknown workflows, issuers, or source revisions remain blockers.
+
+Version 5 freezes a distinct `ci_deferral.kind: "human_action_workflow"`, the
+selector, and the latest original check/run/attempt/status identities. A source change
+or original attempt change requires a new plan. Older helpers reject this kind;
+never edit an existing plan or receipt to add it. This exception cannot combine
+with either another deferral or the absent-CI exception. The selected ordering
+policy also covers the new signed head, which may need fresh human action even
+when the unsigned head's latest run already succeeded.
+
+While the action is waiting, `check-ci` reports
+`required_ci: "deferred_human_workflow"`, not `"passed"`.
+Continue CCR and exact-revision endorsement with that Gate 1 exception recorded.
+If the latest run already succeeds, it instead reports `"passed"` while retaining
+the explicit source-pinned ordering policy for publication.
+Disclose the selected job, waiting human action, and merge prerequisite in the
+compact endorsement prompt; keep the full provenance in the records.
+
+After separately authorised signing/publication, use
+`finish --allow-pending-approvals` with the unchanged receipt. Despite its name,
+this option also covers the plan's selected human-workflow exception. The helper
+rechecks the signed head's new job and workflow source before readiness and
+reports `ci_scope: "operator_deferred_human_workflow"` plus the current
+`approval_check.pending`. Retain the option on every readiness/rollback retry.
+Real executable or action failures still return the unchanged signed PR to draft.
+Once the human-controlled job succeeds, ordinary CI scope resumes without
+re-signing or republishing. This per-PR exception does not transfer to a base
+update or recovery PR, and never authorises merging before the action succeeds.
+
 Required workflows are discovered from the exact commit's fully paginated
 check suites, not the repository-wide run search. The gate still verifies the
 enforced workflow source, exact PR and branch, and latest run and attempt.
@@ -637,11 +716,13 @@ confirm that authors and timestamps stay unchanged, and state that endorsement
 also approves this change. Include any verified-email confirmation here.
 
 Disclose material validation limitations, including an explicit no-required-CI
-exception or version 5 collaborator-approval deferral. For the latter, show the
+exception or either version 5 human-action ordering exception. For an approval-count deferral, show the
 check name, app ID/slug, required count, and original run ID in the private
 endorsement context. Explain that the selected approval can follow readiness
 but remains required before merge. Keep public guidance and fixtures generic.
-Describe neither exception as passing CI.
+For a human-workflow exception, name the job and required human action, explain
+why its verification is waiting, and retain the merge restriction. Keep full
+source/run provenance in the records. An applied exception never counts as passing CI.
 
 Use the [skill's endorsement choices](../SKILL.md#gate-3---exact-revision-human-endorsement),
 including the signed exact-head `--force-with-lease` route in every prompt.
@@ -853,7 +934,7 @@ do not prevent returning an unchanged recovery target to draft after CI fails.
 Finalisation rechecks every published commit and signature, current base
 compatibility, assignment permission, and the recovery PR's required CI. It
 clears only that PR's attestor assignment when permitted; the original PR and
-other assignees are left unchanged. Prior per-PR CI exceptions and collaborator
+other assignees are left unchanged. Prior per-PR CI exceptions and human-action
 deferrals do not transfer. `--draft-only` verifies all required CI without marking
 the recovery ready; it does not revive those exceptions.
 
