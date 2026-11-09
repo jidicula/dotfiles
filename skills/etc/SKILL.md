@@ -1208,9 +1208,10 @@ entries when the revision changes, using the existing gate-specific rules.
 Keep this ledger in session state, not a routine validation checklist in PR prose.
 
 **Declare completion only when every gate is `satisfied` or validly `excepted`,
-and Gate 4's final readiness check is complete.** An approved ordering exception
-does not satisfy a deferred check or finish Gate 4. Explicit user limits
-(such as no publication, declining endorsement, or stopping work) take precedence;
+and Gate 4's final readiness check is complete.** Deferred human approvals remain
+merge prerequisites, not CI or readiness blockers under the scoped approval
+ordering policy. All other Gate 4 checks and monitoring still apply. Explicit
+user limits (such as no publication, declining endorsement, or stopping work) take precedence;
 report the limited outcome and remaining gates rather than claiming the full
 workflow completed.
 
@@ -1562,14 +1563,21 @@ This decision does not authorise signatures or bypass CCR, exact-plan human
 endorsement, permission-aware assignment, publication verification, or readiness
 monitoring.
 
-A separate, explicitly operator-selected per-PR ordering exception can defer
-one strictly pending collaborator-approval check until after signing,
-publication, and signed-head executable CI. Use the
-[guarded version 5 protocol](references/endorsement.md#explicit-ordering-exception-for-pending-collaborator-approvals),
-not a general check skip. It binds the exact check, app provenance, and approval
-count into the plan; it is never passing CI and cannot waive readiness.
+**Human approvals are merge prerequisites, not executable CI.** A verified check
+that is waiting only for human approvals may remain pending through this gate,
+endorsement, and ready-for-review, so review approvals can be collected afterward.
+Apply this standing ordering policy without a separate per-PR permission prompt.
+First establish the check's approval-only purpose from repository policy or its
+implementation; a name alone is not sufficient. Bind its exact identity, app
+provenance, and approval count with the
+[guarded approval-check protocol](references/endorsement.md#pending-human-approvals-before-merge).
+Treat `required_ci: "deferred_collaborator_approvals"` as a valid Gate 1 exception
+and continue, never as a successful approval or an all-checks-passed result.
 All other draft-triggerable CI and current-head CCR remain mandatory.
-It is independent of, and cannot be combined with, the absent-CI exception.
+Unknown, missing, failed, or unverified checks
+still block; the exception cannot be combined with the absent-CI exception.
+Use generic descriptions and synthetic examples in public skill documentation
+and fixtures, not organisation-specific approval systems or check names.
 
 For all other pending CI, use the
 [history-based polling limit](references/endorsement.md#ci-polling-limit):
@@ -1793,10 +1801,14 @@ confirmed attestor unassignment when permitted allow marking that PR ready for
 review, except for the plan's explicit, freshly verified no-required-CI exception.
 The assignment permission is checked on each PR, including a signed replacement;
 only an explicit denial waives assignment tracking, not the other readiness gates.
-For an approved collaborator-approval ordering exception, use `finish --draft-only`
-to verify the signed draft's publication and other required CI without readiness.
-This does not clear or satisfy the pending approval check. Ordinary `finish`
-remains fail-closed until that check and every other requirement pass.
+For the plan's selected human-approval check, use `finish --allow-pending-approvals`
+under the standing ordering policy. This verifies publication and signed-head
+executable CI and permits readiness while that exact check is still awaiting
+approvals. Those approvals remain required before merge; readiness, signing, and
+CI success do not supply them. Use `--draft-only` only when intentionally leaving
+the PR in draft. Without the readiness option, `finish` retains its existing
+approval requirement. The option cannot introduce an unplanned deferral or
+transfer one to a base update or recovery PR.
 Old CCR reviews and discussions do not migrate to a replacement PR or count as
 formal approval of its new OIDs; retain their links with the verified mapping.
 Carry accepted human-follow-up findings and their outstanding prerequisites
@@ -1819,8 +1831,9 @@ state rather than declaring readiness complete. Do not start another readiness
 transition or repeatedly rerun workflows to obtain a different result.
 
 If a required check fails, rerun the same `finish` with the saved receipt and
-approval. It rechecks the failure and exact head/base before returning the
-unchanged signed PR to draft, and verifies that rollback. Pending checks or
+approval, retaining `--allow-pending-approvals` when selected. It rechecks the
+failure and exact head/base before returning the unchanged signed PR to draft,
+and verifies that rollback. Pending checks or
 unreadable policy do not trigger rollback. A changed head/base or an unconfirmed
 rollback is a blocker for the operator, never permission to demote a different
 revision or replay publication. After the identified runs complete, repeat
@@ -1830,6 +1843,9 @@ completed task if it remains blocked.
 For pending signed-head CI, preserve the published draft and receipt. Inspect
 the resulting PR with local `gh`, poll read-only within that history-based
 deadline, then repeat only the same `finish --receipt ... --approve-plan ...`.
+Retain the selected approval-ordering option on every retry and final fresh
+check. Report outstanding human approvals as merge prerequisites rather than
+polling them as CI or declaring them satisfied.
 For a verified API-only base update, retain its separate verification record and
 include the same `--base-update <record>` on every finalisation or rollback retry.
 For a closed in-place PR and an operator-authorised recovery draft on the identical

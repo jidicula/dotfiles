@@ -1790,7 +1790,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
         print(f"[copilot-cs-endorse] {url}: deferring only "
               f"{deferral['check_name']} from {deferral['app_slug']} "
               f"(app {deferral['app_id']}); {approval_check['title']}; "
-              "not a passing CI result; all requirements still block readiness",
+              "not a passing CI result; selected approvals remain required before merge",
               file=sys.stderr)
     result = dict(current, ci_scope=(
         "operator_deferred_collaborator_approvals" if deferred else
@@ -1800,12 +1800,15 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     return result
 
 
-def ready_for_review(request, number, head, branch, *, confirm_publication=None):
+def ready_for_review(request, number, head, branch, *, confirm_publication=None,
+                     allow_pending_approvals=False):
     """Promote only the verified signed revision with passing required CI."""
     hostname = request_hostname(request)
     def verify_ci():
         try:
-            checked = require_passing_checks(request, number, head, branch)
+            checked = require_passing_checks(
+                request, number, head, branch,
+                allow_collaborator_deferral=allow_pending_approvals)
         except RequiredCIFailure as failure:
             current = confirm_ci_revision(request, number, head, branch)
             if current["draft"]:
@@ -1868,8 +1871,11 @@ def ready_for_review(request, number, head, branch, *, confirm_publication=None)
         request, current, "attestor was assigned during the ready-for-review transition")
     if confirm_publication is not None:
         confirm_publication()
-    return {"url": pr["html_url"], "head": head, "ready_for_review": True,
-            "ci_scope": pr["ci_scope"], **assignment}
+    result = {"url": pr["html_url"], "head": head, "ready_for_review": True,
+              "ci_scope": pr["ci_scope"], **assignment}
+    if "approval_check" in pr:
+        result["approval_check"] = pr["approval_check"]
+    return result
 
 
 def verify_published_commits(receipt):
@@ -1949,12 +1955,18 @@ def finish_base_update(receipt, approval, update, *, draft_only=False):
     return dict(result, base_update=update)
 
 
-def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr=None):
+def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr=None,
+           allow_pending_approvals=False):
     require(base_update is None or recovery_pr is None,
             "recovery PR selection cannot be combined with a base update")
+    require(not allow_pending_approvals
+            or not draft_only and base_update is None and recovery_pr is None,
+            "pending approvals cannot be combined with draft-only, base-update, or recovery finalisation")
     if base_update is not None:
         return finish_base_update(receipt, approval, base_update, draft_only=draft_only)
     request, publication = signed_receipt_request(receipt, approval)
+    require(not allow_pending_approvals or "ci_deferral" in request,
+            "readiness with pending approvals requires the plan's selected collaborator-approval check")
     if recovery_pr is not None:
         require(publication == "replace", "recovery PR selection requires an in-place publication")
         require(type(recovery_pr) is int and recovery_pr > 0 and recovery_pr != request["pr"],
@@ -2026,7 +2038,8 @@ def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr
     def finish_ci(number):
         if not draft_only:
             return ready_for_review(
-                request, number, receipt["head"], target, confirm_publication=confirm_recovery)
+                request, number, receipt["head"], target, confirm_publication=confirm_recovery,
+                allow_pending_approvals=allow_pending_approvals)
         checked = require_passing_checks(
             request, number, receipt["head"], target, require_draft=True,
             allow_collaborator_deferral="ci_deferral" in request,
@@ -2150,8 +2163,8 @@ def main():
             help="GitHub hostname using existing gh authentication (default: github.com)")
         subparser.add_argument(
             "--defer-collaborator-approvals", nargs=4, metavar=("CHECK", "APP_ID", "APP_SLUG", "COUNT"),
-            help="operator-selected, per-PR ordering exception for a strictly pending collaborator "
-                 "approval check; never waives readiness")
+            help="bind a per-PR ordering exception for a strictly pending human-approval check; "
+                 "approvals remain required before merge")
     plan_parser = actions.add_parser("plan", help="CODESPACE: freeze the commit range for human review")
     plan_parser.add_argument("--request", required=True)
     update_parser = actions.add_parser(
@@ -2184,11 +2197,16 @@ def main():
         "--recovery-pr", type=int,
         help="operator-authorised recovery PR on the identical signed source of a closed "
              "in-place publication; does not create a PR or transfer CI exceptions")
-    finish_parser.add_argument(
+    finish_readiness = finish_parser.add_mutually_exclusive_group()
+    finish_readiness.add_argument(
         "--draft-only", action="store_true",
         help="verify signed-head CI and finalise a draft without readiness; only the plan's "
              "selected collaborator-approval check may remain pending, except with "
              "--base-update or --recovery-pr")
+    finish_readiness.add_argument(
+        "--allow-pending-approvals", action="store_true",
+        help="allow only the plan's selected human-approval check to remain pending through "
+             "readiness; does not waive executable CI or merge approvals")
     args = parser.parse_args()
     remote = args.action in ("plan", "sign", "verify", "push", "verify-base-update")
     try:
@@ -2244,7 +2262,8 @@ def main():
                 require(isinstance(update, dict), "expected a base-update verification record")
             result = finish(json.loads(Path(args.receipt).read_text()), args.approve_plan,
                             draft_only=args.draft_only, base_update=update,
-                            recovery_pr=args.recovery_pr)
+                            recovery_pr=args.recovery_pr,
+                            allow_pending_approvals=args.allow_pending_approvals)
         print((RESULT_PREFIX if remote else "") + canonical(result))
         return 0
     except (ValueError, RuntimeError, OSError, KeyError, subprocess.TimeoutExpired) as error:

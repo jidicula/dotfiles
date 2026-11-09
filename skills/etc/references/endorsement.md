@@ -141,14 +141,20 @@ requirements must pass normally. Finalisation reports
 `ci_scope: "operator_approved_no_required_ci"` only when no requirements exist.
 No repository policy, global setting or other PR is changed.
 
-### Explicit ordering exception for pending collaborator approvals
+### Pending human approvals before merge
 
-An operator may separately select **one check for one PR** to wait until after
-endorsement, fork publication, and signed-head executable CI. This is an ordering
-exception, not a waiver of approvals or permission to sign. Complete every other
-draft-triggerable CI check and the current-head CCR gate first.
+Human approvals may follow code review and ready-for-review. Under this skill's
+standing ordering policy, a verified approval-only check does not block executable
+CI, endorsement, or readiness. The approvals remain required before merge; this
+is neither approval nor permission to sign. Complete every other draft-triggerable
+CI check and the current-head CCR gate first.
 
-Use the same explicit selector for `check-ci` and `prepare`:
+Establish the check's approval-only purpose from repository policy or its
+implementation before selecting it; a suggestive name is not evidence. The helper
+binds **one check for one PR** with the selector below. Derive its identity from
+the current PR, not a built-in issuer or check-name list. No separate per-PR
+permission prompt is needed under the standing policy. Use the same explicit
+selector for `check-ci` and `prepare`:
 
 ```sh
 copilot-cs-endorse prepare --repo "$NWO" --pr "$PR_NUMBER" \
@@ -173,25 +179,34 @@ be combined with `--allow-no-required-ci`. Disclose it in the exact-plan human
 prompt. `check-ci` reports `required_ci: "deferred_collaborator_approvals"`,
 never `"passed"`. A verified commit signature is not collaborator approval.
 
-After separately authorised signing and publication, finalise and verify the
-signed **draft** without a readiness transition:
+After separately authorised signing and publication, permit readiness while
+the selected approval check remains pending:
 
 ```sh
-copilot-cs-endorse finish --receipt "$RECEIPT" --approve-plan "$APPROVAL" --draft-only
+copilot-cs-endorse finish --receipt "$RECEIPT" --approve-plan "$APPROVAL" \
+  --allow-pending-approvals
 ```
 
 This verifies publication, signatures, permitted attestor unassignment, and
-signed-head CI. It can create or resume the marked replacement and close its
-original, as ordinary finalisation does, but the result stays draft. Only the plan's selected,
-still-pending approval check may wait; all other requirements must pass.
-The result reports `ci_scope: "operator_deferred_collaborator_approvals"` while
-waiting. Do not infer final readiness or request new reviews from that result.
+signed-head executable CI before readiness, including on the marked replacement.
+Only the plan's selected, still-pending approval check may wait. All other
+requirements and readiness-triggered CI monitoring remain mandatory. The result
+reports `ci_scope: "operator_deferred_collaborator_approvals"` and the current
+`approval_check` while approvals remain pending; report them as merge prerequisites,
+not passing approvals. Failed, skipped, or neutral approval checks are not pending
+approvals and remain blockers.
 
-Repeat ordinary `finish` with the same receipt after approvals complete.
-Without `--draft-only`, every requirement is enforced, including a successful
-result from the selected approval app; neutral or skipped approval checks do
-not suffice. No new signature, push, plan edit, policy change, or trusted-key
-allowlist change is needed to resume.
+Repeat the same option on finalisation, rollback, and final fresh-check calls.
+Executable-CI failures still return the unchanged signed PR to draft. Once
+approvals succeed, the helper reports ordinary required-check scope without
+another signature, push, or plan edit. The option cannot introduce a new check
+or transfer a per-PR deferral to `--base-update` or `--recovery-pr`.
+
+The request and receipt stay unchanged. Without `--allow-pending-approvals`,
+ordinary `finish` preserves its existing requirement that approvals pass before
+readiness. Use `--draft-only` instead when intentionally retaining the draft;
+it permits the selected pending approval but does not mark the PR ready.
+Readiness never authorises merging before required human or code-owner approvals.
 
 Required workflows are discovered from the exact commit's fully paginated
 check suites, not the repository-wide run search. The gate still verifies the
@@ -623,8 +638,10 @@ also approves this change. Include any verified-email confirmation here.
 
 Disclose material validation limitations, including an explicit no-required-CI
 exception or version 5 collaborator-approval deferral. For the latter, show the
-check name, app ID/slug, required count, and original run ID; readiness still
-requires that check. Describe neither exception as passing CI.
+check name, app ID/slug, required count, and original run ID in the private
+endorsement context. Explain that the selected approval can follow readiness
+but remains required before merge. Keep public guidance and fixtures generic.
+Describe neither exception as passing CI.
 
 Use the [skill's endorsement choices](../SKILL.md#gate-3---exact-revision-human-endorsement),
 including the signed exact-head `--force-with-lease` route in every prompt.

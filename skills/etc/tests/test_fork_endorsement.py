@@ -743,6 +743,75 @@ class ApprovalDeferralTests(GitHubEndorsementTestCase):
         self.approve_collaborators()
         self.assertTrue(self.finish()["ready_for_review"])
 
+    def test_pending_approvals_can_wait_until_merge_without_changing_the_receipt(self):
+        self.signed_deferral()
+        receipt = copy.deepcopy(self.receipt)
+        result = self.helper.finish(
+            self.receipt, self.approve("replace"), allow_pending_approvals=True)
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(self.original["draft"])
+        self.assertEqual(result["ci_scope"], "operator_deferred_collaborator_approvals")
+        self.assertTrue(result["approval_check"]["pending"])
+        self.assertEqual(result["approval_check"]["id"], 72)
+        self.assertEqual(self.approval_run["status"], "in_progress")
+        self.assertEqual(self.receipt, receipt)
+        self.assertEqual(self.helper.finish(
+            self.receipt, self.approve("replace"), allow_pending_approvals=True), result)
+        self.approve_collaborators()
+        result = self.helper.finish(
+            self.receipt, self.approve("replace"), allow_pending_approvals=True)
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(result["approval_check"]["pending"])
+        self.assertEqual(result["ci_scope"], "observed_required_checks")
+
+    def test_pending_approval_readiness_preserves_ci_failure_rollback(self):
+        self.signed_deferral()
+        self.check_pages[0][0]["conclusion"] = "FAILURE"
+        with self.assertRaisesRegex(ValueError, "required CI"):
+            self.helper.finish(
+                self.receipt, self.approve("replace"), allow_pending_approvals=True)
+        self.assertTrue(self.original["draft"])
+        self.check_pages[0][0]["conclusion"] = "SUCCESS"
+        self.mutate_on_ready = lambda _pr: self.check_pages[0][0].update(conclusion="FAILURE")
+        with self.assertRaisesRegex(ValueError, "returned the unchanged signed PR to draft"):
+            self.helper.finish(
+                self.receipt, self.approve("replace"), allow_pending_approvals=True)
+        self.assertTrue(self.original["draft"])
+        self.assertEqual(self.approval_run["status"], "in_progress")
+
+    def test_pending_approvals_can_wait_on_the_marked_replacement(self):
+        self.signed_deferral("replacement")
+        result = self.helper.finish(
+            self.receipt, self.approve(), allow_pending_approvals=True)
+        self.assertEqual(self.original["state"], "closed")
+        self.assertFalse(self.replacement["draft"])
+        self.assertEqual(result["url"], self.replacement["html_url"])
+        self.assertTrue(result["approval_check"]["pending"])
+
+    def test_pending_approval_readiness_requires_the_existing_plan_selection(self):
+        calls = len(self.calls)
+        with self.assertRaisesRegex(ValueError, "selected.*approval"):
+            self.helper.finish(
+                self.receipt, self.approve(), allow_pending_approvals=True)
+        self.assertEqual(len(self.calls), calls)
+        self.signed_deferral()
+        calls = len(self.calls)
+        for scope in ({"draft_only": True}, {"base_update": {}}, {"recovery_pr": 13}):
+            with self.subTest(scope=scope):
+                with self.assertRaisesRegex(ValueError, "pending approvals.*combined"):
+                    self.helper.finish(
+                        self.receipt, self.approve("replace"),
+                        allow_pending_approvals=True, **scope)
+                self.assertEqual(len(self.calls), calls)
+
+    def test_pending_approval_readiness_rechecks_the_exact_approval_source(self):
+        self.signed_deferral()
+        self.approval_run["app"]["id"] = 2002
+        with self.assertRaisesRegex(ValueError, "provenance"):
+            self.helper.finish(
+                self.receipt, self.approve("replace"), allow_pending_approvals=True)
+        self.assertTrue(self.original["draft"])
+
     def test_replacement_deferral_resumes_only_its_marked_signed_draft(self):
         self.signed_deferral("replacement")
         result = self.helper.finish(self.receipt, self.approve(), draft_only=True)
@@ -818,6 +887,13 @@ class ApprovalDeferralTests(GitHubEndorsementTestCase):
                 sys, "argv", args), redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
             self.assertEqual(self.helper.main(), 0)
         self.assertFalse(json.loads(output.getvalue())["ready_for_review"])
+        args[-1] = "--allow-pending-approvals"
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), mock.patch.object(
+                sys, "argv", args), redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
+            self.assertEqual(self.helper.main(), 0)
+        result = json.loads(output.getvalue())
+        self.assertTrue(result["ready_for_review"])
+        self.assertTrue(result["approval_check"]["pending"])
 
 
 class ForkApprovalDeferralTests(ApprovalDeferralTests, ForkRepositoryTestCase):
