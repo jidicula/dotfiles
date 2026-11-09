@@ -384,8 +384,10 @@ advance alone does not require updating the PR or repeating endorsement.
 
 First confirm that the PR still targets the repository's current default branch,
 record its published head and the default-branch OID, and preserve any Codespace
-WIP. Complete any pending exact-head endorsement/publication first; do not change
-the source underneath an outstanding plan or signed receipt.
+WIP. Complete any pending exact-head endorsement/publication before an API-only
+base update. Confirmed conflicts instead use the repair path below, retiring the
+old active plan binding while preserving its records. Neither path may change
+the source underneath an in-flight signing or publication operation.
 
 Use the local authenticated CLI for the control-plane operation, with the
 just-observed head as the concurrency guard:
@@ -399,7 +401,11 @@ An accepted response is not proof that the asynchronous update completed. Read
 back the same PR until the outcome is known. On conflicts, a stale head, denied
 access or an unconfirmed outcome, stop and inspect rather than replaying the
 mutation, refreshing its expected head or silently switching to a local
-merge/rebase.
+merge/rebase. Once the API outcome is known and a merge conflict is confirmed,
+use the skill's authorised
+[conflict-repair procedure](../SKILL.md#hourly-pr-conflict-maintenance).
+That resolution is new agent-written work, not a verified base-only API update:
+preserve signed history and repeat the normal review and endorsement gates.
 
 Fetch the updated branch through the Codespace runner. Verify that the only new
 source commit is the API-created merge: its first parent is the recorded PR head,

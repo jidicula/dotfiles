@@ -1098,6 +1098,8 @@ fixes. Do not create a temporary commit to obtain a review.
   demote an unchanged, already endorsed PR when merely resuming finalisation.
   Lead the final response with the full PR URL. **Continue through this skill's
   remaining quality and endorsement gates below; a draft's creation is not approval to sign it.**
+  Register the session's [hourly conflict maintenance](#hourly-pr-conflict-maintenance)
+  as soon as the draft is created or adopted.
   Skip this only when the user
   explicitly requested no commit, push, or PR, or when the task was read-only
   and retained no code change.
@@ -1120,6 +1122,63 @@ fixes. Do not create a temporary commit to obtain a review.
   against `instructions`. Rely on the PR's CI checks for routine automated
   results; do not narrate passing checks, example/assertion counts,
   feature/deployment permutations or Codespace/Docker/worktree setup.
+
+### Hourly PR conflict maintenance
+
+After creating or adopting the task's draft PR, the parent session must register
+one recurring prompt with `manage_schedule`, using `action: "create"` and
+`interval: "1h"`. Keep it active through readiness until the PR is merged,
+closed without a successor, or the operator stops maintenance. Use the existing
+session scheduler, not a new workflow, cron job, or daemon.
+
+Bind the prompt to the full PR URL, GitHub host/repository, selected Codespace
+and checkout, source/base branches, and the session's current gate/receipt
+records. Its task is to read that PR's live state and mergeability hourly and
+resolve confirmed merge conflicts through the procedure below, preserving all
+quality and consent gates. Save the returned schedule ID with those records.
+On resume, list schedules and reuse the matching one; create one only when
+missing. Workers must not register duplicate watchers. If scheduling is
+unavailable, report the monitoring gap rather than claiming hourly coverage.
+Do not promise coverage while the session is not running.
+
+Each scheduled turn:
+
+1. Read the recorded PR through local authenticated `gh` on its recorded host.
+   If the session records a verified signed replacement, stop the original's
+   schedule and register one for the resulting PR, retaining its new ID.
+   Otherwise stop the schedule when the PR is merged or closed.
+   Do not follow an unrelated PR or recreate a closed one.
+2. Read current head/source/base identity and mergeability. `MERGEABLE` needs no
+   change. `UNKNOWN`, an API error, or incomplete identity is not a conflict:
+   retry read-only at most twice, then record the unresolved state for the next
+   hourly tick. Do not wake the Codespace or update the branch merely because
+   the base advanced.
+3. For confirmed `CONFLICTING`, reconcile the live refs with the session records
+   and reuse the selected Codespace. Account for in-flight jobs, signing, or
+   publication before editing; do not race the foreground task or another writer.
+   Preserve unrelated WIP and signed commits. An unexplained head or base-branch
+   change blocks writes until reconciled.
+4. Fetch the exact source and current base through the runner and use a clean
+   checkout matching the published source, preserving any retained unsigned
+   branch and unrelated WIP. Merge the base without an automatic commit
+   (`git merge --no-commit --no-ff`). Resolve the conflicts within the
+   authorised task; ask only when the resolution needs a substantive human
+   decision. This explicit conflict-repair path is not a fallback for an
+   unconfirmed update-branch API mutation. Never rebase or force-push signed
+   history to remove conflicts.
+5. Treat the resolution as new agent-written work: return a ready PR to draft
+   before publishing it, run Codespace validation and Gate 0 on the complete
+   merge candidate (including both parents), then commit unsigned and push
+   without overwriting concurrent changes. Rerun CI and CCR on the new head.
+   Retire the old active gate/plan binding while preserving its records; changed
+   contents require a new exact-revision endorsement before signing/readiness.
+   A scheduled prompt never supplies human consent or reuses an old approval
+   for the resolution.
+
+Keep clean hourly checks quiet. Record conflicts, repairs, blockers, current
+revision, and the next safe action in session state. Continue the existing
+quality-gate work between ticks; hourly maintenance does not replace CI/CCR
+polling, its deadlines, or the completion contract.
 
 ### Quality and endorsement gates
 
@@ -1819,6 +1878,8 @@ Leave a concise result and the gate checklist in the session's artifacts: full
 original/resulting PR URLs, Codespace/checkout, current revision, CCR availability
 evidence and latest review ID/URL/recommendation, unresolved findings,
 validation/CI state, current phase, next action, and any plan/receipt/job paths.
+Retain the conflict-maintenance schedule ID and its current PR binding; readiness
+does not end that watch. Reconcile it on resume before registering another.
 Do not include credentials or treat an approval token as proof of consent.
 
 Retain Gate 0's parents/tree, review-owning session and reviewer invocation/result
@@ -1833,9 +1894,10 @@ the first unfinished applicable gate. Do not
 replay a review request, signature or publication because the session restarted.
 
 The agent executes the CCR fix/review loop within this skill. The factory's
-outer hook and run loop remain unspecified: do not create a hook, scheduler,
-workflow, daemon or automatic approval mechanism. Leave Codespace shutdown to
-its configured idle timeout unless the operator explicitly requests it.
+outer hook and run loop remain unspecified. The only required scheduling here is
+the session-native hourly conflict prompt above; do not build a separate hook,
+scheduler, workflow, daemon, or automatic approval mechanism. Leave Codespace
+shutdown to its configured idle timeout unless the operator explicitly requests it.
 
 ## Repository-specific command notes
 
