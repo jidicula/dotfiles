@@ -1539,8 +1539,11 @@ CCR or the operator's exact-revision endorsement.
 
 #### Gate 1 - required CI on the unsigned draft
 
-Confirm the open draft and exact source/base refs. Check CI without preparing
-an endorsement:
+Confirm the open draft and exact source/base refs. Classify required checks
+before treating every outstanding check as executable CI. Human approval
+requirements distinct from PR reviews use the standing ordering policy below; collect their verified
+selector before calling `check-ci`. Otherwise check CI without preparing an
+endorsement:
 
 ```sh
 /absolute/path/to/skills/etc/setup/copilot-cs-endorse \
@@ -1579,19 +1582,29 @@ This decision does not authorise signatures or bypass CCR, exact-plan human
 endorsement, permission-aware assignment, publication verification, or readiness
 monitoring.
 
-**Human approvals are merge prerequisites, not executable CI.** A verified check
-that is waiting only for human approvals may remain pending through this gate,
-endorsement, and ready-for-review, so review approvals can be collected afterward.
-Apply this standing ordering policy without a separate per-PR permission prompt.
-First establish the check's approval-only purpose from repository policy or its
-implementation; a name alone is not sufficient. Bind its exact identity, app
-provenance, and approval count with the
+**Human approval requirements distinct from PR reviews may wait until just before merge.**
+They must not block executable CI, independent reviews, CCR, exact-revision
+endorsement, signing, or readiness. Apply this standing policy automatically:
+record the verified gate and continue the other quality gates, without asking
+the operator to complete it early or approve its deferral. It is not a PR review,
+code-owner approval, or the operator's exact-revision endorsement.
+
+Establish its approval-only purpose from repository policy or its implementation;
+a name alone is not sufficient. The agent gathers the exact check identity, app,
+and waiting title for `--defer-external-approval` using the
 [guarded approval-check protocol](references/endorsement.md#pending-human-approvals-before-merge).
-Treat `required_ci: "deferred_collaborator_approvals"` as a valid Gate 1 exception
-and continue, never as a successful approval or an all-checks-passed result.
+No PR-review approval count is needed. Treat
+`required_ci: "deferred_external_approval"` as a valid Gate 1 exception and
+continue, never as a successful approval or an all-checks-passed result.
+If a plain `check-ci` blocks on this known gate, rerun it with the verified
+selector instead of requesting the approval. Missing classification evidence
+requires evidence recovery, not an instruction to complete that separate approval.
 All other draft-triggerable CI and current-head CCR remain mandatory.
-Unknown, missing, failed, or unverified checks
-still block; the exception cannot be combined with the absent-CI exception.
+Track the separate approval as a just-before-merge prerequisite, not pending CI
+to poll before continuing. Unknown, missing, failed, or unverified checks still
+block; the exception cannot be combined with the absent-CI exception.
+The existing count-based approval-check protocol remains available for its
+original scope; it does not define the separate human approval requirement.
 Use generic descriptions and synthetic examples in public skill documentation
 and fixtures, not organisation-specific approval systems or check names.
 
@@ -1828,17 +1841,20 @@ confirmed attestor unassignment when permitted allow marking that PR ready for
 review, except for the plan's explicit, freshly verified no-required-CI exception.
 The assignment permission is checked on each PR, including a signed replacement;
 only an explicit denial waives assignment tracking, not the other readiness gates.
-For the plan's selected human-action check, use `finish --allow-pending-approvals`
-under its recorded ordering policy. This verifies publication and signed-head
-executable CI and permits readiness while that exact check is still awaiting
-approvals or meets its explicit human-workflow waiting exception. These human
-actions remain required before merge; readiness, signing, and CI success do not
+For a plan recording a human approval requirement distinct from PR reviews, ordinary `finish`
+applies that standing deferral through readiness automatically. It reports
+`ci_scope: "operator_deferred_external_approval"` while the approval remains
+outstanding; do not request that approval before finishing the other gates.
+For an existing count-based approval or human-workflow exception, retain
+`finish --allow-pending-approvals` under its recorded policy. Both paths verify
+publication and signed-head executable CI while the selected check is still
+awaiting approval or meets its explicit human-workflow waiting exception.
+These human actions remain required before merge; readiness, signing, and CI success do not
 supply them. A human-workflow exception reports
 `ci_scope: "operator_deferred_human_workflow"`, not successful deployment.
 Use `--draft-only` only when intentionally leaving
-the PR in draft. Without the readiness option, `finish` retains its existing
-approval requirement. The option cannot introduce an unplanned deferral or
-transfer one to a base update or recovery PR.
+the PR in draft. Other plans retain their existing defaults. Neither path can
+introduce an unplanned deferral or transfer one to a base update or recovery PR.
 Old CCR reviews and discussions do not migrate to a replacement PR or count as
 formal approval of its new OIDs; retain their links with the verified mapping.
 Carry accepted human-follow-up findings and their outstanding prerequisites

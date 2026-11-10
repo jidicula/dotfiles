@@ -134,14 +134,18 @@ def source_repository(request):
 
 def validate_ci_deferral(deferral, *, frozen=True):
     require(isinstance(deferral, dict) and deferral.get("kind") in (
-        "pending_collaborator_approvals", "human_action_workflow"),
+        "pending_collaborator_approvals", "external_human_approval", "human_action_workflow"),
         "invalid human-action ordering exception")
     workflow = deferral["kind"] == "human_action_workflow"
+    external = deferral["kind"] == "external_human_approval"
     fields = {"kind", "check_name", "app_id", "app_slug", "required_approvals"}
     if workflow:
         fields.remove("required_approvals")
         fields.update(("workflow_repository", "workflow_path", "workflow_blob", "action_step",
                        "waiting_step", "waiting_description", "status_creator_id"))
+    elif external:
+        fields.remove("required_approvals")
+        fields.add("waiting_title")
     if frozen:
         fields.add("check_run_id")
         if workflow:
@@ -167,6 +171,10 @@ def validate_ci_deferral(deferral, *, frozen=True):
                         for field in ("action_step", "waiting_step", "waiting_description"))
                 and deferral["action_step"] != deferral["waiting_step"],
                 "invalid human-workflow selector")
+    elif external:
+        require(isinstance(deferral["waiting_title"], str) and deferral["waiting_title"].strip()
+                and not re.search(r"[\x00-\x1f\x7f]", deferral["waiting_title"]),
+                "invalid waiting title for a human approval requirement distinct from PR reviews")
     else:
         require(type(deferral["required_approvals"]) is int and deferral["required_approvals"] > 0,
                 "invalid collaborator-approval count")
@@ -403,18 +411,21 @@ def replacement_allowed(repository, branch, *, hostname="github.com"):
 
 
 def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
-             defer_collaborator_approvals=None, defer_human_workflow=None, hostname="github.com"):
+             defer_collaborator_approvals=None, defer_external_approval=None,
+             defer_human_workflow=None, hostname="github.com"):
     """Check an unsigned draft without starting endorsement preparation."""
-    require(defer_collaborator_approvals is None or defer_human_workflow is None,
-            "select only one human-action ordering exception")
-    deferral = (defer_collaborator_approvals if defer_collaborator_approvals is not None
-                else defer_human_workflow)
+    selections = [(kind, value) for kind, value in (
+        ("pending_collaborator_approvals", defer_collaborator_approvals),
+        ("external_human_approval", defer_external_approval),
+        ("human_action_workflow", defer_human_workflow),
+    ) if value is not None]
+    require(len(selections) <= 1, "select only one human-action ordering exception")
+    deferral = selections[0][1] if selections else None
     require(not (allow_no_required_ci and deferral is not None),
             "human-action and absent-CI exceptions are independent and cannot be combined")
     if deferral is not None:
         require(isinstance(deferral, dict)
-                and deferral.get("kind") == ("human_action_workflow" if defer_human_workflow is not None
-                                             else "pending_collaborator_approvals"),
+                and deferral.get("kind") == selections[0][0],
                 "ordering selector does not match the selected option")
     pr = pull_request(repository, number, allow_fork=allow_fork, hostname=hostname)
     require(pr["state"] == "open", "the original draft PR is not open")
@@ -442,9 +453,13 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
     if deferral is not None:
         request["ci_deferral"].update(
             check_run_id=checked["approval_check"]["id"], **checked["approval_check"].get("binding", {}))
+        scopes = {
+            "pending_collaborator_approvals": "deferred_collaborator_approvals",
+            "external_human_approval": "deferred_external_approval",
+            "human_action_workflow": "deferred_human_workflow",
+        }
         request["required_ci"] = (
-            ("deferred_human_workflow" if checked["approval_check"]["pending"] else "passed")
-            if defer_human_workflow is not None else "deferred_collaborator_approvals")
+            scopes[deferral["kind"]] if checked["approval_check"]["pending"] else "passed")
     if allow_no_required_ci:
         request["required_ci"] = (
             "not_configured" if checked["ci_scope"] == "operator_approved_no_required_ci"
@@ -454,9 +469,10 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
 
 def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=(),
             allow_no_required_ci=False, defer_collaborator_approvals=None,
-            defer_human_workflow=None, hostname="github.com"):
+            defer_external_approval=None, defer_human_workflow=None, hostname="github.com"):
     request = check_ci(repository, number, allow_no_required_ci=allow_no_required_ci,
                        defer_collaborator_approvals=defer_collaborator_approvals,
+                       defer_external_approval=defer_external_approval,
                        defer_human_workflow=defer_human_workflow, hostname=hostname)
     required_ci = request.pop("required_ci", None)
     require(not allow_no_required_ci or required_ci == "not_configured",
@@ -1524,7 +1540,7 @@ def require_passing_workflows(request, number, head, branch, workflows):
         raise error_type("; ".join(failures) + "; quality gate blocked")
 
 
-def collaborator_approval_check(request, head, checks, policy_apps, *, preparing):
+def human_approval_check(request, head, checks, policy_apps, *, preparing):
     deferral = request["ci_deferral"]
     validate_ci_deferral(deferral, frozen=not preparing)
     matching = [check for check in checks
@@ -1566,17 +1582,30 @@ def collaborator_approval_check(request, head, checks, policy_apps, *, preparing
             "collaborator-approval check changed or its provenance is unavailable")
     passed = current["status"] == "completed" and current["conclusion"] == "success"
     title = current.get("output", {}).get("title") if isinstance(current.get("output"), dict) else None
-    count = (re.fullmatch(r"Awaiting approvals \((0|[1-9][0-9]*)/([1-9][0-9]*)\)", title)
-             if isinstance(title, str) else None)
-    pending = (current["status"] == "in_progress" and current["conclusion"] is None
-               and count is not None and int(count[2]) == deferral["required_approvals"]
-               and int(count[1]) < deferral["required_approvals"])
+    external = deferral["kind"] == "external_human_approval"
+    if external:
+        pending = (title == deferral["waiting_title"] and (
+            current["status"] in ("queued", "in_progress") and current["conclusion"] is None
+            or current["status"] == "completed" and current["conclusion"] == "action_required"))
+        if not passed and not pending and current["conclusion"] in FAILED_CI_CONCLUSIONS:
+            raise RequiredCIFailure(
+                "human approval requirement distinct from PR reviews is not awaiting the selected approval")
+    else:
+        count = (re.fullmatch(r"Awaiting approvals \((0|[1-9][0-9]*)/([1-9][0-9]*)\)", title)
+                 if isinstance(title, str) else None)
+        pending = (current["status"] == "in_progress" and current["conclusion"] is None
+                   and count is not None and int(count[2]) == deferral["required_approvals"]
+                   and int(count[1]) < deferral["required_approvals"])
     require(passed or pending,
             "check is neither successful nor strictly awaiting the selected collaborator approvals")
-    require(not preparing or pending,
+    require(external or not preparing or pending,
             "unused collaborator-approval deferral; prepare without the deferral option")
-    return {"id": current["id"], "name": current["name"], "app_id": deferral["app_id"],
-            "app_slug": deferral["app_slug"], "title": title, "pending": pending}
+    result = {"id": current["id"], "name": current["name"], "app_id": deferral["app_id"],
+              "app_slug": deferral["app_slug"], "title": title, "pending": pending}
+    if external:
+        result["waiting_state"] = ((current["conclusion"] or current["status"])
+                                   if current["status"] == "completed" else current["status"]).upper()
+    return result
 
 
 def human_workflow_check(request, number, head, branch, checks, policy_apps, suites, *, preparing):
@@ -1784,6 +1813,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     require(not preparing_deferral or allow_human_deferral,
             "invalid collaborator-approval preparation")
     human_workflow = deferral is not None and deferral["kind"] == "human_action_workflow"
+    external_approval = deferral is not None and deferral["kind"] == "external_human_approval"
     policy_apps = []
     repository = request["repository"]
     hostname = request_hostname(request)
@@ -1961,9 +1991,11 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 passed = state == "SUCCESS"
                 check_failed = state in ("FAILURE", "ERROR")
             require(isinstance(name, str) and name, "missing required CI check name")
-            failed |= check_failed and not (
-                human_workflow and name == deferral["check_name"]
-                and check["__typename"] == "CheckRun" and state == "FAILURE")
+            selected_wait = (check["__typename"] == "CheckRun" and deferral is not None
+                             and name == deferral["check_name"] and (
+                                 human_workflow and state == "FAILURE"
+                                 or external_approval and state == "ACTION_REQUIRED"))
+            failed |= check_failed and not selected_wait
             if check["isRequired"]:
                 reported.add(name)
             if not passed:
@@ -1995,14 +2027,15 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                 request, number, head, branch, observed_checks, policy_apps, workflow_suites,
                 preparing=preparing_deferral)
         else:
-            approval_check = collaborator_approval_check(
+            approval_check = human_approval_check(
                 request, head, observed_checks, policy_apps, preparing=preparing_deferral)
         deferred = approval_check["pending"] and allow_human_deferral
         if human_workflow and (deferred or not approval_check["pending"]):
             failures = [failure for failure in failures if failure not in (
                 f"{deferral['check_name']}: FAILURE", f"{deferral['check_name']}: PENDING")]
         elif deferred:
-            failures.remove(f"{deferral['check_name']}: IN_PROGRESS")
+            failures.remove(f"{deferral['check_name']}: "
+                            f"{approval_check.get('waiting_state', 'IN_PROGRESS')}")
     require(not failures, message)
     exception_applied = allow_empty and not status_policy and not reported and not workflows
     require(reported or workflows or exception_applied,
@@ -2034,6 +2067,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
               file=sys.stderr)
     result = dict(current, ci_scope=(
         "operator_deferred_human_workflow" if deferred and human_workflow else
+        "operator_deferred_external_approval" if deferred and external_approval else
         "operator_deferred_collaborator_approvals" if deferred else
         "operator_approved_no_required_ci" if exception_applied else "observed_required_checks"))
     if approval_check is not None:
@@ -2278,9 +2312,10 @@ def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr
 
     def finish_ci(number):
         if not draft_only:
+            defer_external = request.get("ci_deferral", {}).get("kind") == "external_human_approval"
             return ready_for_review(
                 request, number, receipt["head"], target, confirm_publication=confirm_recovery,
-                allow_pending_approvals=allow_pending_approvals)
+                allow_pending_approvals=allow_pending_approvals or defer_external)
         checked = require_passing_checks(
             request, number, receipt["head"], target, require_draft=True,
             allow_human_deferral="ci_deferral" in request,
@@ -2407,6 +2442,10 @@ def main():
             help="bind a per-PR ordering exception for a strictly pending human-approval check; "
                  "approvals remain required before merge")
         subparser.add_argument(
+            "--defer-external-approval", nargs=4, metavar=("CHECK", "APP_ID", "APP_SLUG", "WAITING_TITLE"),
+            help="record a verified human approval requirement distinct from PR reviews; "
+                 "approval remains required just before merge, not before CI or readiness")
+        subparser.add_argument(
             "--defer-human-workflow", metavar="SELECTOR_JSON",
             help="bind an operator-selected, source-pinned human-workflow ordering exception; "
                  "does not waive executable failures or authorise the human action")
@@ -2462,6 +2501,14 @@ def main():
             deferral = {"kind": "pending_collaborator_approvals", "check_name": name,
                         "app_id": int(app_id), "app_slug": app_slug,
                         "required_approvals": int(count)}
+        external_check = getattr(args, "defer_external_approval", None)
+        external_deferral = None
+        if external_check is not None:
+            name, app_id, app_slug, waiting_title = external_check
+            external_deferral = {
+                "kind": "external_human_approval", "check_name": name, "app_id": int(app_id),
+                "app_slug": app_slug, "waiting_title": waiting_title,
+            }
         workflow_file = getattr(args, "defer_human_workflow", None)
         workflow_deferral = json.loads(Path(workflow_file).read_text()) if workflow_file else None
         if remote:
@@ -2480,6 +2527,7 @@ def main():
                     "check GitHub CI locally with the operator's authenticated gh")
             result = check_ci(args.repo, args.pr, allow_no_required_ci=args.allow_no_required_ci,
                               defer_collaborator_approvals=deferral,
+                              defer_external_approval=external_deferral,
                               defer_human_workflow=workflow_deferral, hostname=args.hostname)
             result.setdefault("required_ci", "passed")
         elif args.action == "prepare":
@@ -2493,6 +2541,7 @@ def main():
                              preserve_base_merges=args.preserve_base_merge,
                              allow_no_required_ci=args.allow_no_required_ci,
                              defer_collaborator_approvals=deferral,
+                             defer_external_approval=external_deferral,
                              defer_human_workflow=workflow_deferral, hostname=args.hostname)
         elif args.action in ("await-attestation", "complete-attestation"):
             require(os.environ.get("CODESPACES") != "true",

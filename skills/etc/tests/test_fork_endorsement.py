@@ -531,7 +531,7 @@ class ApprovalDeferralPlanTests(EndorsementTestCase):
                 self.request, version=5, ci_deferral=valid, ci_exception="no_required_ci"))
 
 
-class ApprovalDeferralTests(GitHubEndorsementTestCase):
+class ApprovalDeferralTestCase(GitHubEndorsementTestCase):
     def setUp(self):
         super().setUp()
         self.required_contexts.append(APPROVAL_CHECK["check_name"])
@@ -583,6 +583,8 @@ class ApprovalDeferralTests(GitHubEndorsementTestCase):
         self.approval_run.update(status="completed", conclusion="success",
                                  output={"title": "Collaborator approvals confirmed"})
 
+
+class ApprovalDeferralTests(ApprovalDeferralTestCase):
     def test_assignment_permission_denial_does_not_waive_collaborator_approval(self):
         self.assignment_permission = False
         with redirect_stderr(io.StringIO()):
@@ -905,6 +907,157 @@ class ForkApprovalDeferralTests(ApprovalDeferralTests, ForkRepositoryTestCase):
         run["head_repository"]["full_name"] = "other/project"
         with self.assertRaisesRegex(ValueError, "missing required workflow"):
             self.prepare_deferral()
+
+
+EXTERNAL_APPROVAL = {
+    "kind": "external_human_approval", "check_name": "External human approval",
+    "app_id": 1001, "app_slug": "approval-service",
+    "waiting_title": "Waiting for a human decision outside pull request review",
+}
+
+
+class ExternalApprovalTests(ApprovalDeferralTestCase):
+    def setUp(self):
+        super().setUp()
+        self.required_contexts[-1] = EXTERNAL_APPROVAL["check_name"]
+        self.approval_node.update(name=EXTERNAL_APPROVAL["check_name"])
+        self.approval_node["checkSuite"]["app"]["slug"] = EXTERNAL_APPROVAL["app_slug"]
+        self.approval_run.update(name=EXTERNAL_APPROVAL["check_name"],
+                                 output={"title": EXTERNAL_APPROVAL["waiting_title"]})
+        self.approval_run["app"]["slug"] = EXTERNAL_APPROVAL["app_slug"]
+
+    def prepare_deferral(self):
+        return self.prepare(defer_external_approval=copy.deepcopy(EXTERNAL_APPROVAL))
+
+    def test_external_approval_without_a_review_count_does_not_block_quality_gates(self):
+        with self.assertRaisesRegex(ValueError, "required CI"):
+            self.prepare()
+        checked = self.helper.check_ci(
+            "example/project", 12, defer_external_approval=EXTERNAL_APPROVAL)
+        self.assertEqual(checked["required_ci"], "deferred_external_approval")
+        self.assertEqual(checked["ci_deferral"], dict(EXTERNAL_APPROVAL, check_run_id=71))
+        prepared = self.prepare_deferral()
+        self.assertEqual(prepared["version"], 5)
+        self.assertNotIn("required_approvals", prepared["ci_deferral"])
+        self.assert_read_only_preparation()
+
+    def test_external_waiting_states_are_verified_not_general_check_skips(self):
+        for status, conclusion in (("QUEUED", None), ("IN_PROGRESS", None),
+                                   ("COMPLETED", "ACTION_REQUIRED")):
+            with self.subTest(status=status):
+                self.approval_node.update(status=status, conclusion=conclusion)
+                self.approval_run.update(
+                    status=status.lower(),
+                    conclusion=conclusion.lower() if conclusion is not None else None)
+                self.assertEqual(self.prepare_deferral()["ci_deferral"]["kind"],
+                                 "external_human_approval")
+        self.approval_node["conclusion"] = "FAILURE"
+        self.approval_run["conclusion"] = "failure"
+        with self.assertRaisesRegex(ValueError, "required CI"):
+            self.prepare_deferral()
+
+    def test_external_approval_continues_through_attestation_and_ordinary_finish(self):
+        self.signed_deferral()
+        receipt = copy.deepcopy(self.receipt)
+        result = self.finish()
+        self.assertTrue(result["ready_for_review"])
+        self.assertEqual(result["ci_scope"], "operator_deferred_external_approval")
+        self.assertTrue(result["approval_check"]["pending"])
+        self.assertEqual(self.approval_run["status"], "in_progress")
+        self.assertEqual(self.receipt, receipt)
+        self.assertEqual(self.finish(), result)
+        self.approve_collaborators()
+        result = self.finish()
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(result["approval_check"]["pending"])
+        self.assertEqual(result["ci_scope"], "observed_required_checks")
+
+    def test_external_action_required_wait_does_not_demote_a_ready_pr(self):
+        self.approval_node.update(status="COMPLETED", conclusion="ACTION_REQUIRED")
+        self.approval_run.update(status="completed", conclusion="action_required")
+        self.signed_deferral()
+        self.assertTrue(self.finish()["approval_check"]["pending"])
+        self.assertFalse(self.original["draft"])
+        self.assertTrue(self.finish()["ready_for_review"])
+        self.assertFalse(self.original["draft"])
+
+    def test_external_policy_survives_success_on_the_unsigned_head(self):
+        self.approve_collaborators()
+        prepared = self.prepare_deferral()
+        self.assertEqual(prepared["ci_deferral"]["kind"], "external_human_approval")
+        self.assertEqual(prepared["ci_deferral"]["waiting_title"], EXTERNAL_APPROVAL["waiting_title"])
+
+    def test_external_approval_does_not_waive_executable_ci_or_failure_rollback(self):
+        self.signed_deferral()
+        self.mutate_on_ready = lambda _pr: self.check_pages[0][0].update(conclusion="FAILURE")
+        with self.assertRaisesRegex(ValueError, "returned the unchanged signed PR to draft"):
+            self.finish()
+        self.assertTrue(self.original["draft"])
+        self.check_pages[0][0]["conclusion"] = "SUCCESS"
+        self.mutate_on_ready = None
+        self.finish()
+        self.approval_node.update(status="COMPLETED", conclusion="FAILURE")
+        self.approval_run.update(status="completed", conclusion="failure")
+        with self.assertRaisesRegex(ValueError, "returned the unchanged signed PR to draft"):
+            self.finish()
+        self.assertTrue(self.original["draft"])
+
+    def test_wrong_issuer_revision_or_waiting_title_cannot_use_the_external_policy(self):
+        for field, value in (("head_sha", self.first),
+                             ("app", {"id": 2002, "slug": EXTERNAL_APPROVAL["app_slug"]}),
+                             ("output", {"title": "Waiting for executable CI"})):
+            previous = copy.deepcopy(self.approval_run[field])
+            with self.subTest(field=field):
+                self.approval_run[field] = value
+                with self.assertRaises(ValueError):
+                    self.prepare_deferral()
+            self.approval_run[field] = previous
+        self.approval_node.update(status="COMPLETED", conclusion="ACTION_REQUIRED")
+        self.approval_run.update(status="completed", conclusion="action_required",
+                                 output={"title": "Executable action needs intervention"})
+        with self.assertRaisesRegex(ValueError, "not awaiting"):
+            self.prepare_deferral()
+
+    def test_external_policy_cannot_be_retrofitted_or_combined_with_other_exceptions(self):
+        with self.assertRaisesRegex(ValueError, "independent"):
+            self.prepare(defer_external_approval=EXTERNAL_APPROVAL, allow_no_required_ci=True)
+        with self.assertRaisesRegex(ValueError, "only one"):
+            self.prepare(defer_external_approval=EXTERNAL_APPROVAL,
+                         defer_collaborator_approvals=APPROVAL_CHECK)
+        self.signed_deferral()
+        changed = copy.deepcopy(self.receipt)
+        changed["plan"]["request"]["ci_deferral"]["waiting_title"] = "Different approval"
+        with self.assertRaisesRegex(ValueError, "digest"):
+            self.helper.signed_receipt_request(changed, self.approve("replace"))
+
+    def test_external_policy_requires_a_valid_waiting_signal_and_original_check(self):
+        for title in ("", "Waiting\nfor approval", None):
+            with self.subTest(title=title):
+                with self.assertRaisesRegex(ValueError, "waiting title"):
+                    self.prepare(defer_external_approval={**EXTERNAL_APPROVAL, "waiting_title": title})
+        self.follow_up(self.receipt, count=1)
+        self.original["head"].update(ref=self.request["source_branch"], sha=self.request["head"])
+        self.approval_run["head_sha"] = self.request["head"]
+        self.request = self.prepare_deferral()
+        self.freeze()
+        self.approval_node["databaseId"] = 99
+        with self.assertRaisesRegex(ValueError, "check run changed"):
+            self.helper.await_attestation(self.plan)
+
+    def test_cli_selects_the_external_gate_without_an_approval_count(self):
+        arguments = [
+            "copilot-cs-endorse", "check-ci", "--repo", "example/project", "--pr", "12",
+            "--defer-external-approval", EXTERNAL_APPROVAL["check_name"], "1001",
+            EXTERNAL_APPROVAL["app_slug"], EXTERNAL_APPROVAL["waiting_title"],
+        ]
+        with mock.patch.dict(os.environ, {"CODESPACES": ""}), mock.patch.object(
+                sys, "argv", arguments), redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
+            self.assertEqual(self.helper.main(), 0)
+        self.assertEqual(json.loads(output.getvalue())["required_ci"], "deferred_external_approval")
+
+
+class ForkExternalApprovalTests(ExternalApprovalTests, ForkRepositoryTestCase):
+    """Keep external approval ordering scoped to the upstream PR and source fork."""
 
 
 HUMAN_WORKFLOW = {

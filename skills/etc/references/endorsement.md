@@ -143,18 +143,71 @@ No repository policy, global setting or other PR is changed.
 
 ### Pending human approvals before merge
 
-Human approvals may follow code review and ready-for-review. Under this skill's
-standing ordering policy, a verified approval-only check does not block executable
-CI, endorsement, or readiness. The approvals remain required before merge; this
-is neither approval nor permission to sign. Complete every other draft-triggerable
-CI check and the current-head CCR gate first.
+#### Human approval requirements distinct from PR reviews
+
+A human approval requirement distinct from PR reviews may be fulfilled just before merge, after
+the other quality gates and code-owner reviews. Apply this standing policy
+without asking for that approval early or requesting per-PR bypass permission.
+Continue executable CI, independent reviews, CCR, exact-revision endorsement,
+signing, and readiness; retain the separate approval as an unmet merge
+prerequisite. It is not PR/code-owner review or human endorsement of the code.
 
 Establish the check's approval-only purpose from repository policy or its
-implementation before selecting it; a suggestive name is not evidence. The helper
-binds **one check for one PR** with the selector below. Derive its identity from
-the current PR, not a built-in issuer or check-name list. No separate per-PR
-permission prompt is needed under the standing policy. Use the same explicit
-selector for `check-ci` and `prepare`:
+implementation, not a suggestive name. The agent obtains the exact current
+check name, app ID/slug, and waiting title from complete GitHub readback. Use
+that same selector for both `check-ci` and `prepare`:
+
+```sh
+copilot-cs-endorse check-ci --repo "$NWO" --pr "$PR_NUMBER" \
+  --defer-external-approval "$CHECK_NAME" "$APP_ID" "$APP_SLUG" "$WAITING_TITLE"
+copilot-cs-endorse prepare --repo "$NWO" --pr "$PR_NUMBER" \
+  --defer-external-approval "$CHECK_NAME" "$APP_ID" "$APP_SLUG" "$WAITING_TITLE"
+```
+
+The selector describes evidence, not a human approval request. No PR-review
+count or particular title format is assumed. The helper verifies an exact
+required check run and its app on the current head through the PR rollup and
+REST, including configured app pins and complete policy/check/workflow discovery.
+Only the selected issuer's exact waiting title can identify a deferred state:
+queued or in-progress with no conclusion, or a completed `action_required`
+result that the audited approval-only app uses for an outstanding human decision.
+Failures, cancellations, skipped/neutral conclusions, mismatched titles, and
+unverified issuers remain blockers. All other reported checks must succeed.
+
+If a plain CI check already blocked on a verified external gate, repeat the
+read-only check with this selector and continue. Gather missing evidence within
+the task's existing access rather than telling the operator to complete the
+separate approval to make CI green. Keep actual approval-system identities out
+of public skill documentation and fixtures.
+
+Version 5 records `ci_deferral.kind: "external_human_approval"`, the selector,
+and the original check-run ID in the plan digest. Older helpers reject this kind.
+Do not retrofit it into an existing plan/receipt; re-prepare when its scope must
+change and preserve the separate exact-revision signing/publication consent.
+An original check-run change requires a new plan. The selector may remain in a
+plan after the unsigned check succeeds because the new signed head may need its
+own external decision. It cannot combine with another deferral or absent-CI
+exception, or transfer to a base update or recovery PR.
+
+While waiting, `check-ci` reports `required_ci: "deferred_external_approval"`,
+not `"passed"`; record the Gate 1 exception and proceed. Attestation rechecks it,
+and ordinary `finish` automatically permits this plan-selected approval through
+readiness without an extra option. `ci_scope: "operator_deferred_external_approval"`
+and `approval_check.pending` keep the unmet merge prerequisite visible. Once
+approved, ordinary required-check scope resumes. Real executable or approval
+failures still block or return the unchanged signed PR to draft.
+
+Disclose the outstanding prerequisite in the existing exact-plan endorsement
+prompt as information, not as a request to perform or approve the external
+action. Do not poll it as CI before other gates can proceed. Check it at the
+just-before-merge boundary; readiness, code-owner reviews, signatures, and
+endorsement never substitute for it or authorise merging without it.
+
+#### Existing approval-count checks
+
+The older count-based selector retains its original semantics below. It does
+not define which human approval requirements distinct from PR reviews can be
+deferred; use the standing separate-approval path above when no PR-review count applies.
 
 ```sh
 copilot-cs-endorse prepare --repo "$NWO" --pr "$PR_NUMBER" \
@@ -202,9 +255,9 @@ approvals succeed, the helper reports ordinary required-check scope without
 another signature, push, or plan edit. The option cannot introduce a new check
 or transfer a per-PR deferral to `--base-update` or `--recovery-pr`.
 
-The request and receipt stay unchanged. Without `--allow-pending-approvals`,
-ordinary `finish` preserves its existing requirement that approvals pass before
-readiness. Use `--draft-only` instead when intentionally retaining the draft;
+The request and receipt stay unchanged. For this count-based selector, without
+`--allow-pending-approvals`, ordinary `finish` preserves its existing requirement
+that approvals pass before readiness. Use `--draft-only` instead when intentionally retaining the draft;
 it permits the selected pending approval but does not mark the PR ready.
 Readiness never authorises merging before required human or code-owner approvals.
 
@@ -716,13 +769,16 @@ confirm that authors and timestamps stay unchanged, and state that endorsement
 also approves this change. Include any verified-email confirmation here.
 
 Disclose material validation limitations, including an explicit no-required-CI
-exception or either version 5 human-action ordering exception. For an approval-count deferral, show the
+exception or a version 5 human-action ordering exception. For an approval-count deferral, show the
 check name, app ID/slug, required count, and original run ID in the private
 endorsement context. Explain that the selected approval can follow readiness
 but remains required before merge. Keep public guidance and fixtures generic.
 For a human-workflow exception, name the job and required human action, explain
 why its verification is waiting, and retain the merge restriction. Keep full
 source/run provenance in the records. An applied exception never counts as passing CI.
+For a human approval requirement distinct from PR reviews, state only that the recorded gate remains
+required just before merge. This endorsement prompt does not ask the operator
+to complete it early or approve its deferral.
 
 Use the [skill's endorsement choices](../SKILL.md#gate-3---exact-revision-human-endorsement),
 including the signed exact-head `--force-with-lease` route in every prompt.
