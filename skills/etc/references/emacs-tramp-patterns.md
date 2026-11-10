@@ -495,6 +495,9 @@ Automatic routing is not approval to commit. First follow the skill's
 make the change, run tests/lint in the Codespace, obtain all three independent
 reviews, then use the required [commit-message preflight](#commit-message-preflight)
 for the unchanged index before committing and pushing.
+The only pre-review commit exception is a
+[temporary remote WIP recovery snapshot](#replacing-a-codespace-from-a-wip-snapshot),
+which must be soft-reset before the recovered work enters Gate 0.
 
 A worker that cannot launch nested agents hands its validated, frozen candidate
 to the parent for the sibling review sequence. Wait for every complete result
@@ -571,8 +574,11 @@ Write real LF line breaks with `copilot-cs-put`, a quoted heredoc, or
 `'text\ntext'` contains a literal backslash and `n`, not a newline. Validate the
 file **after** it has passed through JSON, Elisp, and shell quoting.
 
-Run this preflight and commit as **one login-aware runner command**, only after
-Gate 0's validation and all three independent reviews have passed. The example
+For deliverable commits, run this preflight and commit as **one login-aware
+runner command**, only after Gate 0's validation and all three independent
+reviews have passed. Temporary recovery snapshots use this same message/trailer
+preflight under the [WIP exception](#replacing-a-codespace-from-a-wip-snapshot),
+with a subject starting `[WIP]`. The example
 checks the default required trailers; adjust the expected set only when the operator's
 instructions explicitly change it:
 
@@ -648,7 +654,92 @@ After publishing the unsigned draft, continue with the
 Do not begin signing directly from this execution cookbook. The existing
 `copilot-cs-endorse` runner/helper paths remain unchanged.
 
+### Replacing a Codespace from a WIP snapshot
+
+When recovery needs a replacement Codespace, preserve unfinished work as
+temporary unsigned commits whose messages start with `[WIP]`, push them to a
+separate remote recovery branch, and create the replacement from that branch.
+Inside the replacement, soft-reset exactly those commits into staged changes
+before advancing through the normal quality gates. This is a recovery transport,
+not reviewed PR history or permission to skip repository hooks or policy.
+All Git operations below run through the Codespace runner; provisioning uses
+local authenticated `gh` through the skill's existing creation procedure.
+
+1. Checkpoint the Copilot task context outside the Codespace before changing
+   targets: PR/source/base identity, published head, gate ledger, original
+   Codespace/checkout, job outcomes, and plan/receipt locations. Preserve needed
+   records and logs separately, never as source commits. Account for active
+   writers and in-flight Git/signing/publication operations; a missing response
+   is not permission to replay them. Keep already quality-gated work in the PR.
+2. Record `RECOVERY_ANCHOR`, the exact current non-WIP `HEAD`, and a fresh
+   `RECOVERY_BRANCH` distinct from the task PR's source branch. Preserve any
+   in-progress merge/rebase state explicitly rather than silently completing
+   or discarding it. Create the recovery branch and stage only the intended
+   tracked and new task files, including intended deletions. Credentials,
+   unrelated files, generated data, and protected issue reports stay excluded.
+   Prepare a message file starting `[WIP]`, run the message/trailer preflight,
+   and commit unsigned. Each additional snapshot commit uses the same prefix.
+   Verify each stored subject starts `[WIP]` before pushing. Record the exact
+   WIP commit list, `WIP_HEAD`, its tree, and the anchor.
+3. Push that branch to the source repository's remote and verify its exact tip
+   is `WIP_HEAD` before relying on it. Use a unique branch and a create-only
+   empty lease for its first push:
+
+   ```sh
+   git push --force-with-lease="refs/heads/$RECOVERY_BRANCH:" \
+     "$REMOTE" "$WIP_HEAD:refs/heads/$RECOVERY_BRANCH"
+   ```
+
+   The empty lease cannot replace an existing branch. Keep subsequent snapshots
+   fast-forward-only and verify each resulting tip. Do not push WIP commits to
+   the deliverable PR branch or treat them as passing any quality gate.
+4. Create a new Codespace from this exact recovery branch in the repository
+   where it was pushed, including the source fork when applicable. This recovery
+   route already selects a new Codespace; do not ask the new-versus-existing
+   question again. Reuse the known devcontainer choice and follow the existing
+   SKU, permission, and ambiguous-creation safeguards. Retain the new immutable
+   Codespace ID, discover its checkout, and select it in the same Copilot session.
+   Preserve the old job/receipt target bindings rather than reassigning them.
+5. In the replacement, fetch the recorded branch/history as needed and verify a
+   clean checkout at exactly `WIP_HEAD`, with no intervening work or Git operation.
+   Confirm that the anchor is an ancestor and that the entire recorded range
+   contains only this recovery's `[WIP]` commits. Create a fresh local work branch,
+   then reset only that range:
+
+   ```sh
+   git switch -c "$RESUMED_BRANCH" "$WIP_HEAD" &&
+   git reset --soft "$RECOVERY_ANCHOR" &&
+   git diff --cached --exit-code "$WIP_HEAD" &&
+   git diff --quiet
+   ```
+
+   Supply the recorded values in this runner command; shell variables do not
+   persist across jobs. Require `HEAD` to equal the anchor and `git write-tree`
+   to equal the recorded WIP tree. The snapshot's changes must now be staged,
+   with no lost file additions/deletions or unstaged tracked changes. The remote
+   recovery branch stays untouched; do not pull it into the reset work branch.
+6. Restore the checkpointed task context, update the active Codespace/checkout,
+   and recheck bootstrap/service readiness. Validate the recovered candidate and
+   run all three Gate 0 reviews against its anchor and staged tree before making
+   a normal unsigned deliverable commit. Resume CI, CCR, and exact-revision
+   endorsement as required; neither the WIP commits nor an older review/plan
+   supplies approval for the recovered candidate.
+   Publish reviewed commits back to the existing PR through the normal
+   fast-forward path after rechecking its live source, or use normal initial
+   draft publication if no task PR exists yet. If that source advanced
+   or the retained checkout differs from signed publication, reconcile through
+   the normal workflow rather than force-pushing. Require no recovery `[WIP]`
+   commits in the deliverable history, and retain the remote snapshot until
+   the PR and session records confirm recovery.
+
 ### Validation readiness and missing artifacts
+
+Tooling, cache, bootstrap, and service recovery inside the selected task
+Codespace use the skill's
+[standing change authority](../SKILL.md#codespace-change-authority), not another
+approval prompt. Preserve quality-gated code in the PR and checkpoint session
+context before disruptive recovery; repository-tracked fixes still follow all
+pre-commit gates.
 
 For a new task, verify the requested base before editing: a new Codespace can
 still contain a stale prebuild. Fetch the named base inside the Codespace and
@@ -678,9 +769,10 @@ After a stopped Codespace restarts, check its backing services separately.
 `Available` and a successful SSH command do not imply that its database has
 finished starting. Use repository-documented read-only health checks with both
 a per-probe timeout and a bounded overall wait. Report a readiness timeout
-explicitly; do not silently continue, restart shared services, or change their
-configuration. Once ready, rerun the actual failed validation rather than
-assuming that an open service port proves the tests passed.
+explicitly and inspect the failing service. If it is still starting, wait within
+the deadline; if recovery is needed, repair the task's service autonomously under
+the preservation contract. Once ready, rerun the actual failed validation rather
+than assuming that an open service port proves the tests passed.
 
 If concurrent test jobs report occupied ports, inspect which job owns those
 listeners and wait for it to finish. Do not kill its services, delete socket
@@ -710,12 +802,17 @@ database behind its API is unavailable. A persistent HTTP 503 needs inspection
 of the actual database process and startup log, not repeated test launches or
 a longer sleep. Check process identity and live socket ownership in the correct
 process/network namespaces before treating a PID or socket lock as stale: a PID
-can have been reused by an unrelated process or thread. Do not delete/recreate
-a container with unmounted data, remove database files, or stop another
-session's services to clear it.
-Any approved repair must wait until the affected test services are idle and
-preserve the existing container data. Test-only feature-management endpoints
-also need their own repository-native fixture; an unrelated development
+can have been reused by an unrelated process or thread. Do not rebuild or reset
+service state to mask an undiagnosed failure. For a confirmed stale
+socket or lock, move the exact stale files to a task-scoped backup and restart
+the affected service without asking for approval. Do not signal an unrelated
+process merely because its PID matches the old lock.
+
+Wait until affected task jobs are idle before changing their services; do not
+interrupt another session's workload. Prefer retaining container/database data,
+and protect PR-backed code and session context before rebuilding or regenerating
+disposable service state. Test-only feature-management endpoints also need
+their own repository-native fixture; an unrelated development
 sidecar is not evidence that the test endpoint is ready. A fixture-enabling
 flag does not prove that the harness started it; confirm its listener,
 readiness and service log. Passing tests with persistent dependency errors
@@ -1015,8 +1112,8 @@ scope; the pipeline does not make a repository-wide scan a scoped read.
 
 `copilot-cs-poll` is passive: it never opens a connection. If an acknowledged
 job's stream has died, it reports `detached` and preserves the available output.
-Check the original Codespace's availability with the local API and obtain
-operator approval before starting it if stopped. Then explicitly call
+Check the original task Codespace's availability with the local API and start
+it if stopped, without another approval prompt. Then explicitly call
 `copilot-cs-attach` with that job's id. A known job uses its original Codespace
 and directory even if the selected target changed; an unknown job from an
 earlier daemon requires selecting its original target first. Attachment replays

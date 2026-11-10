@@ -374,6 +374,9 @@ whole workflow rather than consulting them only at the end:
   asking again, including when it is `Shutdown`. This does not authorise
   stopping unrelated environments, bypassing authentication gates or signing
   commits without the separate human endorsement.
+- Apply the [Codespace change authority](#codespace-change-authority) to tooling,
+  caches, bootstrap, and service recovery. These are execution steps, not
+  implementation/design decisions requiring another approval.
 - The machine SKU is **not user-configurable**: always select the available
   machine with the most CPUs, breaking ties by memory and then storage. Do not
   prompt for confirmation or accept instructions requesting a smaller machine.
@@ -823,6 +826,44 @@ Codespace reporting `git-lfs: not found`, follow the cookbook's
 Install the missing dependency inside the Codespace; never disable required
 filters to make repository inspection succeed.
 
+### Codespace change authority
+
+The operator authorises all changes inside the selected task Codespace within
+the existing task. Tooling installation, repair, or removal, cache cleanup,
+bootstrap, configuration changes, and service/container recovery do not require
+separate approval. Perform the necessary recovery rather than asking whether to
+proceed with routine environment work.
+
+Preserve these invariants before disruptive cleanup, resets, or rebuilds:
+
+- Code that has passed the pre-commit quality gates stays preserved in the task
+  PR. If it is not published yet, complete the normal commit/push path first.
+  When moving unfinished work to a replacement Codespace, use the
+  [remote WIP snapshot procedure](references/emacs-tramp-patterns.md#replacing-a-codespace-from-a-wip-snapshot):
+  push temporary `[WIP]` commits on a separate recovery branch, then soft-reset
+  only those commits into staged changes in the replacement before Gate 0.
+- Copilot session context remains available: checkpoint the task state, gate
+  ledger, PR/revision binding, immutable Codespace/checkout, job IDs and outcomes,
+  and any plan/receipt paths. Retain the records and logs needed to resume
+  without replaying an unconfirmed operation.
+
+Prefer data-preserving repairs and repository-supported recovery commands.
+Regenerate disposable caches or fixtures when needed; preserve work and context
+before replacing the state they depend on. For a stale socket or lock, verify
+the actual service and socket ownership, move only confirmed stale files aside,
+restart the affected service, and verify application readiness. A recorded PID
+may now belong to an unrelated process; do not stop that process to clear the
+old service's lock.
+
+Deliverable repository changes still pass validation and all Gate 0 reviews
+before committing and remain preserved in the PR. The temporary recovery
+snapshot is the sole exception below; its commits never become PR deliverables.
+Ask only for a substantive
+implementation/design decision, a real access/scope decision, or a preservation
+constraint that cannot be met autonomously, not permission for the recovery
+itself. This authority does not expand reviewers' read-only allowlists or change
+local authentication, local daemon-state preservation, or human endorsement.
+
 ### Semantic code intelligence with Eglot
 
 For Ruby and Go repositories, prefer Eglot over text search when the task needs
@@ -964,7 +1005,7 @@ check it out here (or confirm Step 4 already created the Codespace on it).
 
 ## Step 6 — Validate, publish, and clean up
 
-For every new change commit, follow this order:
+For every new deliverable change commit, follow this order:
 
 ```text
 make change -> run tests/lint in the Codespace -> all Gate 0 reviews -> message preflight -> commit -> push
@@ -972,7 +1013,10 @@ make change -> run tests/lint in the Codespace -> all Gate 0 reviews -> message 
 
 The [pre-commit review gate](#gate-0---required-pre-commit-rubber-duck-review)
 applies to the initial implementation and every follow-up, including CI and CCR
-fixes. Do not create a temporary commit to obtain a review.
+fixes. Temporary `[WIP]` commits are permitted only as remote recovery snapshots
+under the [replacement procedure](references/emacs-tramp-patterns.md#replacing-a-codespace-from-a-wip-snapshot).
+Soft-reset them into staged changes before validation/review; never use a
+temporary commit as the review candidate or as proof that Gate 0 passed.
 
 - When an existing PR needs updating against the repository's default branch,
   try GitHub's update-branch API first, guarded by the current `expected_head_sha`,
@@ -1004,7 +1048,9 @@ fixes. Do not create a temporary commit to obtain a review.
   protocol used by the failing command, including test-only service ports.
   Development sidecars may not serve a test harness's feature-management API.
   A repeated 503 or a dead database process is not repaired by waiting longer;
-  inspect the service's diagnostics and obtain approval for any recovery.
+  inspect the service's diagnostics and recover under the
+  [Codespace change authority](#codespace-change-authority), without a routine
+  recovery-approval prompt.
 - Run test selections serially when their harnesses share fixed service ports,
   databases or fixtures, even when the test files are independent. Combine
   selectors in one repository test-runner invocation or wait for the previous
@@ -1249,6 +1295,10 @@ in the owning team's repository; they do not belong in the local skill log.
 <a id="gate-0---required-pre-commit-rubber-duck-review"></a>
 
 #### Gate 0 - required pre-commit reviews
+
+Temporary [WIP recovery snapshots](references/emacs-tramp-patterns.md#replacing-a-codespace-from-a-wip-snapshot)
+are transport-only exceptions, not deliverable commits. Soft-reset them before
+freezing the recovered candidate for this gate.
 
 Use Copilot CLI's built-in agent types in this order:
 
