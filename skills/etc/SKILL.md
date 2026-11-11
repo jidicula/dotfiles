@@ -1144,7 +1144,7 @@ temporary commit as the review candidate or as proof that Gate 0 passed.
   demote an unchanged, already endorsed PR when merely resuming finalisation.
   Lead the final response with the full PR URL. **Continue through this skill's
   remaining quality and endorsement gates below; a draft's creation is not approval to sign it.**
-  Register the session's [hourly conflict maintenance](#hourly-pr-conflict-maintenance)
+  Register the session's [two-hour conflict maintenance](#pr-conflict-maintenance-every-two-hours)
   as soon as the draft is created or adopted.
   Skip this only when the user
   explicitly requested no commit, push, or PR, or when the task was read-only
@@ -1169,35 +1169,45 @@ temporary commit as the review candidate or as proof that Gate 0 passed.
   results; do not narrate passing checks, example/assertion counts,
   feature/deployment permutations or Codespace/Docker/worktree setup.
 
-### Hourly PR conflict maintenance
+<a id="hourly-pr-conflict-maintenance"></a>
+
+### PR conflict maintenance every two hours
 
 After creating or adopting the task's draft PR, the parent session must register
 one recurring prompt with `manage_schedule`, using `action: "create"` and
-`interval: "1h"`. Keep it active through readiness until the PR is merged,
+`interval: "2h"`. Keep it active through readiness until the PR is merged,
 closed without a successor, or the operator stops maintenance. Use the existing
 session scheduler, not a new workflow, cron job, or daemon.
 
 Bind the prompt to the full PR URL, GitHub host/repository, selected Codespace
 and checkout, source/base branches, and the session's current gate/receipt
-records. Its task is to read that PR's live state and mergeability hourly and
-resolve confirmed merge conflicts through the procedure below, preserving all
-quality and consent gates. Save the returned schedule ID with those records.
-On resume, list schedules and reuse the matching one; create one only when
-missing. Workers must not register duplicate watchers. If scheduling is
-unavailable, report the monitoring gap rather than claiming hourly coverage.
+records. The prompt must instruct the parent to delegate both the mergeability
+check and any conflict resolution to one fresh `general-purpose` subagent using
+`task` with `mode: "background"`, every two hours. Save the returned schedule ID
+with those records. On resume, list schedules and reuse the matching two-hour
+watcher. Stop and replace an older hourly or non-delegating watcher, recording
+the new ID; create one only when missing. Workers must not register watchers.
+If scheduling or delegation is unavailable, report the monitoring gap rather
+than silently running the checks in the parent or claiming two-hour coverage.
 Do not promise coverage while the session is not running.
 
-Each scheduled turn:
+Each scheduled turn, the parent hands the worker the recorded PR, current refs
+and gate state, exact Codespace/checkout, canonical client and owning session
+binding, permitted operations, and necessary context artifacts. Retain its
+agent ID. Do not launch another tick's worker while the prior check, resolution,
+or gate handoff is unfinished. Serialize the worker's access to the shared
+checkout and stateful daemon with foreground work and sibling reviewers.
+
+The delegated worker performs the following procedure:
 
 1. Read the recorded PR through local authenticated `gh` on its recorded host.
-   If the session records a verified signed replacement, stop the original's
-   schedule and register one for the resulting PR, retaining its new ID.
-   Otherwise stop the schedule when the PR is merged or closed.
+   Report a verified signed replacement, merge, or closure to the parent, which
+   stops or replaces the watcher and retains the correct PR binding and ID.
    Do not follow an unrelated PR or recreate a closed one.
 2. Read current head/source/base identity and mergeability. `MERGEABLE` needs no
    change. `UNKNOWN`, an API error, or incomplete identity is not a conflict:
    retry read-only at most twice, then record the unresolved state for the next
-   hourly tick. Do not wake the Codespace or update the branch merely because
+   two-hour tick. Do not wake the Codespace or update the branch merely because
    the base advanced.
 3. For confirmed `CONFLICTING`, reconcile the live refs with the session records
    and reuse the selected Codespace. Account for in-flight jobs, signing, or
@@ -1221,9 +1231,18 @@ Each scheduled turn:
    A scheduled prompt never supplies human consent or reuses an old approval
    for the resolution.
 
-Keep clean hourly checks quiet. Record conflicts, repairs, blockers, current
+The parent retains ownership of every gate and independently verifies the
+worker's handoff. A worker unable to invoke the required reviewers returns the
+validated, uncommitted candidate as `awaiting-review` under Gate 0's parent-owned
+handoff procedure; the parent runs the sibling reviews before the worker resumes
+the same resolution. Signing, endorsement, and publication consent stay with
+the parent. Return the final revision, job/validation evidence, gate state, and
+any blocker before treating the tick as complete. Use a fresh worker for the
+next independent tick, not an idle worker from a previous run.
+
+Keep clean two-hour checks quiet. Record conflicts, repairs, blockers, current
 revision, and the next safe action in session state. Continue the existing
-quality-gate work between ticks; hourly maintenance does not replace CI/CCR
+quality-gate work between ticks; this maintenance does not replace CI/CCR
 polling, its deadlines, or the completion contract.
 
 ### Quality and endorsement gates
@@ -1990,8 +2009,10 @@ Leave a concise result and the gate checklist in the session's artifacts: full
 original/resulting PR URLs, Codespace/checkout, current revision, CCR availability
 evidence and latest review ID/URL/recommendation, unresolved findings,
 validation/CI state, current phase, next action, and any plan/receipt/job paths.
-Retain the conflict-maintenance schedule ID and its current PR binding; readiness
-does not end that watch. Reconcile it on resume before registering another.
+Retain the conflict-maintenance schedule ID, two-hour delegation configuration,
+current PR binding, and any active worker ID or gate handoff. Readiness does not
+end that watch. Reconcile these on resume before registering another watcher or
+launching another worker.
 Do not include credentials or treat an approval token as proof of consent.
 
 Retain Gate 0's parents/tree, review-owning session, and all three reviewer
@@ -2007,7 +2028,7 @@ replay a review request, signature or publication because the session restarted.
 
 The agent executes the CCR fix/review loop within this skill. The factory's
 outer hook and run loop remain unspecified. The only required scheduling here is
-the session-native hourly conflict prompt above; do not build a separate hook,
+the session-native two-hour conflict prompt above; do not build a separate hook,
 scheduler, workflow, daemon, or automatic approval mechanism. Leave Codespace
 shutdown to its configured idle timeout unless the operator explicitly requests it.
 

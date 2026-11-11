@@ -550,7 +550,7 @@ access or an unconfirmed outcome, stop and inspect rather than replaying the
 mutation, refreshing its expected head or silently switching to a local
 merge/rebase. Once the API outcome is known and a merge conflict is confirmed,
 use the skill's authorised
-[conflict-repair procedure](../SKILL.md#hourly-pr-conflict-maintenance).
+[delegated conflict-repair procedure](../SKILL.md#pr-conflict-maintenance-every-two-hours).
 That resolution is new agent-written work, not a verified base-only API update:
 preserve signed history and repeat the normal review and endorsement gates.
 
