@@ -1659,8 +1659,10 @@ the operator to complete it early or approve its deferral. It is not a PR review
 code-owner approval, or the operator's exact-revision endorsement.
 
 Establish its approval-only purpose from repository policy or its implementation;
-a name alone is not sufficient. The agent gathers the exact check identity, app,
-and waiting title for `--defer-external-approval` using the
+a name alone is not sufficient. For a CheckRun, the agent gathers the exact check
+identity, app, and waiting title for `--defer-external-approval`. For a legacy
+StatusContext, use `--defer-external-approval-status` with the actual creator ID,
+login, and waiting description; do not infer app provenance. Follow the
 [guarded approval-check protocol](references/endorsement.md#pending-human-approvals-before-merge).
 No PR-review approval count is needed. Treat
 `required_ci: "deferred_external_approval"` as a valid Gate 1 exception and

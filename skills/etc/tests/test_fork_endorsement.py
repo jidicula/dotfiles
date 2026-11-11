@@ -1060,6 +1060,225 @@ class ForkExternalApprovalTests(ExternalApprovalTests, ForkRepositoryTestCase):
     """Keep external approval ordering scoped to the upstream PR and source fork."""
 
 
+LEGACY_APPROVAL = {
+    "kind": "external_human_approval_status", "check_name": "External human approval",
+    "status_creator_id": 77, "status_creator_login": "approval-service[bot]",
+    "waiting_description": "Waiting for a human decision outside pull request review",
+}
+
+
+class LegacyExternalApprovalTests(GitHubEndorsementTestCase):
+    def setUp(self):
+        super().setUp()
+        self.required_contexts.append(LEGACY_APPROVAL["check_name"])
+        self.approval_node = {
+            "__typename": "StatusContext", "isRequired": True, "id": "SC_81",
+            "context": LEGACY_APPROVAL["check_name"], "state": "PENDING",
+        }
+        self.check_pages.append([self.approval_node])
+        self.approval_status = {
+            "id": 81, "node_id": "SC_81", "context": LEGACY_APPROVAL["check_name"],
+            "url": f"https://api.github.com/repos/example/project/statuses/{self.head}",
+            "state": "pending", "description": LEGACY_APPROVAL["waiting_description"],
+            "creator": {"id": 77, "login": LEGACY_APPROVAL["status_creator_login"]},
+        }
+        self.status_history = [self.approval_status]
+
+    def pages(self, endpoint, *, field=None, hostname="github.com"):
+        if "/statuses?" in endpoint:
+            self.calls.append(("GET-PAGES", endpoint, None))
+            target = self.replacement or self.original
+            self.assertEqual(endpoint, (
+                f"repos/example/project/commits/{target['head']['sha']}/statuses?per_page=100"
+            ))
+            return copy.deepcopy(self.status_history)
+        return super().pages(endpoint, field=field, hostname=hostname)
+
+    def api(self, endpoint, method="GET", data=None, *, hostname="github.com"):
+        response = super().api(endpoint, method, data, hostname=hostname)
+        if endpoint == "graphql" and "EndorsementRequiredChecks" in data["query"]:
+            protection = response["data"]["node"]["baseRef"]["branchProtectionRule"]
+            for check in protection["requiredStatusChecks"]:
+                if check["context"] == LEGACY_APPROVAL["check_name"]:
+                    check["app"] = getattr(self, "policy_app", None)
+        return response
+
+    def prepare_deferral(self):
+        return self.prepare(defer_external_approval_status=copy.deepcopy(LEGACY_APPROVAL))
+
+    def append_status(self, state="pending", **values):
+        identifier = self.approval_status["id"] + 1
+        target = self.replacement or self.original
+        self.approval_status = {
+            **self.approval_status, "id": identifier, "node_id": f"SC_{identifier}",
+            "url": f"https://api.github.com/repos/example/project/statuses/{target['head']['sha']}",
+            "state": state, **values,
+        }
+        self.status_history.insert(0, self.approval_status)
+        self.approval_node.update(id=self.approval_status["node_id"], state=state.upper())
+
+    def signed_deferral(self, publication="replace"):
+        self.follow_up(self.receipt, count=1)
+        self.original["head"].update(ref=self.request["source_branch"], sha=self.request["head"])
+        self.approval_status["url"] = (
+            f"https://api.github.com/repos/example/project/statuses/{self.request['head']}")
+        self.request = self.prepare_deferral()
+        self.freeze()
+        self.helper.await_attestation(self.plan)
+        self.receipt = self.repository.sign(self.plan_id, self.approve(publication))
+        self.commits.update({oid: self.commit_data(oid) for oid in (
+            *self.receipt["mapping"], *self.receipt["mapping"].values())})
+        self.helper.complete_attestation(self.receipt, self.approve(publication))
+        self.repository.push(self.plan_id, self.approve(publication))
+        if publication == "replace":
+            self.original["head"]["sha"] = self.receipt["head"]
+        self.status_history = []
+        self.append_status(url=(
+            f"https://api.github.com/repos/example/project/statuses/{self.receipt['head']}"))
+
+    def test_pending_legacy_approval_is_deferred_without_inventing_a_check_run(self):
+        with self.assertRaisesRegex(ValueError, "required CI"):
+            self.prepare()
+        checked = self.helper.check_ci(
+            "example/project", 12, defer_external_approval_status=LEGACY_APPROVAL)
+        self.assertEqual(checked["required_ci"], "deferred_external_approval")
+        self.assertEqual(checked["ci_deferral"], dict(LEGACY_APPROVAL, status_id=81))
+        prepared = self.prepare_deferral()
+        self.assertEqual(prepared["version"], 5)
+        self.assertNotIn("check_run_id", prepared["ci_deferral"])
+        self.assert_read_only_preparation()
+
+    def test_pending_status_requires_the_exact_issuer_description_head_and_rollup(self):
+        for field, value in (
+            ("creator", {"id": 88, "login": LEGACY_APPROVAL["status_creator_login"]}),
+            ("creator", {"id": 77, "login": "another-service[bot]"}),
+            ("description", "Waiting for executable CI"),
+            ("url", f"https://api.github.com/repos/example/project/statuses/{self.first}"),
+            ("url", f"https://another.example/api/v3/repos/example/project/statuses/{self.head}"),
+            ("node_id", "SC_other"),
+            ("state", "success"),
+        ):
+            with self.subTest(field=field, value=value), mock.patch.dict(
+                    self.approval_status, {field: value}):
+                with self.assertRaises(ValueError):
+                    self.prepare_deferral()
+        self.assert_read_only_preparation()
+
+    def test_missing_duplicate_ambiguous_or_stale_statuses_cannot_be_deferred(self):
+        for history in ([], self.status_history * 2,
+                        [{**self.approval_status, "id": True}],
+                        [self.approval_status, {**self.approval_status, "id": 82, "node_id": "SC_82"}]):
+            with self.subTest(history=history), mock.patch.object(self, "status_history", history):
+                with self.assertRaises(ValueError):
+                    self.prepare_deferral()
+        with mock.patch.dict(self.approval_node, {"isRequired": False}):
+            with self.assertRaises(ValueError):
+                self.prepare_deferral()
+        self.check_pages[-1].append({
+            "__typename": "CheckRun", "isRequired": True, "name": LEGACY_APPROVAL["check_name"],
+            "status": "COMPLETED", "conclusion": "SUCCESS",
+        })
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            self.prepare_deferral()
+
+    def test_app_pins_and_other_ci_requirements_cannot_be_waived(self):
+        self.policy_app = {"databaseId": 1001, "slug": "approval-service"}
+        with self.assertRaisesRegex(ValueError, "app provenance"):
+            self.prepare_deferral()
+        self.policy_app = None
+        self.rules = [{"type": "required_status_checks", "parameters": {
+            "required_status_checks": [{
+                "context": LEGACY_APPROVAL["check_name"], "integration_id": 1001,
+            }],
+        }}]
+        with self.assertRaisesRegex(ValueError, "app-pinned"):
+            self.prepare_deferral()
+        self.rules = []
+        self.check_pages[0][0]["conclusion"] = "FAILURE"
+        with self.assertRaisesRegex(ValueError, "required CI"):
+            self.prepare_deferral()
+        self.check_pages[0][0]["conclusion"] = "SUCCESS"
+        self.add_required_workflow()["conclusion"] = "failure"
+        with self.assertRaisesRegex(ValueError, "required workflow"):
+            self.prepare_deferral()
+
+    def test_original_pending_identity_is_frozen_but_success_can_append(self):
+        self.follow_up(self.receipt, count=1)
+        self.original["head"].update(ref=self.request["source_branch"], sha=self.request["head"])
+        self.approval_status["url"] = (
+            f"https://api.github.com/repos/example/project/statuses/{self.request['head']}")
+        self.request = self.prepare_deferral()
+        self.freeze()
+        original_selector = copy.deepcopy(self.request["ci_deferral"])
+        self.append_status()
+        with self.assertRaisesRegex(ValueError, "original pending human-approval status changed"):
+            self.helper.await_attestation(self.plan)
+        self.append_status("success", creator={"id": 88, "login": "reviewer"},
+                           description="Human approval recorded")
+        result = self.helper.await_attestation(self.plan)
+        self.assertEqual(result["ci_scope"], "observed_required_checks")
+        self.assertEqual(result["ci_deferral"], original_selector)
+
+    def test_signed_head_readiness_keeps_the_approval_separate_and_rolls_back_failures(self):
+        self.signed_deferral()
+        receipt = copy.deepcopy(self.receipt)
+        self.assertNotEqual(self.approval_status["id"], self.request["ci_deferral"]["status_id"])
+        self.assertTrue(self.finish()["approval_check"]["pending"])
+        self.assertFalse(self.original["draft"])
+        changed = copy.deepcopy(self.receipt)
+        changed["plan"]["request"]["ci_deferral"]["status_creator_id"] = 88
+        with self.assertRaisesRegex(ValueError, "digest"):
+            self.helper.signed_receipt_request(changed, self.approve("replace"))
+        self.append_status("success", creator={"id": 88, "login": "reviewer"},
+                           description="Human approval recorded")
+        result = self.finish()
+        self.assertTrue(result["ready_for_review"])
+        self.assertFalse(result["approval_check"]["pending"])
+        self.assertEqual(result["ci_scope"], "observed_required_checks")
+        self.assertEqual(self.receipt, receipt)
+        self.append_status("failure", description="Human approval declined")
+        with self.assertRaisesRegex(ValueError, "returned the unchanged signed PR to draft"):
+            self.finish()
+        self.assertTrue(self.original["draft"])
+
+    def test_cli_selector_is_explicit_and_exclusive(self):
+        for action in ("check-ci", "prepare"):
+            arguments = [
+                "copilot-cs-endorse", action, "--repo", "example/project", "--pr", "12",
+                "--defer-external-approval-status", LEGACY_APPROVAL["check_name"], "77",
+                LEGACY_APPROVAL["status_creator_login"], LEGACY_APPROVAL["waiting_description"],
+            ]
+            if action == "prepare":
+                arguments.extend(("--key", str(self.key_file) + ".pub"))
+            with self.subTest(action=action), mock.patch.dict(os.environ, {"CODESPACES": ""}), \
+                    mock.patch.object(sys, "argv", arguments), mock.patch.object(
+                        self.helper, "replacement_allowed", return_value=True), \
+                    redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()):
+                self.assertEqual(self.helper.main(), 0)
+                self.assertEqual(json.loads(output.getvalue())["ci_deferral"],
+                                 dict(LEGACY_APPROVAL, status_id=81))
+        with self.assertRaisesRegex(ValueError, "independent"):
+            self.prepare(defer_external_approval_status=LEGACY_APPROVAL, allow_no_required_ci=True)
+        with self.assertRaisesRegex(ValueError, "only one"):
+            self.prepare(defer_external_approval_status=LEGACY_APPROVAL,
+                         defer_external_approval=EXTERNAL_APPROVAL)
+        self.assert_read_only_preparation()
+
+    def test_replacement_checks_its_own_signed_head_before_readiness(self):
+        self.signed_deferral("replacement")
+        result = self.finish()
+        self.assertTrue(result["ready_for_review"])
+        self.assertTrue(result["approval_check"]["pending"])
+        self.assertEqual(result["head"], self.receipt["head"])
+        self.assertEqual(result["replaces"], self.request["url"])
+        self.assertFalse(self.replacement["draft"])
+        self.assertEqual(self.original["state"], "closed")
+
+
+class ForkLegacyExternalApprovalTests(LegacyExternalApprovalTests, ForkRepositoryTestCase):
+    """Keep legacy statuses scoped to the policy repository, not the source fork."""
+
+
 HUMAN_WORKFLOW = {
     "kind": "human_action_workflow", "check_name": "Approved action",
     "app_id": 1001, "app_slug": "workflow-runner",

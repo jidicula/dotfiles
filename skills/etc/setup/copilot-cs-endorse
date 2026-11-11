@@ -134,12 +134,17 @@ def source_repository(request):
 
 def validate_ci_deferral(deferral, *, frozen=True):
     require(isinstance(deferral, dict) and deferral.get("kind") in (
-        "pending_collaborator_approvals", "external_human_approval", "human_action_workflow"),
+        "pending_collaborator_approvals", "external_human_approval",
+        "external_human_approval_status", "human_action_workflow"),
         "invalid human-action ordering exception")
     workflow = deferral["kind"] == "human_action_workflow"
     external = deferral["kind"] == "external_human_approval"
+    legacy_status = deferral["kind"] == "external_human_approval_status"
     fields = {"kind", "check_name", "app_id", "app_slug", "required_approvals"}
-    if workflow:
+    if legacy_status:
+        fields = {"kind", "check_name", "status_creator_id", "status_creator_login",
+                  "waiting_description"}
+    elif workflow:
         fields.remove("required_approvals")
         fields.update(("workflow_repository", "workflow_path", "workflow_blob", "action_step",
                        "waiting_step", "waiting_description", "status_creator_id"))
@@ -147,17 +152,27 @@ def validate_ci_deferral(deferral, *, frozen=True):
         fields.remove("required_approvals")
         fields.add("waiting_title")
     if frozen:
-        fields.add("check_run_id")
+        fields.add("status_id" if legacy_status else "check_run_id")
         if workflow:
             fields.update(("workflow_id", "run_id", "run_attempt", "status_id"))
     require(set(deferral) == fields, "invalid human-action ordering fields")
     require(isinstance(deferral["check_name"], str) and deferral["check_name"].strip()
-            and not re.search(r"[\x00-\x1f\x7f]", deferral["check_name"])
-            and type(deferral["app_id"]) is int and deferral["app_id"] > 0
-            and isinstance(deferral["app_slug"], str)
-            and re.fullmatch(r"[a-z0-9-]+", deferral["app_slug"]),
+            and not re.search(r"[\x00-\x1f\x7f]", deferral["check_name"]),
             "invalid human-action check identity")
-    if workflow:
+    if not legacy_status:
+        require(type(deferral["app_id"]) is int and deferral["app_id"] > 0
+                and isinstance(deferral["app_slug"], str)
+                and re.fullmatch(r"[a-z0-9-]+", deferral["app_slug"]),
+                "invalid human-action check identity")
+    if legacy_status:
+        require(type(deferral["status_creator_id"]) is int and deferral["status_creator_id"] > 0
+                and isinstance(deferral["status_creator_login"], str)
+                and re.fullmatch(r"[A-Za-z0-9-]+(?:\[bot\])?", deferral["status_creator_login"])
+                and isinstance(deferral["waiting_description"], str)
+                and deferral["waiting_description"].strip()
+                and not re.search(r"[\x00-\x1f\x7f]", deferral["waiting_description"]),
+                "invalid pending human-approval status selector")
+    elif workflow:
         require(isinstance(deferral["workflow_repository"], str)
                 and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", deferral["workflow_repository"])
                 and isinstance(deferral["workflow_path"], str)
@@ -180,6 +195,7 @@ def validate_ci_deferral(deferral, *, frozen=True):
                 "invalid collaborator-approval count")
     if frozen:
         require(all(type(deferral[field]) is int and deferral[field] > 0 for field in (
+            ("status_id",) if legacy_status else
             ("check_run_id", "workflow_id", "run_id", "run_attempt", "status_id") if workflow
             else ("check_run_id",))), "missing original human-action check identity")
 
@@ -412,11 +428,12 @@ def replacement_allowed(repository, branch, *, hostname="github.com"):
 
 def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
              defer_collaborator_approvals=None, defer_external_approval=None,
-             defer_human_workflow=None, hostname="github.com"):
+             defer_external_approval_status=None, defer_human_workflow=None, hostname="github.com"):
     """Check an unsigned draft without starting endorsement preparation."""
     selections = [(kind, value) for kind, value in (
         ("pending_collaborator_approvals", defer_collaborator_approvals),
         ("external_human_approval", defer_external_approval),
+        ("external_human_approval_status", defer_external_approval_status),
         ("human_action_workflow", defer_human_workflow),
     ) if value is not None]
     require(len(selections) <= 1, "select only one human-action ordering exception")
@@ -451,11 +468,14 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
         allow_human_deferral=deferral is not None, preparing_deferral=deferral is not None,
     )
     if deferral is not None:
+        identity = ("status_id" if deferral["kind"] == "external_human_approval_status"
+                    else "check_run_id")
         request["ci_deferral"].update(
-            check_run_id=checked["approval_check"]["id"], **checked["approval_check"].get("binding", {}))
+            {identity: checked["approval_check"]["id"]}, **checked["approval_check"].get("binding", {}))
         scopes = {
             "pending_collaborator_approvals": "deferred_collaborator_approvals",
             "external_human_approval": "deferred_external_approval",
+            "external_human_approval_status": "deferred_external_approval",
             "human_action_workflow": "deferred_human_workflow",
         }
         request["required_ci"] = (
@@ -469,10 +489,12 @@ def check_ci(repository, number, *, allow_no_required_ci=False, allow_fork=True,
 
 def prepare(repository, number, key_path, *, committer=None, preserve_base_merges=(),
             allow_no_required_ci=False, defer_collaborator_approvals=None,
-            defer_external_approval=None, defer_human_workflow=None, hostname="github.com"):
+            defer_external_approval=None, defer_external_approval_status=None,
+            defer_human_workflow=None, hostname="github.com"):
     request = check_ci(repository, number, allow_no_required_ci=allow_no_required_ci,
                        defer_collaborator_approvals=defer_collaborator_approvals,
                        defer_external_approval=defer_external_approval,
+                       defer_external_approval_status=defer_external_approval_status,
                        defer_human_workflow=defer_human_workflow, hostname=hostname)
     required_ci = request.pop("required_ci", None)
     require(not allow_no_required_ci or required_ci == "not_configured",
@@ -1608,6 +1630,55 @@ def human_approval_check(request, head, checks, policy_apps, *, preparing):
     return result
 
 
+def human_approval_status(request, head, checks, policy_apps, *, preparing):
+    deferral = request["ci_deferral"]
+    matching = [check for check in checks
+                if check.get("name", check.get("context")) == deferral["check_name"]]
+    require(len(matching) == 1, "missing or ambiguous external human-approval status")
+    check = matching[0]
+    require(check.get("__typename") == "StatusContext" and check.get("isRequired") is True
+            and isinstance(check.get("id"), str) and check["id"],
+            "external human-approval status deferral requires an exact required status context")
+    require(all(app in (None, -1) for app in policy_apps),
+            "cannot verify an app-pinned policy from a legacy status creator")
+    hostname = request_hostname(request)
+    history = github_pages(
+        f"repos/{request['repository']}/commits/{head}/statuses?per_page=100", hostname=hostname)
+    require(all(isinstance(status, dict)
+                and type(status.get("id")) is int and status["id"] > 0
+                and isinstance(status.get("context"), str) and status["context"]
+                for status in history)
+            and len({status["id"] for status in history}) == len(history),
+            "invalid or duplicate external human-approval status history")
+    matching = [status for status in history if status["context"] == deferral["check_name"]]
+    require(matching, "missing external human-approval status on the exact head")
+    current = max(matching, key=lambda status: status["id"])
+    require(current.get("node_id") == check["id"]
+            and current.get("url") == api_url(
+                hostname, f"repos/{request['repository']}/statuses/{head}")
+            and current.get("state") in ("pending", "success")
+            and current["state"].upper() == check.get("state"),
+            "external human-approval status changed or does not match the exact head")
+    creator = current.get("creator")
+    require(isinstance(creator, dict) and type(creator.get("id")) is int and creator["id"] > 0
+            and isinstance(creator.get("login"), str) and creator["login"],
+            "external human-approval status creator is unavailable")
+    pending = current["state"] == "pending"
+    if pending:
+        require(creator["id"] == deferral["status_creator_id"]
+                and creator["login"] == deferral["status_creator_login"]
+                and current.get("description") == deferral["waiting_description"],
+                "pending external human-approval status issuer or description differs")
+        if not preparing and head == request["head"]:
+            require(current["id"] == deferral["status_id"],
+                    "original pending human-approval status changed; prepare a new plan")
+    # Status updates append new IDs; a successful status follows ordinary required-check policy.
+    return {"id": current["id"], "name": current["context"],
+            "status_creator_id": creator["id"], "status_creator_login": creator["login"],
+            "title": current.get("description"), "pending": pending,
+            "waiting_state": current["state"].upper()}
+
+
 def human_workflow_check(request, number, head, branch, checks, policy_apps, suites, *, preparing):
     deferral = request["ci_deferral"]
     matching = [check for check in checks
@@ -1813,7 +1884,9 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
     require(not preparing_deferral or allow_human_deferral,
             "invalid collaborator-approval preparation")
     human_workflow = deferral is not None and deferral["kind"] == "human_action_workflow"
-    external_approval = deferral is not None and deferral["kind"] == "external_human_approval"
+    legacy_status = deferral is not None and deferral["kind"] == "external_human_approval_status"
+    external_approval = deferral is not None and deferral["kind"] in (
+        "external_human_approval", "external_human_approval_status")
     policy_apps = []
     repository = request["repository"]
     hostname = request_hostname(request)
@@ -1879,7 +1952,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                             name status conclusion isRequired(pullRequestId: $id)
                           }
                           ... on StatusContext {
-                            context state isRequired(pullRequestId: $id)
+                            id context state isRequired(pullRequestId: $id)
                           }
                         }
                         pageInfo { hasNextPage endCursor }
@@ -1951,7 +2024,8 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
                                 and type(app.get("databaseId")) is int and app["databaseId"] > 0,
                                 "invalid classic collaborator-approval app policy")
                         policy_apps.append(None if app is None else app["databaseId"])
-                        require(app is None or app.get("slug") == deferral["app_slug"],
+                        require(app is None or not legacy_status
+                                and app.get("slug") == deferral["app_slug"],
                                 "classic collaborator-approval app provenance differs")
         commits = current["commits"]["nodes"]
         require(isinstance(commits, list) and len(commits) == 1
@@ -1994,7 +2068,7 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
             selected_wait = (check["__typename"] == "CheckRun" and deferral is not None
                              and name == deferral["check_name"] and (
                                  human_workflow and state == "FAILURE"
-                                 or external_approval and state == "ACTION_REQUIRED"))
+                                 or external_approval and not legacy_status and state == "ACTION_REQUIRED"))
             failed |= check_failed and not selected_wait
             if check["isRequired"]:
                 reported.add(name)
@@ -2026,6 +2100,9 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
             approval_check = human_workflow_check(
                 request, number, head, branch, observed_checks, policy_apps, workflow_suites,
                 preparing=preparing_deferral)
+        elif legacy_status:
+            approval_check = human_approval_status(
+                request, head, observed_checks, policy_apps, preparing=preparing_deferral)
         else:
             approval_check = human_approval_check(
                 request, head, observed_checks, policy_apps, preparing=preparing_deferral)
@@ -2060,9 +2137,10 @@ def require_passing_checks(request, number, head, branch, *, require_draft=False
               "using the explicit revision-scoped exception, not a passing CI result",
               file=sys.stderr)
     if deferred:
+        issuer = (f"{deferral['status_creator_login']} (status creator {deferral['status_creator_id']})"
+                  if legacy_status else f"{deferral['app_slug']} (app {deferral['app_id']})")
         print(f"[copilot-cs-endorse] {url}: deferring only "
-              f"{deferral['check_name']} from {deferral['app_slug']} "
-              f"(app {deferral['app_id']}); {approval_check['title']}; "
+              f"{deferral['check_name']} from {issuer}; {approval_check['title']}; "
               "not a passing CI result; the selected human action remains required before merge",
               file=sys.stderr)
     result = dict(current, ci_scope=(
@@ -2312,7 +2390,8 @@ def finish(receipt, approval, *, draft_only=False, base_update=None, recovery_pr
 
     def finish_ci(number):
         if not draft_only:
-            defer_external = request.get("ci_deferral", {}).get("kind") == "external_human_approval"
+            defer_external = request.get("ci_deferral", {}).get("kind") in (
+                "external_human_approval", "external_human_approval_status")
             return ready_for_review(
                 request, number, receipt["head"], target, confirm_publication=confirm_recovery,
                 allow_pending_approvals=allow_pending_approvals or defer_external)
@@ -2446,6 +2525,11 @@ def main():
             help="record a verified human approval requirement distinct from PR reviews; "
                  "approval remains required just before merge, not before CI or readiness")
         subparser.add_argument(
+            "--defer-external-approval-status", nargs=4,
+            metavar=("CHECK", "CREATOR_ID", "CREATOR_LOGIN", "WAITING_DESCRIPTION"),
+            help="bind a verified pending legacy status for a separate human approval; "
+                 "does not infer app provenance or waive approval before merge")
+        subparser.add_argument(
             "--defer-human-workflow", metavar="SELECTOR_JSON",
             help="bind an operator-selected, source-pinned human-workflow ordering exception; "
                  "does not waive executable failures or authorise the human action")
@@ -2509,6 +2593,15 @@ def main():
                 "kind": "external_human_approval", "check_name": name, "app_id": int(app_id),
                 "app_slug": app_slug, "waiting_title": waiting_title,
             }
+        external_status = getattr(args, "defer_external_approval_status", None)
+        status_deferral = None
+        if external_status is not None:
+            name, creator_id, creator_login, waiting_description = external_status
+            status_deferral = {
+                "kind": "external_human_approval_status", "check_name": name,
+                "status_creator_id": int(creator_id), "status_creator_login": creator_login,
+                "waiting_description": waiting_description,
+            }
         workflow_file = getattr(args, "defer_human_workflow", None)
         workflow_deferral = json.loads(Path(workflow_file).read_text()) if workflow_file else None
         if remote:
@@ -2528,6 +2621,7 @@ def main():
             result = check_ci(args.repo, args.pr, allow_no_required_ci=args.allow_no_required_ci,
                               defer_collaborator_approvals=deferral,
                               defer_external_approval=external_deferral,
+                              defer_external_approval_status=status_deferral,
                               defer_human_workflow=workflow_deferral, hostname=args.hostname)
             result.setdefault("required_ci", "passed")
         elif args.action == "prepare":
@@ -2542,6 +2636,7 @@ def main():
                              allow_no_required_ci=args.allow_no_required_ci,
                              defer_collaborator_approvals=deferral,
                              defer_external_approval=external_deferral,
+                             defer_external_approval_status=status_deferral,
                              defer_human_workflow=workflow_deferral, hostname=args.hostname)
         elif args.action in ("await-attestation", "complete-attestation"):
             require(os.environ.get("CODESPACES") != "true",

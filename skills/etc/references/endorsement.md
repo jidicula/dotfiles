@@ -203,6 +203,40 @@ action. Do not poll it as CI before other gates can proceed. Check it at the
 just-before-merge boundary; readiness, code-owner reviews, signatures, and
 endorsement never substitute for it or authorise merging without it.
 
+#### Legacy commit statuses for separate human approvals
+
+When the verified approval-only requirement is a legacy `StatusContext`, not a
+`CheckRun`, use its actual creator and pending description instead of inventing
+an app or check-run identity:
+
+```sh
+copilot-cs-endorse check-ci --repo "$NWO" --pr "$PR_NUMBER" \
+  --defer-external-approval-status "$CHECK_NAME" "$CREATOR_ID" "$CREATOR_LOGIN" "$WAITING_DESCRIPTION"
+copilot-cs-endorse prepare --repo "$NWO" --pr "$PR_NUMBER" \
+  --defer-external-approval-status "$CHECK_NAME" "$CREATOR_ID" "$CREATOR_LOGIN" "$WAITING_DESCRIPTION"
+```
+
+The same approval-only purpose evidence and merge-prerequisite policy apply.
+The helper requires exactly one required status context, complete policy and
+workflow discovery, and fully paginated status history on the exact head. Its
+latest status must agree with the rollup's node ID and state. A pending status
+must match the selected creator ID, login, and description. App-pinned policies
+are unsupported for this route: a status creator does not establish app provenance.
+Other executable checks and workflows must still succeed.
+
+Version 5 binds `ci_deferral.kind: "external_human_approval_status"`, the selector,
+and the original `status_id` into the plan digest. A different pending status
+on the original head requires a new plan. GitHub status updates append IDs, so
+a new successful status may satisfy ordinary required-check policy without
+retaining the pending status's ID or creator. A signed head must independently
+report its own verified status; no original-head result transfers to it.
+
+This route reports the same `deferred_external_approval` and
+`operator_deferred_external_approval` scopes and ordinary `finish` behaviour as
+the CheckRun route. Failures still block or return the unchanged signed PR to
+draft. It cannot combine with another deferral or absent-CI exception, be
+retrofitted into a receipt, or transfer to a base update or recovery PR.
+
 #### Existing approval-count checks
 
 The older count-based selector retains its original semantics below. It does
